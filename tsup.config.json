@@ -1,0 +1,9 @@
+{
+  "entry": { "cli/index": "src/cli/index.ts" },
+  "format": ["esm"],
+  "platform": "node",
+  "target": "node22",
+  "clean": true,
+  "splitting": false,
+  "sourcemap": true
+}

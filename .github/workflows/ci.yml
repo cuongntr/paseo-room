@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Node 22 / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install Linux PTY prerequisite
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y expect
+      - name: Require PTY prerequisite on both platforms
+        run: test -x /usr/bin/expect && /usr/bin/expect -v
+      - run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Lint
+        run: npm run lint
+      - name: Unit, property, integration and failure injection
+        run: npm test
+      - name: Build
+        run: npm run build
+      - name: Inspect npm pack
+        run: npm pack --dry-run
+      - name: Packed artifact suites (including required TTY)
+        run: npm run test:package
+      - name: Pinned isolated Paseo contract
+        run: npm run test:paseo
+      - name: macOS packed minimal GUI-like smoke
+        if: runner.os == 'macOS'
+        run: npm run test:macos

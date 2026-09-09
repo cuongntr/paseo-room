@@ -1,0 +1,45 @@
+{
+  "name": "paseo-room",
+  "version": "0.1.0-alpha.0",
+  "description": "Paseo Room CLI foundation with a read-only placeholder plan.",
+  "type": "module",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "paseo-room": "dist/cli/index.js"
+  },
+  "files": [
+    "dist/cli/"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint . --max-warnings 0",
+    "test": "vitest run",
+    "build": "tsup",
+    "prepack": "npm run build",
+    "test:package": "npm run build && vitest run --config vitest.package.config.ts",
+    "test:paseo": "vitest run --config vitest.paseo.config.ts",
+    "test:macos": "npm run build && vitest run --config vitest.macos.config.ts",
+    "verify": "npm run typecheck && npm run lint && npm test && npm run build && npm pack --dry-run && npm run test:package"
+  },
+  "dependencies": {
+    "@clack/prompts": "^1.8.0",
+    "@getpaseo/client": "0.8.0-beta.1",
+    "commander": "^14.0.3",
+    "semver": "^7.8.5",
+    "smol-toml": "^1.8.0",
+    "zod": "^4.5.4"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^22.0.0",
+    "@types/semver": "^7.7.0",
+    "eslint": "^10.10.0",
+    "tsup": "^8.5.1",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.70.0",
+    "vitest": "^4.1.11"
+  }
+}

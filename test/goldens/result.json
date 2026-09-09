@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "command": "plan",
+  "outcome": "changes-planned",
+  "changed": false,
+  "checks": [
+    {
+      "id": "source",
+      "status": "pass",
+      "message": "Source validated"
+    },
+    {
+      "id": "offline",
+      "status": "not-checked",
+      "message": "Daemon unavailable",
+      "remediation": "Start your daemon"
+    },
+    {
+      "id": "drift",
+      "status": "warn",
+      "message": "Review source drift"
+    }
+  ],
+  "operations": [
+    {
+      "action": "create",
+      "target": {
+        "kind": "file",
+        "path": "/fixture/room/instructions.md"
+      },
+      "description": "Write instructions"
+    },
+    {
+      "action": "update",
+      "target": {
+        "kind": "provider",
+        "id": "codex-peer"
+      },
+      "description": "Disable Paseo tools"
+    }
+  ]
+}

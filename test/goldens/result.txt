@@ -1,0 +1,7 @@
+plan: changes-planned (changed: no)
+[pass] source: Source validated
+[not-checked] offline: Daemon unavailable
+  Remediation: Start your daemon
+[warn] drift: Review source drift
+create file /fixture/room/instructions.md: Write instructions
+update provider codex-peer: Disable Paseo tools

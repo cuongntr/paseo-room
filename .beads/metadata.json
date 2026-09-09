@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "paseo_room",
+  "project_id": "85c1b675-6da4-4d2b-a279-2e948a91776d"
+}
