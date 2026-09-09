@@ -770,12 +770,15 @@ describe('nested removal and cleanup durability regressions', () => {
     await fs.writeFile(child, 'old', { mode: 0o600 });
     let active = false;
     let stopped = false;
-    let oldChildParentInode = -1;
+    let directoryRestored = false;
     const filesystem = new TransactionFilesystem(base.context, (boundary, eventPath) => {
       if (stopped) throw new Error('stopped');
-      if (!active || boundary !== 'after-fsync' || !eventPath.endsWith('/journal.next')) return;
-      const childRecord = tx.snapshot.fileMutations.find(record => record.destination === child);
-      if (childRecord?.parent && childRecord.parent.inode !== oldChildParentInode) {
+      if (!active) return;
+      if (boundary === 'after-action' && eventPath === `directory:${directory}`) {
+        directoryRestored = true;
+        return;
+      }
+      if (directoryRestored && boundary === 'after-fsync' && eventPath.endsWith('/journal.next')) {
         stopped = true;
         throw new Error('crash');
       }
@@ -785,7 +788,6 @@ describe('nested removal and cleanup durability regressions', () => {
       { before: { kind: 'directory', path: directory, mode: 0o700 }, after: null },
     ]), filesystem);
     await tx.publish();
-    oldChildParentInode = tx.snapshot.fileMutations.find(record => record.destination === child)?.parent?.inode ?? -1;
     active = true;
     await expect(tx.compensate()).rejects.toThrow();
     expect(stopped).toBe(true);
