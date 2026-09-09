@@ -12,6 +12,7 @@ import { commandResultSchema } from '../src/core/result.js';
 import { fixtureEnvironment, snapshotFixture } from './helpers/home.js';
 import { packedCodex } from './helpers/packed-codex.js';
 import { removeFixtureRootAfterConfirmedTermination } from './helpers/fixture-cleanup.js';
+import { connectFixturePaseo } from './helpers/paseo-sdk.js';
 
 it('macOS GUI-like packed launch: absolute prefixes and true/true/false policy', async () => {
   // Explicit platform gate, never a successful skip when invoked on another OS.
@@ -90,9 +91,7 @@ it('macOS GUI-like packed launch: absolute prefixes and true/true/false policy',
     started = true;
     run('daemon start (system-only PATH)', process.execPath, [paseo, 'daemon', 'start', '--home', localHome,
       '--listen', `127.0.0.1:${String(port)}`, '--no-relay', '--no-mcp', '--no-inject-mcp', '--no-web-ui'], guiEnv);
-    sdk = createPaseoClient({ url: `ws://127.0.0.1:${String(port)}/ws`, appVersion: '0.8.0-beta.1',
-      connectTimeoutMs: 5000, reconnect: { enabled: false }, logger: { debug() {}, info() {}, warn() {}, error() {} } });
-    await sdk.connect();
+    sdk = await connectFixturePaseo(`ws://127.0.0.1:${String(port)}/ws`);
     expect(cli('install', ['--apply'])).toMatchObject({ outcome: 'ok', changed: true });
     expect(cli('verify').outcome).toBe('ok');
     const providers = (await sdk.config.get()).config.providers;
