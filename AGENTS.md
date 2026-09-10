@@ -1,125 +1,81 @@
 # AGENTS.md
 
-## Purpose
+## What this repository is
 
-This repository builds `paseo-room`, an npm/npx CLI that creates and manages a user-global Paseo Room with this Phase 1 topology:
+`paseo-room` is a small CLI that generates Codex/Claude role homes under `$HOME` and
+registers them with a local Paseo daemon. [README.md](README.md) describes the behaviour;
+[docs/design.md](docs/design.md) explains why each override exists. **Read the design notes
+before changing an override, an overlay key, or a provider field** — most of them are
+counter-intuitive and exist because of a specific failure.
+
+It is deliberately simple. An earlier version implemented a transactional installer
+(journal, rollback, ownership manifest, lock files, inode-level guards) — roughly 10k lines
+for the same result, and so hard to exercise that features could not be tested by hand.
+That design is in git history before the `v2` rewrite. Do not reintroduce it.
+
+## Design rules
+
+- **Everything stays in `$HOME`.** Only `~/.paseo-room` is written. Agent homes are read,
+  never modified.
+- **Dry run by default.** Mutation happens only under `--apply` or an explicit wizard
+  confirmation.
+- **No transaction machinery.** The room home is disposable: a failed `setup` is fixed by
+  running `setup` again, and `remove` deletes it. That is the entire recovery story.
+- **Compatibility is one check.** `paseo daemon status --json` must report a running daemon,
+  matching CLI and daemon versions, and `>= 0.8.0-beta.1`.
+- **Copy the operator's config, override the minimum.** Never rewrite someone's model, MCP
+  servers, or hooks.
+- **Add to a base prompt, never replace it.** `model_instructions_file` (Codex) and
+  `--system-prompt` (Claude) replace the vendor prompt and would force us to vendor a copy
+  of it. Role text goes in `developer_instructions` / `CLAUDE.md`.
+- **Pin at the provider level whatever the agent's own config cannot guarantee.** A Paseo
+  provider entry outranks the agent config: `params` for Codex sandbox/approval,
+  `disallowedTools` for Claude's `Task`. `providerMatches` compares these, so `verify`
+  catches their removal — a pin that can be silently dropped is not a guarantee.
+- **Paseo is the only control plane.** Every native multi-agent path stays closed. If you
+  add an agent adapter, close its equivalent before shipping it.
+- **Peer never gets room tools.** `ROLE_PASEO_TOOLS` in `src/roles.ts` is the single source
+  of that rule, and it must stay a single call site.
+
+## Layout
 
 ```text
-Human → Supervisor → Lead → Peer
+src/
+  index.ts      cli.ts      wizard.ts       # entry, flags, guided flow
+  commands.ts                               # setup / verify / remove, and the shared diff
+  layout.ts     fsops.ts    which.ts        # $HOME paths, file writes, executable lookup
+  result.ts     render.ts                   # checks/operations, and how they are printed
+  paseo.ts                                  # version check + provider config over the SDK
+  room.ts                                   # room.json marker
+  agents/types.ts                           # the Agent seam: entries, checks, binary, pins
+  agents/codex.ts  agents/claude.ts         # per-agent role homes
+  room/clauses.ts  room/instructions.ts     # the role contract text
+test/                                       # one file per area, real temp $HOME fixtures
+docs/design.md                              # rationale; keep it current with the code
 ```
 
-Phase 1 supports homogeneous Codex rooms on macOS and Linux. Claude Code, Pi, OpenCode, mixed-agent rooms, Windows, remote Paseo daemons, partial tool policies, and automatic migration from `codex-room-setup` are out of scope.
+## Adding an agent adapter
 
-The repository is pre-implementation: no runnable `paseo-room` package exists yet. Until the package foundation lands, lifecycle commands and contracts below describe required behavior rather than commands available to execute.
+1. Add the id to `AGENT_IDS` in `src/roles.ts`.
+2. Implement `Agent` in `src/agents/<id>.ts`: `homeEnv`, `pins`, and a `build` that returns
+   entries, checks and the resolved binary. Do not build providers there — `commands.ts`
+   does that from `homeEnv` and `pins`, so the tool policy stays in one place.
+3. Close the agent's native multi-agent path in `pins` or in the generated config, and say
+   how in `docs/design.md` §3.
+4. Share the operator's credentials and skills by symlink; never copy secrets.
+5. Register it in `AGENTS` in `src/commands.ts`.
 
-## Source of Truth
+## Working on the role contract
 
-Read the relevant documents before changing behavior:
+`src/room/clauses.ts` is prose, written as ordinary wrapped text — blank lines separate
+statements, line breaks inside a statement collapse when rendered. Changing a clause changes
+what every seat is told, so state the authority it grants or removes in the commit message.
+Shared clauses (`SHARED_IDS`) go to all three seats; role clauses go to one.
 
-1. [Accepted PRD](docs/product/paseo-room-prd.md) — product scope and REQ-001–REQ-019.
-2. [Active Technical Design](docs/design/platform/paseo-room.md) — architecture, public contracts, persistence, security, and recovery.
-3. [Active Role Compatibility Contract](docs/design/platform/paseo-room-role-contract.md) — RC-001–RC-305 and exact Codex role overlays.
-4. [Active Phase 1 Implementation Plan](docs/plans/paseo-room-phase-1-implementation-plan.md) — frozen REQ-001–REQ-016 delivery scope and gate order.
-5. The assigned Bead — bounded implementation scope and definition of done.
-
-When these sources disagree, stop and report the conflict. Do not silently reinterpret an accepted requirement or Active design. Phase 1 additions require an accepted delta-change.
-
-## Work Tracking
-
-This repository uses Beads through `bd`.
-
-`bd` must be available before working the graph. It manages the embedded Dolt issue database under `.beads/`; see [.beads/README.md](.beads/README.md) for the local quick start. Do not edit database files directly. Confirm the export setting with `bd config get export.git-add`; if needed, restore it with `bd config set export.git-add false`.
+## Before committing
 
 ```bash
-bd ready --json
-bd show <issue-id> --json
-bd update <issue-id> --claim
-bd dep cycles --json
+npm run verify   # typecheck → lint → test → build, in that order
 ```
 
-- Work only on an actionable leaf Bead, not directly on an epic.
-- Treat the Bead's scope, prerequisites, validation, proof, reversibility, and provenance as the implementation contract.
-- Do not close a Bead until its definition of done is verified.
-- Keep `.beads/issues.jsonl` consistent with the database. `export.git-add` must remain disabled.
-- Do not create Git commits unless the repository owner explicitly asks.
-
-The current graph root is `paseo-room-s7a`. The initial implementation frontier is `paseo-room-u36`.
-
-## Technology and Repository Conventions
-
-- Node.js `>=22`.
-- npm package manager and publication format.
-- Strict TypeScript ESM; do not introduce `any`, type suppression, or CommonJS without an approved design change.
-- `tsup` for package output and Vitest for tests.
-- Use `commander`, `@clack/prompts`, `zod`, `smol-toml`, `semver`, and the pinned public `@getpaseo/client` baseline selected by the design.
-- Import Paseo only from the public `@getpaseo/client` package root. Never import internal APIs.
-- Keep shared lifecycle code agent-agnostic. Codex paths, TOML, launch rules, model catalog handling, and tool vocabulary belong under `src/adapters/codex/`.
-- Use dependency injection for filesystem, process, clock/PID, adapter, and Paseo boundaries so tests can use disposable fixtures.
-- Match the module layout in the Technical Design unless the assigned Bead explicitly changes it.
-
-## Non-Negotiable Behavioral Contracts
-
-- Dry-run is the default. Filesystem or daemon mutation requires wizard confirmation or explicit `--apply`.
-- Public lifecycle commands are `plan`, `install`, `verify`, `doctor`, `recover`, and `uninstall`.
-- JSON output uses schema version 1 and writes exactly one JSON document to stdout.
-- Exit codes are fixed: `0` success, `1` validation, compatibility, verification, or operation failure, `2` usage error, `3` ownership conflict, `4` recovery required.
-- Managed provider IDs are exactly `codex-supervisor`, `codex-lead`, and `codex-peer`.
-- Supervisor and Lead use `paseoTools.enabled: true`; Peer uses `false`. Phase 1 does not expose `disabledTools`.
-- Every provider update supplies the complete fixed key set: `extends`, `label`, `command`, `env`, and `paseoTools`.
-- Provider launch commands use an absolute native Codex executable or `[absoluteNode, absoluteCodexScript]`. They must not depend on npm cache or a GUI daemon's shell `PATH`.
-- Role homes are isolated. Canonical Codex state and the managed root must be disjoint in both ancestor directions.
-- Codex overlays are pinned by the Role Compatibility Contract, including model `gpt-5.6-sol`, reasoning `medium`, `danger-full-access`, approval `never`, and disabled native multi-agent behavior.
-- Human retains product, priority, material-cost, external-effect, and irreversible-risk decisions. Lead owns technical acceptance. Peer cannot orchestrate or self-accept.
-
-## Safety and Ownership
-
-- Paseo and Codex are user-managed dependencies. Never install, upgrade, authenticate, start, stop, or repair them on the user's behalf.
-- Never write `~/.paseo/config.json` directly. Use `client.config.get()` and `client.config.patch()` through the public SDK.
-- Local daemon admission uses canonical Paseo home, current-user PID/owner evidence, normalized loopback listen endpoint, equal compatible CLI/daemon versions, and reachability. Bind manifests and locks to the hash of canonical home plus normalized status listen. Because the pinned public SDK does not expose connected `serverId`, do not claim protocol-level peer identity; re-probe under lock and verify full provider state after mutation.
-- Never modify or claim the canonical Codex home, credentials, unrelated Paseo providers, or Codex-created mutable role state.
-- Never copy, print, persist, back up, or hash credential content. `PASEO_PASSWORD` is memory-only: it may be passed only through the selected Paseo status subprocess environment and public SDK config, must be excluded from argv/provider/Codex environments, and must be redacted from errors.
-- Use argv arrays with `shell: false`, absolute executable paths, bounded timeouts, and sanitized output.
-- Check paths with `lstat`/`realpath`; reject symlink parents, path escape, hard-link alias risk, foreign ownership, unsupported shebangs, and managed/canonical root overlap.
-- Managed roots and backups are `0700`; owned regular files and journals are `0600`. First-install root creation must first persist the accepted deterministic sibling `0600` bootstrap sidecar, create the absent root without clobbering, and transfer authority to the durable internal journal before retiring the sidecar. Pre-existing roots are never adopted.
-- Do not follow symlinks during backup, hashing, rollback, or uninstall. Record and compare link metadata only.
-- First-install collisions and customized managed state are conflicts. Never adopt, overwrite, or force-delete them.
-- Roll back only when the current value still equals the transaction's recorded after-value. Preserve divergence and return `recovery-required`. Portable update/removal uses journaled unpredictable same-parent capture names followed by no-clobber publication; the destination may be briefly absent. Deliberate same-UID interference with transaction-private names/captured inodes and same-inode writes through existing descriptors are outside Phase 1 and must be serialized.
-- Never restore the whole Paseo configuration. Never automatically retry mutations with ambiguous outcomes.
-- An unfinished journal blocks normal mutation. Only `recover --apply` may mutate recovery state.
-- Automated tests must use disposable homes and isolated daemons. Do not touch the operator environment. The only exception is the separately approved final macOS R3 (real user-home risk-containment) rehearsal defined by the Technical Design.
-
-`paseoTools.enabled: false` is a Paseo capability boundary, not an operating-system sandbox. Do not claim otherwise in code, tests, or documentation.
-
-## Testing and Verification
-
-Follow this gate order unless a Bead narrows the required proof:
-
-1. Typecheck.
-2. Lint.
-3. Unit and property tests.
-4. Integration and failure-injection tests.
-5. Package build and `npm pack` checks.
-6. Isolated Paseo contract and platform smoke tests when applicable.
-
-Additional rules:
-
-- Test observable behavior, ownership decisions, public schemas, and failure boundaries—not implementation trivia.
-- Default/read-only commands must leave fixture homes byte-for-byte unchanged.
-- Cover every ownership decision, journal transition, public exit code, and relevant requirement acceptance criterion.
-- Preserve unrelated providers and files in positive, negative, property, and uninstall tests.
-- Use pinned Paseo `0.8.0-beta.1` contract tests where mocks cannot prove SDK persistence, provider readiness, launch composition, or policy read-back.
-- Keep at least 85% branch coverage for safety logic under `src/core`, `src/paseo/provider-policy`, and `src/adapters/codex`; explicit critical-case evidence takes precedence over aggregate coverage.
-- Report every skipped or unavailable gate. Never weaken a check to obtain a passing result.
-
-## Clean-Room Requirement
-
-The behavior of the unlicensed `codex-room-setup` reference was characterized during design, but its source is not licensed for reuse. Implement behavior from this repository's requirements and contracts. Do not copy reference source, prose, templates, tests, or generated artifacts.
-
-## Change Discipline
-
-- Keep changes within the assigned Bead's write scope.
-- Preserve unrelated work and unfamiliar files.
-- Prefer the simplest implementation satisfying the frozen contract and reuse established local patterns.
-- Public CLI/JSON/exit semantics, persisted schemas, provider shape, role authority, security boundaries, and rollback behavior require explicit design review before incompatible changes.
-- Any change that weakens Peer policy, enables partial `disabledTools`, follows links during mutation, accepts remote daemon targets, adopts existing managed provider IDs, or changes the pinned role overlay requires repository-owner security review.
-- Update user or operator documentation whenever observable behavior changes.
+Do not report work as done on a subset of that chain.

@@ -1,5 +1,17 @@
 # Paseo Room — PRD
 
+> **Historical — do not implement against this document.**
+>
+> This PRD drove the v1 implementation. The v2 rewrite deliberately dropped REQ-011
+> (transactional apply/rollback), REQ-012's conflict machinery, and REQ-014 (versioned
+> ownership manifest): the room home is disposable, so re-running `setup` or `remove` is the
+> whole recovery story. The lifecycle verbs also changed — `plan`/`install`/`doctor`/`recover`/
+> `uninstall` became `setup`/`verify`/`remove` — and Claude Code, listed here as out of scope,
+> is now supported.
+>
+> For what the tool does today see [README.md](../../README.md); for why it is built that way
+> see [docs/design.md](../design.md). This file is kept only as a record of the original scope.
+
 | Field | Value |
 |---|---|
 | Status | Accepted |
