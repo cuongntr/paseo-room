@@ -11,7 +11,7 @@ import { z } from 'zod';
 import { commandResultSchema } from '../src/core/result.js';
 import { fixtureEnvironment, snapshotFixture } from './helpers/home.js';
 import { packedCodex } from './helpers/packed-codex.js';
-import { connectFixturePaseo } from './helpers/paseo-sdk.js';
+import { connectFixturePaseo, waitForFixturePaseo } from './helpers/paseo-sdk.js';
 
 it('packed CLI: disposable lifecycle, persistent launches, drift, recovery and ownership', async () => {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'paseo-room-packed-')));
@@ -106,7 +106,7 @@ it('packed CLI: disposable lifecycle, persistent launches, drift, recovery and o
     recoveryGuardPath = `${lockPath}.recovery.guard`;
     started = true;
     run(paseo, ['daemon', 'start', '--home', localHome, '--listen', `127.0.0.1:${String(port)}`, '--no-relay', '--no-mcp', '--no-inject-mcp', '--no-web-ui']);
-    sdk = await connectFixturePaseo(`ws://127.0.0.1:${String(port)}/ws`);
+    await waitForFixturePaseo(`ws://127.0.0.1:${String(port)}/ws`);
     const defaultRoom = join(home, '.local/share/paseo-room');
     expect(snapshotFixture(defaultRoom)).toBeNull();
     expect(snapshotFixture(join(home, '.local/share', `.paseo-room-bootstrap-${createHash('sha256').update(defaultRoom).digest('hex')}.json`))).toBeNull();
@@ -153,6 +153,7 @@ it('packed CLI: disposable lifecycle, persistent launches, drift, recovery and o
     const installedBefore = snapshotFixture(room);
     expect(cli('install', 0, ['--apply'])).toMatchObject({ outcome: 'ok', changed: false, operations: [] });
     expect(snapshotFixture(room)).toEqual(installedBefore);
+    sdk = await connectFixturePaseo(`ws://127.0.0.1:${String(port)}/ws`);
     const providers = (await sdk.config.get()).config.providers;
     const ids = ['codex-supervisor', 'codex-lead', 'codex-peer'];
     for (const id of ids) expect(providers[id]).toMatchObject({ command: [await realpath(process.execPath), codex], paseoTools: { enabled: id !== 'codex-peer' } });

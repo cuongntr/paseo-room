@@ -11,7 +11,7 @@ async function tcpReady(host: string, port: number): Promise<boolean> {
   });
 }
 
-export async function connectFixturePaseo(url: string, timeoutMs = 15_000): Promise<ReturnType<typeof createPaseoClient>> {
+export async function waitForFixturePaseo(url: string, timeoutMs = 15_000): Promise<void> {
   const endpoint = new URL(url);
   const port = Number(endpoint.port);
   const deadline = Date.now() + timeoutMs;
@@ -19,8 +19,11 @@ export async function connectFixturePaseo(url: string, timeoutMs = 15_000): Prom
     if (Date.now() >= deadline) throw new Error('Fixture Paseo port did not become ready within the bounded startup interval.');
     await new Promise(resolve => setTimeout(resolve, 100));
   }
-  // Create exactly one SDK client so warm-up attempts cannot emit delayed transport errors.
   await new Promise(resolve => setTimeout(resolve, 100));
+}
+
+export async function connectFixturePaseo(url: string): Promise<ReturnType<typeof createPaseoClient>> {
+  await waitForFixturePaseo(url);
   const client = createPaseoClient({ url, appVersion: '0.8.0-beta.1', connectTimeoutMs: 5000,
     reconnect: { enabled: false }, logger: { debug() {}, info() {}, warn() {}, error() {} } });
   await client.connect();
