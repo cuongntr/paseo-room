@@ -61,7 +61,7 @@ Exit codes: `0` success, `1` a check failed, `2` bad usage.
 ```text
 ~/.paseo-room/
   room.json                       # what this CLI created; verify and remove read it
-  room/workspace-protocol.md      # operator reference for a repo's docs/WORKSPACE_PROTOCOL.md
+  room/WORKSPACE_PROTOCOL.md      # template to copy into a repo's docs/, read by nothing here
   roles/codex/<role>/
     config.toml                   # your config.toml + the room's overrides
     role-instructions.md          # readable copy of what this seat was told

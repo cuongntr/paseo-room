@@ -22,8 +22,15 @@ describe('role instructions', () => {
     expect(renderInstructions('supervisor')).not.toContain('## RC-205');
   });
 
-  it('renders every clause into the workspace reference', () => {
+  it('renders every clause into the workspace template', () => {
     const workspace = renderInstructions('workspace');
     for (const id of instructionIds('workspace')) expect(workspace).toContain(`## ${id}`);
+  });
+
+  // The template is useless if it does not name the path the seats are told to read.
+  it('names the same protocol path the shared contract names', () => {
+    const path = 'docs/WORKSPACE_PROTOCOL.md';
+    expect(renderInstructions('workspace')).toContain(path);
+    for (const role of ROLES) expect(renderInstructions(role)).toContain(path);
   });
 });

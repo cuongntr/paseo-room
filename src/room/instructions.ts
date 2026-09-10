@@ -11,14 +11,24 @@ const ROLE_IDS: Record<Role, readonly RoleContractId[]> = {
 };
 
 const TITLES: Record<InstructionKind, string> = {
-  workspace: 'Paseo Room workspace protocol — operator reference/template',
+  workspace: 'Workspace protocol — template for a repository docs/WORKSPACE_PROTOCOL.md',
   supervisor: 'Supervisor role instructions',
   lead: 'Lead role instructions',
   peer: 'Peer role instructions',
 };
 
 const PREFACES: Record<InstructionKind, string> = {
-  workspace: 'Operator reference: copy what you need into a workspace-local docs/WORKSPACE_PROTOCOL.md. Installation never creates or replaces that workspace file.',
+  workspace: [
+    'This file is a template, and nothing reads it where it sits. Copy it into a repository as',
+    '`docs/WORKSPACE_PROTOCOL.md` — the exact path RC-002 names — and cut it down to that project.',
+    'paseo-room never writes that file.',
+    '',
+    'Precedence: Human authority and the role contract reproduced below come first. A repository may',
+    'add project-local detail — conventions, validation commands, narrower write scopes, escalation',
+    'routes — and RC-002 states exactly what such detail may not weaken. Keep your copy to that detail;',
+    'the clauses below are already delivered to every seat, so repeating them in the repository broadcasts',
+    'the whole contract to seats that were deliberately given only part of it.',
+  ].join('\n'),
   supervisor: 'You are Supervisor, the Human-facing routing seat, not the project Lead.',
   lead: 'You are Lead, the project technical owner under Human authority.',
   peer: 'You are Peer, executing one brief from Lead in writing or read-only review mode.',

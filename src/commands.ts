@@ -44,11 +44,12 @@ interface Desired {
   readonly checks: readonly Check[];
 }
 async function buildDesired(layout: Layout, agents: readonly AgentId[], roles: readonly Role[]): Promise<Desired> {
-  // Operator reference, not linked into any seat: each repo owns its own protocol.
+  // Template, not linked into any seat: each repo owns its own docs/WORKSPACE_PROTOCOL.md.
+  // Named exactly as RC-002 names it, so a copy needs no rename.
   const entries: Entry[] = [
     { kind: 'dir', path: layout.roomHome },
     { kind: 'dir', path: sharedRoom(layout) },
-    { kind: 'file', path: join(sharedRoom(layout), 'workspace-protocol.md'), content: renderInstructions('workspace') },
+    { kind: 'file', path: join(sharedRoom(layout), 'WORKSPACE_PROTOCOL.md'), content: renderInstructions('workspace') },
   ];
   const providers: Record<string, Provider> = {};
   const checks: Check[] = [];

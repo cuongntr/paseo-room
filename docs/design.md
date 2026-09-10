@@ -43,10 +43,11 @@ policy, applied at exactly one call site.
 in `src/room/clauses.ts`, delivered as `developer_instructions` (Codex) and `CLAUDE.md`
 (Claude).
 
-It ships `room/workspace-protocol.md` as an operator **reference** — never linked into a
-seat, because each repository provides its own `docs/WORKSPACE_PROTOCOL.md`. Nothing is
-ever written into `AGENTS.md`. Task briefs are Lead's job at dispatch time and are not this
-tool's concern.
+It ships `room/WORKSPACE_PROTOCOL.md` as a **template**: never linked into a seat, read by
+nothing where it sits. Each repository provides its own copy at `docs/WORKSPACE_PROTOCOL.md`,
+which is the path RC-002 tells every seat to read, so the template carries that name and a
+copy needs no rename. Nothing is ever written into `AGENTS.md`, and task briefs are Lead's
+job at dispatch time rather than this tool's concern.
 
 ## 4. Why a separate home per seat
 
