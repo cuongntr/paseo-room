@@ -7,7 +7,7 @@ Human → Supervisor → Lead → Peer
 ```
 
 > [!IMPORTANT]
-> The project is currently in **Phase 1 implementation**. The product and technical contracts are active, and the Beads implementation graph is ready, but no usable npm package has been released yet. Non-interactive lifecycle routing and the interactive setup wizard are implemented in the repository; complete release evidence is still pending.
+> The Phase 1 lifecycle CLI, wizard and packed artifact are implemented. Linux/macOS automated gates are green, but the package is **not published** and remains `UNLICENSED`. The separately owner-approved macOS R3 rehearsal is **NOT YET EXECUTED and blocks release**. See the [operator guide](docs/operations/guide.md) and [acceptance/release record](docs/operations/phase-1-acceptance.md).
 
 ## Phase 1
 
@@ -43,7 +43,7 @@ Paseo Room is dry-run first:
 - Customized state and ordinary concurrent destination-name changes are preserved as a conflict or `recovery-required` condition. Portable update/removal uses a journaled capture followed by no-clobber publication, so a managed path may be briefly absent between durable atomic steps. Deliberate same-UID interference with transaction-private names/captured inodes and writes through an already-open descriptor are outside the Phase 1 guarantee and must be serialized.
 - Paseo configuration is changed through the public daemon SDK, never by writing `~/.paseo/config.json` directly.
 - Phase 1 admits only a running current-user local daemon whose canonical Paseo home, loopback listen endpoint, and CLI/daemon versions match. The pinned public SDK does not expose connected-peer identity, so Paseo Room does not claim cryptographic or protocol-level daemon identity; it rechecks local admission under the writer lock and verifies complete provider state immediately after mutation.
-- Canonical Codex configuration and credential contents are never modified, copied, backed up, logged, or hashed by the installer.
+- Canonical Codex configuration is read, semantically rendered into isolated role overlays, and hashed for drift evidence, but is never modified. Credential contents are never read, copied, backed up, logged, or hashed by the installer; approved credential resources are shared only through validated links.
 - Owned-file hashing on macOS/Linux runs in an empty-environment, bounded Node child anchored to the previously checked parent directory. The child checks cwd identity before opening a single basename with `O_NOFOLLOW`, checks the descriptor's exact metadata and forbidden identities before hashing, and returns only SHA-256. Parent/leaf replacements fail closed; renaming an already anchored parent cannot redirect the read. This is not a snapshot against concurrent writes to the same inode; callers must serialize content mutation. Symlinks are compared by metadata and literal target, never target bytes.
 - Provider launch commands use stable absolute Codex/Node paths and do not depend on an npm cache or the GUI daemon's shell `PATH`.
 
@@ -58,6 +58,8 @@ Pinned isolated-daemon tests prove discovery readiness and live config policy re
 ## CLI
 
 ### Interactive setup
+
+The `npx` examples describe the intended published entry point; until publication, use an explicitly selected, reviewed packed artifact rather than assuming the registry package exists. Real-home rehearsal requires separate owner approval.
 
 ```bash
 npx paseo-room
@@ -90,9 +92,11 @@ npx paseo-room uninstall
 npx paseo-room uninstall --apply
 ```
 
-Common options:
+Lifecycle options (`--agent` defaults to `codex`; no other agent is supported):
 
 ```text
+--agent <agent>
+--apply
 --json
 --non-interactive
 --room-home <path>
@@ -102,11 +106,13 @@ Common options:
 --paseo-url <ws-url>
 ```
 
+`--apply` is valid only for `install`, `recover`, and `uninstall`; using it with `plan`, `verify`, or `doctor` is usage exit 2. `-h, --help` and `-V, --version` are informational switches. There is no `--node-bin` option.
+
 For authenticated local daemons, provide `PASEO_PASSWORD` through the environment. Paseo Room passes it only to the selected Paseo status process and public SDK connection, never in argv or provider/Codex environments. There is intentionally no password flag.
 
 ### Machine-readable results
 
-With `--json`, stdout contains exactly one schema-versioned JSON document. Exit codes are:
+With `--json`, stdout contains exactly one schema-v1 JSON document with `command`, `outcome`, `changed`, `checks`, and `operations`. Outcomes are `ok`, `changes-planned`, `failed`, `conflict`, and `recovery-required`. Usage errors use `failed` with exit 2; a failed check also causes exit 1 unless conflict/recovery takes precedence. See [result details](docs/operations/guide.md#results-and-exits). Exit codes are:
 
 | Code | Meaning |
 |---:|---|
@@ -175,7 +181,7 @@ bd ready --json
 bd show paseo-room-s7a --json
 ```
 
-The graph contains seven work packages covering package contracts, Codex adaptation, Paseo integration, ownership planning, transactions/recovery, CLI UX, and release acceptance. The initial actionable implementation Bead is `paseo-room-u36`.
+The graph contains seven work packages covering package contracts through release acceptance. Implemented lifecycle behavior has passed the [hosted Linux/macOS gates](https://github.com/cuongntr/paseo-room/actions/runs/34426300649); remaining real-environment release evidence is tracked in the [acceptance matrix and R3 procedure](docs/operations/phase-1-acceptance.md).
 
 The required verification order is:
 
@@ -205,8 +211,10 @@ Automated development and acceptance tests must use disposable homes and isolate
 
 Contributor and coding-agent rules are in [AGENTS.md](AGENTS.md).
 
-## Design Documentation
+## Documentation
 
+- [Operator guide: diagnosis, drift/reapply, recovery, residual uninstall and reference-install conflicts](docs/operations/guide.md)
+- [Phase 1 acceptance matrix and owner-approved R3 procedure](docs/operations/phase-1-acceptance.md)
 - [Product Requirements](docs/product/paseo-room-prd.md)
 - [Technical Design](docs/design/platform/paseo-room.md)
 - [Role Compatibility Contract](docs/design/platform/paseo-room-role-contract.md)
@@ -219,6 +227,10 @@ Paseo Room is a clean-room behavioral implementation. The project does not copy 
 ## License
 
 No license has been selected yet. Until the repository owner adds one, no license is granted beyond rights provided by applicable law.
+
+## Existing Reference Installations
+
+There is no automatic migration/adoption from `codex-room-setup`. Overlapping managed IDs or paths are conflicts, not state Paseo Room may delete. Stop and manually uninstall the old product using its own procedure, or choose safe disjoint state before planning again. A different room root alone does not avoid fixed provider-ID collisions on the same daemon. See [manual handling and ownership limits](docs/operations/guide.md#existing-codex-room-setup-installations).
 
 ## Recovery and Uninstall Core
 
