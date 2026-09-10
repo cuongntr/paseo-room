@@ -57,6 +57,12 @@ it.each([false, true])('npm-distributed 0.8.0-beta.1 isolated handshake (passwor
     // Both explicit --home and environment are isolated; never fall back to operator defaults.
     started = true;
     await exec(executable, ['daemon', 'start', '--home', localHome, '--listen', `127.0.0.1:${String(port)}`, '--no-relay', '--no-mcp', '--no-inject-mcp', '--no-web-ui'], { env: { ...env, ...(password === undefined ? {} : { PASEO_PASSWORD: password }) }, shell: false, timeout: 30_000 }).catch(() => { throw new Error('Isolated daemon start failed'); });
+    await expect.poll(async () => {
+      try {
+        await Promise.all(['server-id', 'paseo.pid'].map(name => lstat(join(localHome, name))));
+        return true;
+      } catch { return false; }
+    }, { timeout: 15_000, interval: 100 }).toBe(true);
     const input = { executable, home, localHome, paseoUrl: `ws://localhost:${String(port)}`, timeoutMs: 10_000 };
     const snapshot = async () => Promise.all(['server-id', 'cli-client-id', 'paseo.pid', 'config.json'].map(async (name) => {
       const path = join(localHome, name);
