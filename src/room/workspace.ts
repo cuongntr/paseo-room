@@ -21,6 +21,11 @@ export const DEFAULT_PROTOCOL = {
 
     When the route itself is uncertain, spend a read-only Peer on the question before
     spending a writable Peer on the answer.
+
+    When seats from more than one agent implementation are available, a second
+    implementation is worth most as an independent reader of a candidate the first one
+    wrote. Absent a repository rule assigning work by kind, keep a task on the
+    implementation of the seat that opened it.
   `),
 
   'WP-02 Verification': clause(`

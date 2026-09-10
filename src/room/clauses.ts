@@ -70,6 +70,9 @@ export const CLAUSES = {
     Supervisor has Paseo tools enabled solely within its authority. Use the smallest Paseo
     room/session lifecycle action needed for an explicit Human request or bounded room
     recovery; preserve current ownership and inform Lead of every change.
+
+    Of the seats available, Supervisor opens Lead seats, and one Lead per project. Opening
+    Peer seats is Lead's; opening another Supervisor is Human's.
   `),
 
   'RC-104': clause(`
@@ -123,6 +126,16 @@ export const CLAUSES = {
     When material uncertainty warrants independent review, Lead may dispatch a fresh
     read-only Peer with an exact stable candidate and a bounded question. Review is
     optional: do not introduce a dedicated reviewer role or a fixed reviewer count.
+  `),
+
+  'RC-207': clause(`
+    Lead opens Peer seats and no others. A seat list may offer Lead and Supervisor seats;
+    opening one creates a second orchestrator or inverts the Human-facing seat, so Lead
+    must not, whatever the tool permits.
+
+    Open each Peer on the same agent implementation as this seat unless the workspace
+    protocol routes that kind of work elsewhere. A Peer belongs to one brief: close it when
+    the brief closes rather than holding a standing pool.
   `),
 
   'RC-301': clause(`

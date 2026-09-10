@@ -6,7 +6,7 @@ export type InstructionKind = Role | 'workspace';
 
 const ROLE_IDS: Record<Role, readonly RoleContractId[]> = {
   supervisor: ['RC-101', 'RC-102', 'RC-103', 'RC-104'],
-  lead: ['RC-201', 'RC-202', 'RC-203', 'RC-204', 'RC-205', 'RC-206'],
+  lead: ['RC-201', 'RC-202', 'RC-203', 'RC-204', 'RC-205', 'RC-206', 'RC-207'],
   // Peer needs the challenge protocol as well as its own numbered obligations.
   peer: ['RC-204', 'RC-301', 'RC-302', 'RC-303', 'RC-304', 'RC-305'],
 };

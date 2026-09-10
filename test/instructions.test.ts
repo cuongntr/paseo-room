@@ -19,6 +19,15 @@ describe('role instructions', () => {
     expect(peer).not.toContain('## RC-202');
   });
 
+  // Paseo takes the seat to open as a free-form provider id, so nothing below the
+  // contract stops Lead from opening a second Lead. The rule has to reach the seats
+  // that hold the tool, and only those.
+  it('tells each seat with room tools which seat it may open', () => {
+    expect(renderInstructions('lead')).toContain('Lead opens Peer seats and no others');
+    expect(renderInstructions('supervisor')).toContain('Supervisor opens Lead seats');
+    expect(renderInstructions('peer')).not.toContain('## RC-207');
+  });
+
   it('gives Lead acceptance authority and Supervisor routing only', () => {
     expect(renderInstructions('lead')).toContain('## RC-205');
     expect(renderInstructions('supervisor')).not.toContain('## RC-205');
