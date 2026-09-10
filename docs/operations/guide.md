@@ -1,10 +1,10 @@
 # Operator guide
 
 Phase 1 supports homogeneous Codex rooms on **macOS and Linux**:
-`Human → Supervisor → Lead → Peer`. The CLI and packed artifact are implemented;
-the npm package is **not published**, is `UNLICENSED`, and is not release-approved.
-**R3 is NOT YET EXECUTED and blocks release.** See the
-[acceptance record](phase-1-acceptance.md) before any real-home use.
+`Human → Supervisor → Lead → Peer`.
+Phase 1 implementation acceptance complete on 2026-09-10; npm publication not performed and package remains `UNLICENSED`.
+See the [acceptance record](phase-1-acceptance.md) for the completed R3 evidence and
+retained repeatable controls.
 Examples use `paseo-room` from an explicitly selected, reviewed packed artifact;
 `npx paseo-room` is the intended published entry point, not evidence of publication.
 
@@ -14,6 +14,13 @@ The operator must already provide Node.js `>=22` and npm, an installed/authentic
 Codex with a usable canonical home, and Paseo CLI plus a running, reachable
 current-user local daemon at `>=0.8.0-beta.1`. CLI/daemon versions must match and
 native per-provider `paseoTools` policy must work; semver alone is insufficient.
+On macOS, the standard Desktop selection is exactly
+`/Applications/Paseo.app/Contents/Resources/bin/paseo`. For that path only, Paseo
+Room tolerates mode-writable `/Applications` when it is a root-owned directory whose
+real path is exactly `/Applications`. Every other parent and executable check remains
+unchanged; alternate `.app` paths and Linux receive no exception. The Desktop shell
+launcher receives only the provider-free system `PATH=/usr/bin:/bin`; password
+handling is unchanged.
 Codex has no Phase 1 version floor: launch/config/catalog/app-server compatibility
 is behavioral, not guaranteed by its version string. Recovery also needs the
 standard macOS `lockf` or Linux `flock` utility.

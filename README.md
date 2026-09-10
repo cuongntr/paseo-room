@@ -7,7 +7,7 @@ Human → Supervisor → Lead → Peer
 ```
 
 > [!IMPORTANT]
-> The Phase 1 lifecycle CLI, wizard and packed artifact are implemented. Linux/macOS automated gates are green, but the package is **not published** and remains `UNLICENSED`. The separately owner-approved macOS R3 rehearsal is **NOT YET EXECUTED and blocks release**. See the [operator guide](docs/operations/guide.md) and [acceptance/release record](docs/operations/phase-1-acceptance.md).
+> Phase 1 implementation acceptance complete on 2026-09-10; npm publication not performed and package remains `UNLICENSED`. The owner-approved macOS R3 rehearsal is complete. See the [operator guide](docs/operations/guide.md) and [acceptance/release record](docs/operations/phase-1-acceptance.md).
 
 ## Phase 1
 
@@ -25,7 +25,7 @@ Phase 1 targets macOS and Linux with:
 
 - Node.js `>=22`
 - Codex already installed and authenticated; compatibility is verified behaviorally because Phase 1 does not define a Codex version floor
-- Paseo CLI and a reachable local daemon at `>=0.8.0-beta.1`
+- Paseo CLI and a reachable local daemon at `>=0.8.0-beta.1`; macOS also admits the exact standard Desktop launcher `/Applications/Paseo.app/Contents/Resources/bin/paseo` under the narrow parent exception described below
 - The standard macOS `lockf` or Linux `flock` utility for recovery-only stale-lock serialization
 - Native per-provider `paseoTools` policy
 
@@ -42,7 +42,7 @@ Paseo Room is dry-run first:
 - Uninstall removes only unchanged manifest-owned state.
 - Customized state and ordinary concurrent destination-name changes are preserved as a conflict or `recovery-required` condition. Portable update/removal uses a journaled capture followed by no-clobber publication, so a managed path may be briefly absent between durable atomic steps. Deliberate same-UID interference with transaction-private names/captured inodes and writes through an already-open descriptor are outside the Phase 1 guarantee and must be serialized.
 - Paseo configuration is changed through the public daemon SDK, never by writing `~/.paseo/config.json` directly.
-- Phase 1 admits only a running current-user local daemon whose canonical Paseo home, loopback listen endpoint, and CLI/daemon versions match. The pinned public SDK does not expose connected-peer identity, so Paseo Room does not claim cryptographic or protocol-level daemon identity; it rechecks local admission under the writer lock and verifies complete provider state immediately after mutation.
+- Phase 1 admits only a running current-user local daemon whose canonical Paseo home, loopback listen endpoint, and CLI/daemon versions match. Executable parents remain fail-closed except that, on macOS only, mode-writable `/Applications` is tolerated for the exact canonical Paseo Desktop launcher when it is an `lstat`-confirmed root-owned directory whose real path is exactly `/Applications`; every other launcher and parent check is unchanged. The Desktop shell launcher receives only the provider-free system `PATH=/usr/bin:/bin`; password handling is unchanged. The pinned public SDK does not expose connected-peer identity, so Paseo Room does not claim cryptographic or protocol-level daemon identity; it rechecks local admission under the writer lock and verifies complete provider state immediately after mutation.
 - Canonical Codex configuration is read, semantically rendered into isolated role overlays, and hashed for drift evidence, but is never modified. Credential contents are never read, copied, backed up, logged, or hashed by the installer; approved credential resources are shared only through validated links.
 - Owned-file hashing on macOS/Linux runs in an empty-environment, bounded Node child anchored to the previously checked parent directory. The child checks cwd identity before opening a single basename with `O_NOFOLLOW`, checks the descriptor's exact metadata and forbidden identities before hashing, and returns only SHA-256. Parent/leaf replacements fail closed; renaming an already anchored parent cannot redirect the read. This is not a snapshot against concurrent writes to the same inode; callers must serialize content mutation. Symlinks are compared by metadata and literal target, never target bytes.
 - Provider launch commands use stable absolute Codex/Node paths and do not depend on an npm cache or the GUI daemon's shell `PATH`.
@@ -181,7 +181,7 @@ bd ready --json
 bd show paseo-room-s7a --json
 ```
 
-The graph contains seven work packages covering package contracts through release acceptance. Implemented lifecycle behavior has passed the [hosted Linux/macOS gates](https://github.com/cuongntr/paseo-room/actions/runs/34426300649); remaining real-environment release evidence is tracked in the [acceptance matrix and R3 procedure](docs/operations/phase-1-acceptance.md).
+The graph contains seven work packages covering package contracts through release acceptance. Implemented lifecycle behavior passed the [hosted Linux/macOS gates](https://github.com/cuongntr/paseo-room/actions/runs/34426300649), and the completed real-macOS evidence is recorded in the [acceptance matrix and R3 record](docs/operations/phase-1-acceptance.md).
 
 The required verification order is:
 
@@ -207,7 +207,7 @@ On Ubuntu, install the PTY prerequisite with `sudo apt-get update && sudo apt-ge
 
 The macOS smoke uses paths containing spaces, a minimal explicit environment, a system-only daemon `PATH`, the packed CLI, and a disposable loopback daemon plus credential-free fake Codex. It proves three absolute Node-script provider launches and true/true/false policy read-back, not a real Desktop launch, real Codex behavior, native-binary launch coverage, or tool-delivery enforcement. See [platform and packed test evidence](test/PACKED-LIFECYCLE.md) for boundaries and results. CI requires registry access for isolated pinned daemon installs; it does not upload daemon logs, homes, or credential-bearing artifacts.
 
-Automated development and acceptance tests must use disposable homes and isolated daemons. A separately approved macOS R3 real user-home risk-containment rehearsal is the only Phase 1 release step allowed to touch the operator environment.
+Automated development and acceptance tests must use disposable homes and isolated daemons. The completed macOS R3 real user-home risk-containment rehearsal used separate owner approval; the retained R3 controls govern any repeat rehearsal.
 
 Contributor and coding-agent rules are in [AGENTS.md](AGENTS.md).
 

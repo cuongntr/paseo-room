@@ -151,3 +151,4 @@ The graph is acyclic. WP-002 and WP-003 are the only intended parallel implement
 | 2026-09-09 | Bytes | Review pass pinned WP-002 to the Active role contract and reconciled macOS release/R3 evidence with the Active Technical Design. |
 | 2026-09-09 | Bytes | Clarified workspace-protocol/provider-creation ownership; plan-ready-for-beads passed and Phase 1 scope was activated/frozen. |
 | 2026-09-09 | Repository owner / Bytes | Applied accepted local-admission delta: replace unavailable connected-server-ID proof with canonical home/PID/UID/listen/version evidence and bind locking/manifest to canonical home plus normalized listen. |
+| 2026-09-10 | Repository owner / Implementation agent | Linked applied [change-001: exact macOS Desktop launcher exception](paseo-room-phase-1-change-001-macos-desktop-launcher.md), simplified per latest owner direction; frozen plan body unchanged. |

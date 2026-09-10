@@ -59,6 +59,7 @@ export interface ProbeDependencies {
   readonly runner: ProcessRunner;
   readonly uid: number;
   readonly hostname: string;
+  readonly platform?: NodeJS.Platform;
   /** Must inspect the live process, not just trust the PID file. */
   processUid(pid: number): Promise<number | null>;
 }
@@ -84,13 +85,19 @@ async function probe(input: ProbeInput, deps: ProbeDependencies, password: strin
   if (resolve(input.executable) !== input.executable || await fs.realpath(input.executable) !== input.executable) {
     fail('launcher', 'Select a canonical Paseo executable without link aliases.');
   }
+  const macosDesktopLauncher = (deps.platform ?? process.platform) === 'darwin' &&
+    input.executable === '/Applications/Paseo.app/Contents/Resources/bin/paseo';
   let parent = dirname(input.executable);
   for (;;) {
     const metadata = await fs.lstat(parent);
-    if (metadata?.kind !== 'directory' || (metadata.uid !== deps.uid && metadata.uid !== 0) ||
-        (metadata.mode & 0o022) !== 0 && !(metadata.mode & 0o1000)) {
-      fail('launcher', 'Select Paseo under safe directory-only parents.');
+    const ordinarySafe = metadata?.kind === 'directory' && (metadata.uid === deps.uid || metadata.uid === 0) &&
+      ((metadata.mode & 0o022) === 0 || (metadata.mode & 0o1000) !== 0);
+    let parentSafe = ordinarySafe;
+    if (macosDesktopLauncher && parent === '/Applications' && metadata !== null && (metadata.mode & 0o022) !== 0) {
+      try { parentSafe = metadata.kind === 'directory' && metadata.uid === 0 && await fs.realpath(parent) === parent; }
+      catch { fail('launcher', 'Select Paseo under safe directory-only parents.'); }
     }
+    if (!parentSafe) fail('launcher', 'Select Paseo under safe directory-only parents.');
     if (dirname(parent) === parent) break;
     parent = dirname(parent);
   }
@@ -100,10 +107,11 @@ async function probe(input: ProbeInput, deps: ProbeDependencies, password: strin
   // arbitrary env -S arguments or permit preload/inspect/eval options.
   const nodeArgs = shebang === '#!/usr/bin/env -S node --disable-warning=DEP0040' ? ['--disable-warning=DEP0040'] : [];
   const nodeScript = shebang === '#!/usr/bin/env node' || nodeArgs.length > 0;
-  // Do not let env, shell wrappers, flags, or alternate interpreters escape containment.
+  // The Desktop bundle uses one fixed shell launcher; no other shell wrapper is accepted.
+  const desktopScript = macosDesktopLauncher && shebang === '#!/bin/sh';
   const native = ['7f454c46', 'feedface', 'cefaedfe', 'feedfacf', 'cffaedfe', 'cafebabe', 'bebafeca', 'cafebabf', 'bfbafeca'].includes(launcher.subarray(0, 4).toString('hex'));
-  if (!nodeScript && !native) {
-    fail('launcher', 'Select a native Paseo executable or a script with a supported fixed Node shebang.');
+  if (!nodeScript && !native && !desktopScript) {
+    fail('launcher', 'Select a native Paseo executable or a supported fixed launcher.');
   }
   if (!isAbsolute(input.localHome) || resolve(input.localHome) !== input.localHome) fail('home', 'Select an existing canonical absolute Paseo home.');
   let cursor = input.localHome;
@@ -140,7 +148,7 @@ async function probe(input: ProbeInput, deps: ProbeDependencies, password: strin
   if (evidence.uid !== deps.uid || evidence.hostname !== deps.hostname || await deps.processUid(evidence.pid) !== deps.uid) {
     fail('owner', 'Select a running local daemon whose persisted PID and owner belong to the current user and host.');
   }
-  const env = { HOME: input.home, PASEO_HOME: input.localHome, PATH: '/dev/null',
+  const env = { HOME: input.home, PASEO_HOME: input.localHome, PATH: desktopScript ? '/usr/bin:/bin' : '/dev/null',
     ...(password === undefined ? {} : { PASEO_PASSWORD: password }) };
   let output: Awaited<ReturnType<ProcessRunner['run']>> | undefined;
   for (let attempt = 0; attempt < 2; attempt++) {

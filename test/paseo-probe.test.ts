@@ -9,6 +9,7 @@ const status = { home: '/home/paseo', listen: 'localhost:6767', localDaemon: 'ru
   pid: 123, owner: '501@fixture', hostname: 'fixture', cliVersion: '0.8.0-beta.1', daemonVersion: '0.8.0-beta.1' };
 const pidEvidence = { pid: 123, uid: 501, hostname: 'fixture', listen: 'localhost:6767' };
 const input = { executable: '/bin/paseo', localHome: '/home/paseo', home: '/home', timeoutMs: 50 };
+const desktopExecutable = '/Applications/Paseo.app/Contents/Resources/bin/paseo';
 function setup(patch: Record<string, unknown> = {}) {
   const run = vi.fn<ProbeDependencies['runner']['run']>().mockResolvedValue({ exitCode: 0, stdout: JSON.stringify({ ...status, ...patch }), stderr: '' });
   const deps: ProbeDependencies = { uid: 501, hostname: 'fixture', runner: { run }, processUid: vi.fn().mockResolvedValue(501),
@@ -17,6 +18,20 @@ function setup(patch: Record<string, unknown> = {}) {
         mode: path === '/bin/paseo' ? 0o755 : path.endsWith('server-id') || path.endsWith('cli-client-id') || path.endsWith('paseo.pid') || path.endsWith('config.json') ? 0o600 : 0o700,
         device: 1, inode: 1, links: 1, uid: 501 }) } };
   return { deps, run };
+}
+function desktopSetup(executable = desktopExecutable) {
+  const { deps, run } = setup();
+  const original = deps.filesystem;
+  const appParent = executable.slice(0, executable.indexOf('.app') + 4);
+  return { run, deps: { ...deps, platform: 'darwin' as const, filesystem: { ...original,
+    readFile: (path: string) => path === executable ? Promise.resolve(Buffer.from('#!/bin/sh\n')) : original.readFile(path),
+    lstat: async (path: string) => {
+      if (path === executable) return { kind: 'file' as const, mode: 0o755, device: 1, inode: 2, links: 1, uid: 0 };
+      if (path === '/Applications') return { kind: 'directory' as const, mode: 0o775, device: 1, inode: 3, links: 1, uid: 0 };
+      if (path.startsWith(`${appParent}/`) || path === appParent) return { kind: 'directory' as const, mode: 0o755, device: 1, inode: 4, links: 1, uid: 0 };
+      return original.lstat(path);
+    },
+  } } };
 }
 describe('local admission', () => {
   it('normalizes aliases and deterministically binds home/listen, not serverId', async () => {
@@ -127,6 +142,54 @@ describe('local admission', () => {
     } })).rejects.toMatchObject({ check: { id: 'paseo.home' } });
     expect(run).not.toHaveBeenCalled();
     expect(readFile).not.toHaveBeenCalledWith('/home/paseo/config.json');
+  });
+  it('admits the exact macOS Desktop launcher and invokes status directly with the existing environment', async () => {
+    const { deps, run } = desktopSetup();
+    await probePaseo({ ...input, executable: desktopExecutable }, deps, 'private-value');
+    expect(run).toHaveBeenCalledOnce();
+    expect(run.mock.calls[0]?.[0]).toEqual({ executable: desktopExecutable,
+      args: ['daemon', 'status', '--json'], env: { HOME: '/home', PASEO_HOME: '/home/paseo', PATH: '/usr/bin:/bin', PASEO_PASSWORD: 'private-value' },
+      shell: false, timeoutMs: 50 });
+  });
+  it.each([
+    ['wrong platform', desktopExecutable, 'linux'],
+    ['wrong path', '/Applications/Other.app/Contents/Resources/bin/paseo', 'darwin'],
+  ] as const)('does not admit the Desktop parent exception on %s', async (_case, executable, platform) => {
+    const { deps, run } = desktopSetup(executable);
+    await expect(probePaseo({ ...input, executable }, { ...deps, platform })).rejects.toMatchObject({ check: { id: 'paseo.launcher' } });
+    expect(run).not.toHaveBeenCalled();
+  });
+  it('rejects an unsafe other bundle parent before status', async () => {
+    const { deps, run } = desktopSetup();
+    const original = deps.filesystem;
+    await expect(probePaseo({ ...input, executable: desktopExecutable }, { ...deps, filesystem: { ...original,
+      lstat: async (path) => {
+        const metadata = await original.lstat(path);
+        return path === '/Applications/Paseo.app' && metadata ? { ...metadata, mode: 0o777 } : metadata;
+      },
+    } })).rejects.toMatchObject({ check: { id: 'paseo.launcher' } });
+    expect(run).not.toHaveBeenCalled();
+  });
+  it.each(['foreign', 'alias', 'realpath-error'] as const)('requires /Applications to be a root-owned real directory (%s)', async (kind) => {
+    const { deps, run } = desktopSetup();
+    const original = deps.filesystem;
+    await expect(probePaseo({ ...input, executable: desktopExecutable }, { ...deps, filesystem: { ...original,
+      lstat: async (path) => {
+        const metadata = await original.lstat(path);
+        return path === '/Applications' && metadata && kind === 'foreign' ? { ...metadata, uid: 502 } : metadata;
+      },
+      realpath: (path) => path === '/Applications'
+        ? kind === 'realpath-error' ? Promise.reject(new Error('private-value')) : Promise.resolve(kind === 'alias' ? '/System/Applications' : path)
+        : original.realpath(path),
+    } })).rejects.toMatchObject({ check: { id: 'paseo.launcher' } });
+    expect(run).not.toHaveBeenCalled();
+  });
+  it('leaves ordinary launcher admission and invocation unchanged on darwin', async () => {
+    const { deps, run } = setup();
+    await probePaseo(input, { ...deps, platform: 'darwin' });
+    expect(run).toHaveBeenCalledOnce();
+    expect(run.mock.calls[0]?.[0]).toEqual({ executable: process.execPath, args: ['/bin/paseo', 'daemon', 'status', '--json'],
+      env: { HOME: '/home', PASEO_HOME: '/home/paseo', PATH: '/dev/null' }, shell: false, timeoutMs: 50 });
   });
   it('executes a native launcher directly and rejects shebang-free text', async () => {
     const { deps, run } = setup();

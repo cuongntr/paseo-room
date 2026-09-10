@@ -50,11 +50,13 @@ describe('operator documentation contract', () => {
       const row = guide.split('\n').find(line => line.startsWith(`| \`${outcome}\` |`));
       expect(row).toMatch(new RegExp(`\\| ${String(exit)} \\|$`));
     }
+    const completionMarker = 'Phase 1 implementation acceptance complete on 2026-09-10; '
+      + 'npm publication not performed and package remains `UNLICENSED`.';
     for (const document of documents.slice(0, 3)) {
       const text = await load(document);
       for (const command of COMMANDS) expect(text).toMatch(new RegExp(`\\b${command}\\b`));
       for (const outcome of OUTCOMES) expect(text).toContain(`\`${outcome}\``);
-      expect(text).toContain('NOT YET EXECUTED');
+      expect(text).toContain(completionMarker);
     }
   });
 });

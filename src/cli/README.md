@@ -2,7 +2,7 @@
 
 `plan`, `install`, `verify`, `doctor`, `recover`, and `uninstall` route through the shared adapter, observation/planner, admitted public SDK and transaction services. No arguments with terminal stdin/stdout starts the implemented Codex wizard: read-only plan, then explicit default-no confirmation. Decline/cancel before apply exits 0 unchanged. Non-TTY missing commands return usage exit 2; explicit commands and `--non-interactive` never prompt.
 
-See the [operator guide](../../docs/operations/guide.md) for prerequisites, paths, ownership, diagnosis and safe removal, and the [acceptance record](../../docs/operations/phase-1-acceptance.md) for evidence. R3 is **NOT YET EXECUTED and blocks release**; the package is not published.
+See the [operator guide](../../docs/operations/guide.md) for prerequisites, paths, ownership, diagnosis and safe removal, and the [acceptance record](../../docs/operations/phase-1-acceptance.md) for evidence. Phase 1 implementation acceptance complete on 2026-09-10; npm publication not performed and package remains `UNLICENSED`.
 
 `--agent codex`, `--apply`, `--json`, `--non-interactive`, `--room-home`, `--codex-home`, `--codex-bin`, `--paseo-bin`, and `--paseo-url` are the supported options. There is no `--node-bin` or password option. Explicit selections take precedence over supported environment defaults. The immediate room parent must already exist and pass anchored safety admission; the CLI does not create an arbitrary parent tree.
 

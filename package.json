@@ -1,7 +1,7 @@
 {
   "name": "paseo-room",
   "version": "0.1.0-alpha.0",
-  "description": "Paseo Room CLI foundation with a read-only placeholder plan.",
+  "description": "Create and manage a three-role Codex room on a user-managed Paseo daemon.",
   "type": "module",
   "license": "UNLICENSED",
   "engines": {
