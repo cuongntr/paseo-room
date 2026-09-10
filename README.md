@@ -61,7 +61,7 @@ Exit codes: `0` success, `1` a check failed, `2` bad usage.
 ```text
 ~/.paseo-room/
   room.json                       # what this CLI created; verify and remove read it
-  room/WORKSPACE_PROTOCOL.md      # template to copy into a repo's docs/, read by nothing here
+  room/WORKSPACE_PROTOCOL.md      # the default protocol every seat carries, as one readable file
   roles/codex/<role>/
     config.toml                   # your config.toml + the room's overrides
     role-instructions.md          # readable copy of what this seat was told
@@ -141,6 +141,13 @@ In short:
   and never accepts its own difficult change. Room tools: off.
 
 Human keeps product goals, priority, material cost, external effects and irreversible risk.
+
+Every seat also carries a **default workspace protocol** — topology by difficulty,
+verification, review, escalation, repository conventions — so a project has that layer
+without doing anything. A repository that needs different rules writes
+`docs/WORKSPACE_PROTOCOL.md`, and per RC-002 that file *replaces* the default rather than
+adding to it. `~/.paseo-room/room/WORKSPACE_PROTOCOL.md` is the same text as one file, so
+you can read what is in force and start from it when you do need a project-specific one.
 
 ## Documentation
 

@@ -5,7 +5,7 @@
  * statements; line breaks inside a statement are just there for reading and
  * collapse into single spaces when rendered.
  */
-function clause(source: string): readonly string[] {
+export function clause(source: string): readonly string[] {
   return source
     .trim()
     .split(/\n\s*\n/)
@@ -23,12 +23,17 @@ export const CLAUSES = {
   `),
 
   'RC-002': clause(`
-    Each role must read workspace-local docs/WORKSPACE_PROTOCOL.md when it exists.
-    Repository conventions, narrower scopes, validation commands, and escalation details
-    may refine workflow, but cannot weaken this authority contract.
+    A workspace protocol governs repository-local workflow: topology, verification
+    commands, review rhythm, escalation routes, and project conventions. The room ships a
+    default, reproduced at the end of this document, and that default is in force.
 
-    A local protocol cannot give Peer orchestration, give Supervisor or Peer technical
-    acceptance, permit multiple writable Peers, or transfer Human decisions to an agent.
+    When the repository provides docs/WORKSPACE_PROTOCOL.md, read it and follow it in place
+    of the default. A repository file replaces the default rather than adding to it, so a
+    repository that states only one rule keeps only that one rule.
+
+    Neither the default nor a repository file can weaken this authority contract. No
+    protocol can give Peer orchestration, give Supervisor or Peer technical acceptance,
+    permit multiple writable Peers, or transfer Human decisions to an agent.
   `),
 
   'RC-003': clause(`

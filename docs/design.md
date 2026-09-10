@@ -37,17 +37,24 @@ Room tools are the mirror image of the same rule: `paseoTools.enabled` is on for
 and Lead, off for Peer. `ROLE_PASEO_TOOLS` in `src/roles.ts` is the single source of that
 policy, applied at exactly one call site.
 
-## 3. Where the role contract lives
+## 3. Where the instruction layers live
 
-`paseo-room` owns exactly one of the model's three instruction layers: the role contract,
-in `src/room/clauses.ts`, delivered as `developer_instructions` (Codex) and `CLAUDE.md`
+`paseo-room` owns the model's first instruction layer outright: the role contract, in
+`src/room/clauses.ts`, delivered as `developer_instructions` (Codex) and `CLAUDE.md`
 (Claude).
 
-It ships `room/WORKSPACE_PROTOCOL.md` as a **template**: never linked into a seat, read by
-nothing where it sits. Each repository provides its own copy at `docs/WORKSPACE_PROTOCOL.md`,
-which is the path RC-002 tells every seat to read, so the template carries that name and a
-copy needs no rename. Nothing is ever written into `AGENTS.md`, and task briefs are Lead's
-job at dispatch time rather than this tool's concern.
+It also ships a **default** for the second layer, in `src/room/workspace.ts`, appended to
+every role document. The layer is therefore never simply absent: a repository that says
+nothing still gets topology, verification, review, escalation and convention rules. A
+repository that needs different ones writes `docs/WORKSPACE_PROTOCOL.md`, which RC-002
+tells every seat to follow *instead of* the default — replacing it, not adding to it, so a
+repository never has to reason about which of two protocols wins a conflict.
+
+`room/WORKSPACE_PROTOCOL.md` is that default written out as one file: not linked into any
+seat, since the seats already carry the text, but readable by the operator and usable as a
+starting point. It carries the name RC-002 uses so a copy needs no rename. Nothing is ever
+written into `AGENTS.md`, and task briefs are Lead's job at dispatch time rather than this
+tool's concern.
 
 ## 4. Why a separate home per seat
 
@@ -160,7 +167,7 @@ implementation's role overlays.
 3. It generates once at `setup` instead of on every launch (see §7).
 
 Where the written model and the reference implementation disagree, this tool follows the
-implementation, because it is what actually ran. Two such disagreements are live:
+implementation, because it is what actually ran. Three such disagreements are live:
 
 - The document reserves `WORKSPACE_PROTOCOL.md` for Lead and keeps it away from Peer; all
   three reference overlays tell every seat to read it. The room follows the overlays.
@@ -168,3 +175,10 @@ implementation, because it is what actually ran. Two such disagreements are live
   real config uses full access, and the Supervisor profile explicitly says to keep seats in
   full-access mode rather than accept a recurring permission ceremony. The room follows the
   real configs.
+- [orchestration-model.md](orchestration-model.md) §3 says the workspace protocol does not
+  belong in the file every agent already reads, because that is a broadcast. The room
+  broadcasts a default anyway (§3 above). The reasoning is that the alternative on offer is
+  not a narrower protocol but no protocol: a repository with no `docs/WORKSPACE_PROTOCOL.md`
+  had none of that layer at all, which is the worse failure. A repository that cares enough
+  to write its own file gets exactly its own, and Lead can still quote rather than broadcast
+  from there.
