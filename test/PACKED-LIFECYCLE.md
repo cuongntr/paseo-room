@@ -125,8 +125,9 @@ sanitized check IDs, never raw SDK/daemon output.
 Local focused evidence: macOS typecheck and lint passed; system `expect` 5.45
 was present; the final focused `npm run test:macos` passed (one test, 99.39
 seconds). Hosted GitHub Actions run
-[`34424578281`](https://github.com/cuongntr/paseo-room/actions/runs/34424578281)
-passed the complete ordered Node 22 matrix: Ubuntu in 18m00s and macOS in 19m36s.
+[`34426300649`](https://github.com/cuongntr/paseo-room/actions/runs/34426300649)
+passed the complete ordered Node 22 matrix after the final teardown remediation:
+Ubuntu in 12m41s and macOS in 23m09s.
 Both jobs passed typecheck, lint, 1,142 unit/integration tests, build, pack
 inspection, both packed suites, and both isolated Paseo contracts; macOS also
 passed the focused GUI-like smoke. Bounded fixture readiness waits account for
