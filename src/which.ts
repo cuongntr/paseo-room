@@ -1,11 +1,19 @@
 import { execFile } from 'node:child_process';
-import { access, constants, realpath } from 'node:fs/promises';
+import { access, constants } from 'node:fs/promises';
 import { delimiter, isAbsolute, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 
 const run = promisify(execFile);
 
-/** Resolve a command to an absolute, executable, canonical path on `searchPath`. */
+/**
+ * Resolve a command to an absolute executable path on `searchPath`.
+ *
+ * Deliberately not canonicalised. Version managers point a stable name at a
+ * versioned file — `~/.local/bin/claude` at `versions/2.1.267`, mise's
+ * `node/latest` at `node/24.15.0` — and the resolved target is deleted by the
+ * next upgrade. Providers store this path, so following the link would pin every
+ * seat to a binary that stops existing.
+ */
 export async function which(command: string, searchPath: string): Promise<string | undefined> {
   const candidates = isAbsolute(command) || command.includes('/')
     ? [resolve(command)]
@@ -13,7 +21,7 @@ export async function which(command: string, searchPath: string): Promise<string
   for (const candidate of candidates) {
     try {
       await access(candidate, constants.X_OK);
-      return await realpath(candidate);
+      return candidate;
     } catch { /* try the next PATH entry */ }
   }
   return undefined;

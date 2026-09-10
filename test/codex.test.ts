@@ -1,4 +1,4 @@
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, rename, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { parse } from 'smol-toml';
 import { describe, expect, it } from 'vitest';
@@ -65,6 +65,18 @@ describe('codexAgent.build', () => {
     // The whole instruction payload rides in this one key, workspace protocol included.
     expect(config.developer_instructions).toContain('## WP-02 Verification');
     expect(await readFile(join(layout.agentHome.codex, 'config.toml'), 'utf8')).not.toContain('danger-full-access');
+  });
+
+  // Version managers move the link target on every upgrade; a provider that stored
+  // the target would point at a deleted file the next time Codex updates itself.
+  it('records the stable launcher path, not the versioned file behind it', async () => {
+    const fixture = await makeFixture();
+    const bin = join(fixture.home, 'bin');
+    await rename(join(bin, 'codex'), join(bin, 'codex-1.2.3'));
+    await symlink(join(bin, 'codex-1.2.3'), join(bin, 'codex'));
+
+    const plan = await codexAgent.build(resolveLayout({}, fixture.env), ['lead']);
+    expect(plan.binary).toBe(join(bin, 'codex'));
   });
 
   it('probes the shared operator resources once, not once per role', async () => {

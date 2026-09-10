@@ -25,3 +25,6 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run verify
+      # The gate builds the bundle but never runs it; a bundling regression would
+      # otherwise only surface after publish.
+      - run: node dist/index.js --version
