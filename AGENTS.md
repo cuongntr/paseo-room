@@ -85,3 +85,24 @@ npm run verify   # typecheck → lint → test → build, in that order
 ```
 
 Do not report work as done on a subset of that chain.
+
+## Releasing
+
+`.github/workflows/release.yml` publishes to npm when a GitHub Release is published. It
+re-runs the gate, refuses to publish if the tag does not match `package.json` (`v0.1.0` →
+`0.1.0`), and picks the dist-tag from the version: a prerelease goes out as `next`, anything
+else as `latest`.
+
+There is no `NPM_TOKEN`. The workflow authenticates through npm [trusted
+publishing](https://docs.npmjs.com/trusted-publishers): GitHub mints an OIDC token
+(`id-token: write`), npm verifies it came from this repo and this workflow file, and attaches
+a provenance attestation. Two consequences:
+
+- Renaming this workflow file breaks publishing until the trusted publisher is updated on
+  npmjs.com.
+- npm can only register a trusted publisher for a package that already exists, so **the first
+  version must be published by hand** — `npm publish --tag next` locally — and the trusted
+  publisher configured afterwards.
+
+To cut a release: bump the version, land it on `main`, then publish a GitHub Release whose
+tag is `v<version>`.

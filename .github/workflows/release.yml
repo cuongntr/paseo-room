@@ -1,0 +1,51 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish to npm
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      # Trusted publishing: npm authenticates this workflow through a GitHub
+      # OIDC token instead of a stored NPM_TOKEN.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+
+      # Node 22 still bundles npm 10; trusted publishing needs 11.5.1 or newer.
+      - run: npm install -g npm@latest
+
+      - run: npm ci
+
+      - run: npm run verify
+
+      - name: Resolve the version and dist-tag
+        run: |
+          version="$(node -p 'require("./package.json").version')"
+          if [ "${GITHUB_REF_NAME#v}" != "$version" ]; then
+            echo "Release tag ${GITHUB_REF_NAME} does not match package.json version ${version}." >&2
+            exit 1
+          fi
+          case "$version" in
+            *-*) tag=next ;;
+            *)   tag=latest ;;
+          esac
+          echo "Publishing ${version} under dist-tag ${tag}."
+          echo "DIST_TAG=$tag" >> "$GITHUB_ENV"
+
+      # No NODE_AUTH_TOKEN: the OIDC exchange above is the credential, and npm
+      # attaches a provenance attestation on its own.
+      - run: npm publish --tag "$DIST_TAG"

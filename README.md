@@ -158,3 +158,10 @@ Human keeps product goals, priority, material cost, external effects and irrever
 ```bash
 npm run verify   # typecheck, lint, test, build — the gate order
 ```
+
+Releases are published to npm from a GitHub Release; see
+[AGENTS.md](AGENTS.md#releasing).
+
+## License
+
+[MIT](LICENSE) © Invoker

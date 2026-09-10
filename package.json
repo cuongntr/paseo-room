@@ -2,8 +2,23 @@
   "name": "paseo-room",
   "version": "0.1.0-alpha.0",
   "description": "One CLI that configures Codex/Claude role homes in $HOME and registers them with your local Paseo daemon.",
+  "keywords": [
+    "paseo",
+    "codex",
+    "claude-code",
+    "agent",
+    "orchestration",
+    "cli"
+  ],
+  "homepage": "https://github.com/cuongntr/paseo-room#readme",
+  "bugs": "https://github.com/cuongntr/paseo-room/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cuongntr/paseo-room.git"
+  },
+  "license": "MIT",
+  "author": "Invoker <cuongnt1987@gmail.com>",
   "type": "module",
-  "license": "UNLICENSED",
   "engines": {
     "node": ">=22"
   },
