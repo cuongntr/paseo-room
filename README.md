@@ -7,7 +7,7 @@ It does three things:
 
 1. Reads your existing Codex / Claude Code configuration.
 2. Writes one isolated role home per seat under `~/.paseo-room`, sharing your login, skills and plugins by symlink.
-3. Registers those role homes with your running Paseo daemon as providers — room tools on for Supervisor and Lead, off for Peer.
+3. Registers those role homes with your running Paseo daemon as providers — room tools on for Supervisor and Lead, off for Peer — and adds one agent profile per seat so opening one is a single pick.
 
 Everything it creates lives in `$HOME`, under one directory it owns outright. It reads
 `~/.codex` and `~/.claude`; it never writes to them.
@@ -108,6 +108,22 @@ agent's own configuration:
 | `disallowedTools: ["Task"]` | Claude | Claude's own subagents would be a second control plane. This is the counterpart of Codex's `[agents].enabled = false`. |
 | `paseoTools: {enabled}` | both | Room tools for Supervisor and Lead, never for Peer. |
 
+It also saves one **agent profile** per seat, which is what the Paseo picker lists under
+Profiles. A profile is a preset, not a constraint: it decides where a seat *starts*.
+
+| Profile field | Value | Owned by |
+|---|---|---|
+| `provider` | that seat's provider | the room — repaired on every `setup --apply` |
+| `name` | e.g. `Codex Lead` | the room |
+| `notes` | who may open this seat, shown to orchestrating agents by Paseo's `list_profiles` | the room |
+| `thinkingOptionId` | `low` for Supervisor, `high` for Lead and Peer | seeded once, then yours |
+| `model`, `modeId`, `icon`, `color` | never written | yours |
+
+Supervisor starts low because it routes rather than reasons. Neither seat starts on the top
+option — Codex's `ultra` and Claude's `ultracode` advertise automatic task delegation, which
+is a second control plane. Retune any seat in Paseo and `setup` will leave your choice alone;
+profiles you created yourself are never touched.
+
 The Claude permission mode is deliberately **not** set here. Paseo passes `--permission-mode`
 per agent (`plan`, `default`, `acceptEdits`, `auto`, `bypassPermissions`; default `auto`), and
 a command-line flag beats anything in `settings.json`. Choose the mode in Paseo.
@@ -142,6 +158,12 @@ In short:
 
 Human keeps product goals, priority, material cost, external effects and irreversible risk.
 
+One rule has no enforcement behind it and so is stated in the contract instead: **Lead opens
+Peer seats only, and Supervisor opens Lead seats.** Paseo takes the seat to open as a plain
+provider id, so nothing below the contract stops a Lead from opening a second Lead. If you
+ever see two Leads on one project, stop — that is two orchestrators, and the ownership rules
+stop holding.
+
 Every seat also carries a **default workspace protocol** — topology by difficulty,
 verification, review, repository conventions — so a project has that layer without doing
 anything. Each seat gets the sections that bear on its own work; topology goes to Lead and
@@ -149,6 +171,39 @@ Supervisor, not to Peer. A repository that needs different rules writes
 `docs/WORKSPACE_PROTOCOL.md`, which wins wherever it speaks while the default holds
 wherever it is silent. `~/.paseo-room/room/WORKSPACE_PROTOCOL.md` is the whole default as
 one file, so you can read what is in force and start from it.
+
+## Working the room
+
+The whole point is that you do not orchestrate. Say the outcome and the boundaries; let Lead
+decide the route.
+
+1. **Talk to one seat.** Six providers is not six windows. One project: open **Lead**. Several
+   projects at once, or you want an audit trail of directives: open **Supervisor** only, and
+   let it open the Leads. Opening both and then talking to Lead makes Supervisor an expensive
+   ornament with an incomplete record.
+2. **Say the outcome, not the plan.** You may direct the technical route, but every time you
+   do you take the acceptance risk back from Lead — and an orchestrator who has already solved
+   the problem leaves the worker able to be right about only one thing.
+3. **Interrupt at four boundaries only:** product goals and priority, material cost, external
+   effects, irreversible risk. Technical route and ownership are Lead's.
+4. **Read anything, direct one thing.** Reading a Peer's timeline is how you get evidence
+   without becoming a second channel; stopping a seat is yours by right. But answering a
+   Peer's `REOPEN_REQUEST` yourself means Lead never learns its premise was wrong and writes
+   the same premise into the next brief. If you do override a Peer, tell Lead — it waits on
+   events, so it will wait a long time.
+5. **Accept the product, not the diff.** Ask for the candidate and the gate result. "It's
+   done" is not evidence.
+6. **When the room gets confusing, throw it away.** `remove --apply`, then `setup --apply`.
+   Role homes are generated; do not debug them.
+
+Using one Peer directly, with no Lead at all, is fine for small single-scope work — that is
+not breaking the room, it is not using it. Just be clear that you are then the Lead: the brief
+and the technical acceptance are yours.
+
+With both Codex and Claude seated, the highest-value use of the second family is not splitting
+work at random — it is **independent review**. A read-only Peer from a different model family
+reading a candidate is more independent than a fresh session of the family that wrote it. Run
+one project on one family and keep the other for the review seat.
 
 ## Documentation
 

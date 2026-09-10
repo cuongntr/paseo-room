@@ -100,7 +100,11 @@ Do not report work as done on a subset of that chain.
 `.github/workflows/release.yml` publishes to npm when a GitHub Release is published. It
 re-runs the gate, refuses to publish if the tag does not match `package.json` (`v0.1.0` →
 `0.1.0`), and picks the dist-tag from the version: a prerelease goes out as `next`, anything
-else as `latest`.
+else as `latest` — except that while the registry holds no stable version at all, a
+prerelease also takes `latest`. npm hands `latest` to whichever version is published first
+and never moves it on its own, so without that exception `npm install paseo-room` would keep
+serving the oldest alpha. It cannot be corrected after the fact from CI: OIDC authenticates
+`npm publish` and nothing else, so `npm dist-tag add` has no credential.
 
 There is no `NPM_TOKEN`. The workflow authenticates through npm [trusted
 publishing](https://docs.npmjs.com/trusted-publishers): GitHub mints an OIDC token

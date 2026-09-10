@@ -117,6 +117,61 @@ the operator picks the mode in Paseo.
 `providerMatches` in `src/paseo.ts` compares these pins, so `verify` fails if one is
 removed from the live config. A pin that can be silently dropped is not a guarantee.
 
+### 5a. Agent profiles: the seat as one pick
+
+A provider is a way to launch an agent; an **agent profile** is a saved preset in the
+picker. They are different things in Paseo, in different parts of the config
+(`providers` is a map, `agentProfiles` a top-level array), and a room made only of
+providers leaves the Profiles screen empty.
+
+The room writes one profile per seat. Two consequences follow from `agentProfiles`
+being one array for the whole host rather than a keyed map:
+
+- There is no remove-one call, so every write replaces the array. `mergeProfiles` reads
+  the live array, passes operator profiles through untouched, overlays only the fields
+  the room owns onto its own entries, and appends what is missing. An operator editing
+  profiles in the UI at the same moment as `setup --apply` would lose that edit; the
+  window is one round trip on a local socket, and setup is a deliberate act.
+- Identity has to be exact. Room profile ids are `room-<agent>-<role>`, computed from
+  the closed sets in `roles.ts`, so nothing is matched by prefix and a profile of the
+  operator's cannot be mistaken for one of the room's.
+
+Only `provider`, `name` and `notes` are owned and repaired. `thinkingOptionId` is
+**seeded on create and then left alone**, which is the same bargain as Claude's
+`.claude.json`: the room wants a sensible starting point, not the last word on how you
+tune a seat. `model` is deliberately never written — pinning it would mean carrying
+model ids like `gpt-5.6-sol` in this repository and re-vendoring them as they age, the
+same debt §6 refuses for base prompts.
+
+The starting efforts (`low` for Supervisor, `high` for Lead and Peer) stop short of
+`ultra` / `ultracode`. Paseo describes that top option as *maximum reasoning with
+automatic task delegation* — a second control plane arriving through the model picker,
+after §2 closed the three obvious doors. A profile cannot prevent someone choosing it
+per session; it only decides where a seat starts. Whether `features.multi_agent = false`
+also neuters that option is **unverified**.
+
+`notes` is not decoration: Paseo surfaces it to orchestrating agents through
+`list_profiles`, so it is where each seat says who may open it — the same rule §5b
+states, arriving where an agent choosing a seat will actually read it.
+
+### 5b. The seat an agent may open: contract only
+
+`create_agent_request.config.provider` is `z.ZodString` — a free-form id chosen by the
+caller. Paseo has no way to say *this seat may only create those seats*. So with six
+seats registered, a Codex Lead can name `codex-peer`, `claude-peer`, `codex-lead` or
+`codex-supervisor`, and the last two are a second orchestrator and an inverted hierarchy
+respectively.
+
+The only lever below the contract is the one already used: Peer has
+`paseoTools.enabled: false` and so cannot create anything at all. The middle of the
+hierarchy is open, and there is nothing to close it with at the configuration layer.
+
+RC-207 and the second statement of RC-103 therefore say it in words — Lead opens Peer
+seats only, Supervisor opens Lead seats — reinforced by the profile `notes` that
+`list_profiles` shows. That is weaker than a pin and should be read as such: it is
+guidance to a model, not a guarantee. Two Leads on one project is the failure to watch
+for, and the README says so to the operator too.
+
 ## 6. Add to a base prompt, never replace it
 
 Both agents expose a replace-the-system-prompt knob: `model_instructions_file` for Codex,
