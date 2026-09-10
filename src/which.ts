@@ -5,11 +5,11 @@ import { promisify } from 'node:util';
 
 const run = promisify(execFile);
 
-/** Resolve a command to an absolute, executable, canonical path on `path`. */
-export async function which(command: string, path: string): Promise<string | undefined> {
+/** Resolve a command to an absolute, executable, canonical path on `searchPath`. */
+export async function which(command: string, searchPath: string): Promise<string | undefined> {
   const candidates = isAbsolute(command) || command.includes('/')
     ? [resolve(command)]
-    : path.split(delimiter).filter(Boolean).map(entry => join(entry, command));
+    : searchPath.split(delimiter).filter(Boolean).map(entry => join(entry, command));
   for (const candidate of candidates) {
     try {
       await access(candidate, constants.X_OK);

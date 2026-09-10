@@ -7,6 +7,11 @@ on:
 permissions:
   contents: read
 
+# One publish at a time: two releases racing would fight over the dist-tag.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
   publish:
     name: Publish to npm

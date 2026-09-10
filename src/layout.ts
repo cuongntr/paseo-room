@@ -18,7 +18,7 @@ export interface Layout {
   readonly agentHome: Record<AgentId, string>;
   readonly bin: Record<AgentId | 'paseo', string>;
   /** The PATH executables are looked up on. Resolved here so nothing reaches for process.env. */
-  readonly path: string;
+  readonly searchPath: string;
 }
 
 function pick(...candidates: readonly (string | undefined)[]): string {
@@ -43,7 +43,7 @@ export function resolveLayout(options: Options = {}, env: NodeJS.ProcessEnv = pr
       claude: pick(options.claudeBin, env.CLAUDE_BIN, 'claude'),
       paseo: pick(options.paseoBin, env.PASEO_BIN, 'paseo'),
     },
-    path: env.PATH ?? '',
+    searchPath: env.PATH ?? '',
   };
 }
 

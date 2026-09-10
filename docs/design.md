@@ -45,10 +45,16 @@ policy, applied at exactly one call site.
 
 It also ships a **default** for the second layer, in `src/room/workspace.ts`, appended to
 every role document. The layer is therefore never simply absent: a repository that says
-nothing still gets topology, verification, review, escalation and convention rules. A
-repository that needs different ones writes `docs/WORKSPACE_PROTOCOL.md`, which RC-002
-tells every seat to follow *instead of* the default — replacing it, not adding to it, so a
-repository never has to reason about which of two protocols wins a conflict.
+nothing still gets rules for topology, verification, review and conventions. A repository
+that needs different ones writes `docs/WORKSPACE_PROTOCOL.md`, and RC-002 gives that file
+precedence point by point — it wins wherever it speaks, the default holds wherever it is
+silent. Whole-file replacement was considered and rejected: it would mean a repository
+that states one rule loses every other rule, which is worse than the gap this default was
+added to close.
+
+Each seat gets the part of the protocol that bears on its own work. Topology goes to Lead
+and Supervisor only, because RC-303 forbids Peer to infer room topology and a document
+that both forbids and teaches it is incoherent.
 
 `room/WORKSPACE_PROTOCOL.md` is that default written out as one file: not linked into any
 seat, since the seats already carry the text, but readable by the operator and usable as a
@@ -176,9 +182,9 @@ implementation, because it is what actually ran. Three such disagreements are li
   full-access mode rather than accept a recurring permission ceremony. The room follows the
   real configs.
 - [orchestration-model.md](orchestration-model.md) §3 says the workspace protocol does not
-  belong in the file every agent already reads, because that is a broadcast. The room
-  broadcasts a default anyway (§3 above). The reasoning is that the alternative on offer is
-  not a narrower protocol but no protocol: a repository with no `docs/WORKSPACE_PROTOCOL.md`
-  had none of that layer at all, which is the worse failure. A repository that cares enough
-  to write its own file gets exactly its own, and Lead can still quote rather than broadcast
-  from there.
+  belong in the file every agent already reads, because that is a broadcast. The room ships
+  a default in every role document anyway (§3 above). The alternative on offer was not a
+  narrower protocol but no protocol: a repository with no `docs/WORKSPACE_PROTOCOL.md` had
+  none of that layer at all. The broadcast is narrowed rather than accepted whole — each
+  seat receives only the sections that bear on its own work — and Lead can still quote
+  rather than broadcast from a repository's own file.

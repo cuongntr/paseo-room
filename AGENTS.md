@@ -79,10 +79,13 @@ removes in the commit message. Shared clauses (`SHARED_IDS`) go to all three sea
 clauses go to one.
 
 `src/room/workspace.ts` is the default for the *workspace* layer, appended to every role
-document and written out as `room/WORKSPACE_PROTOCOL.md`. It holds workflow that is true of
-any repository — topology, verification, review, escalation, conventions. Anything about
-authority belongs in `clauses.ts`; anything true of only one project belongs in that
-project's own `docs/WORKSPACE_PROTOCOL.md`, which replaces this default wholesale.
+document and written out whole as `room/WORKSPACE_PROTOCOL.md`. `PROTOCOL_IDS` in
+`instructions.ts` decides which sections each seat receives.
+
+Every statement there must be workflow and must be new. Authority belongs in `clauses.ts`:
+restating a clause here teaches the seat nothing and blurs the boundary the two layers
+depend on. Anything true of only one project belongs in that project's own
+`docs/WORKSPACE_PROTOCOL.md`, which wins over this default wherever it speaks.
 
 ## Before committing
 

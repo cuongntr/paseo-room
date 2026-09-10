@@ -39,7 +39,9 @@ describe('claudeAgent.build', () => {
     await applyEntries(plan.entries);
 
     const peer = join(layout.roomHome, 'roles/claude/peer');
-    expect(await readFile(join(peer, 'CLAUDE.md'), 'utf8')).toContain('You are Peer');
+    const memory = await readFile(join(peer, 'CLAUDE.md'), 'utf8');
+    expect(memory).toContain('You are Peer');
+    expect(memory).toContain('## WP-02 Verification');
     expect(await readFile(join(peer, '.credentials.json'), 'utf8')).toBe('{"key":"k"}');
     expect(plan.binary).toContain('claude');
   });

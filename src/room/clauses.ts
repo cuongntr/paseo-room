@@ -25,11 +25,13 @@ export const CLAUSES = {
   'RC-002': clause(`
     A workspace protocol governs repository-local workflow: topology, verification
     commands, review rhythm, escalation routes, and project conventions. The room ships a
-    default, reproduced at the end of this document, and that default is in force.
+    default, and the part of it that bears on this role is reproduced at the end of this
+    document. That default is in force wherever the repository says nothing.
 
-    When the repository provides docs/WORKSPACE_PROTOCOL.md, read it and follow it in place
-    of the default. A repository file replaces the default rather than adding to it, so a
-    repository that states only one rule keeps only that one rule.
+    When the repository provides docs/WORKSPACE_PROTOCOL.md, read the parts that bear on
+    your own work and follow them wherever they speak to a point. A repository rule wins
+    over the default on that point; the default still holds everywhere the repository is
+    silent.
 
     Neither the default nor a repository file can weaken this authority contract. No
     protocol can give Peer orchestration, give Supervisor or Peer technical acceptance,

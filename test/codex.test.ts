@@ -62,6 +62,8 @@ describe('codexAgent.build', () => {
     expect(await readFile(join(lead, 'auth.json'), 'utf8')).toBe('{"token":"secret"}');
     const config = parse(await readFile(join(lead, 'config.toml'), 'utf8')) as Record<string, unknown>;
     expect(config.developer_instructions).toContain('Lead role instructions');
+    // The whole instruction payload rides in this one key, workspace protocol included.
+    expect(config.developer_instructions).toContain('## WP-02 Verification');
     expect(await readFile(join(layout.agentHome.codex, 'config.toml'), 'utf8')).not.toContain('danger-full-access');
   });
 

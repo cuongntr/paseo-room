@@ -143,11 +143,12 @@ In short:
 Human keeps product goals, priority, material cost, external effects and irreversible risk.
 
 Every seat also carries a **default workspace protocol** — topology by difficulty,
-verification, review, escalation, repository conventions — so a project has that layer
-without doing anything. A repository that needs different rules writes
-`docs/WORKSPACE_PROTOCOL.md`, and per RC-002 that file *replaces* the default rather than
-adding to it. `~/.paseo-room/room/WORKSPACE_PROTOCOL.md` is the same text as one file, so
-you can read what is in force and start from it when you do need a project-specific one.
+verification, review, repository conventions — so a project has that layer without doing
+anything. Each seat gets the sections that bear on its own work; topology goes to Lead and
+Supervisor, not to Peer. A repository that needs different rules writes
+`docs/WORKSPACE_PROTOCOL.md`, which wins wherever it speaks while the default holds
+wherever it is silent. `~/.paseo-room/room/WORKSPACE_PROTOCOL.md` is the whole default as
+one file, so you can read what is in force and start from it.
 
 ## Documentation
 
