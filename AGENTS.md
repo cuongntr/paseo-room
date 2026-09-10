@@ -3,10 +3,11 @@
 ## What this repository is
 
 `paseo-room` is a small CLI that generates Codex/Claude role homes under `$HOME` and
-registers them with a local Paseo daemon. [README.md](README.md) describes the behaviour;
-[docs/design.md](docs/design.md) explains why each override exists. **Read the design notes
-before changing an override, an overlay key, or a provider field** — most of them are
-counter-intuitive and exist because of a specific failure.
+registers them with a local Paseo daemon. [README.md](README.md) describes the behaviour,
+[docs/orchestration-model.md](docs/orchestration-model.md) is the reference model it
+implements, and [docs/design.md](docs/design.md) explains why each override exists. **Read
+the design notes before changing an override, an overlay key, or a provider field** — most
+of them are counter-intuitive and exist because of a specific failure.
 
 It is deliberately simple. An earlier version implemented a transactional installer
 (journal, rollback, ownership manifest, lock files, inode-level guards) — roughly 10k lines
@@ -51,7 +52,8 @@ src/
   agents/codex.ts  agents/claude.ts         # per-agent role homes
   room/clauses.ts  room/instructions.ts     # the role contract text
 test/                                       # one file per area, real temp $HOME fixtures
-docs/design.md                              # rationale; keep it current with the code
+docs/orchestration-model.md                 # the model; changes here are conceptual
+docs/design.md                              # this tool's rationale; keep current with code
 ```
 
 ## Adding an agent adapter
@@ -68,9 +70,13 @@ docs/design.md                              # rationale; keep it current with th
 ## Working on the role contract
 
 `src/room/clauses.ts` is prose, written as ordinary wrapped text — blank lines separate
-statements, line breaks inside a statement collapse when rendered. Changing a clause changes
-what every seat is told, so state the authority it grants or removes in the commit message.
-Shared clauses (`SHARED_IDS`) go to all three seats; role clauses go to one.
+statements, line breaks inside a statement collapse when rendered. It is the role-profile
+layer of [the model](docs/orchestration-model.md) §3, so it carries identity, authority and
+invariants — never repository tactics or task detail.
+
+Changing a clause changes what every seat is told, so state the authority it grants or
+removes in the commit message. Shared clauses (`SHARED_IDS`) go to all three seats; role
+clauses go to one.
 
 ## Before committing
 

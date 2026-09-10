@@ -4,72 +4,49 @@ Why the room is built the way it is. Read this before changing an override, an
 overlay key, or a provider field — most of them exist because of a specific failure,
 and several of them are not obvious from the code alone.
 
-## 1. The operating model
+## 1. The model this implements
 
-The room implements a three-seat model with one human owner:
+The room seats three roles — Supervisor, Lead, Peer — under one Human owner, with the
+authority boundaries, delegation contract and invariants described in
+[orchestration-model.md](orchestration-model.md). Read that first; this file only covers
+what the model costs to implement here.
 
-```text
-                    Human
-                      │
-         ┌────────────┴────────────┐
-    Supervisor                 Project Lead
-  governance / observation   project authority
-         │                         │
-         └──── observes ───────────┤
-                                   │
-                                Peer(s)
-```
+Three of its invariants drive almost every decision below:
 
-It is **not** a strict hierarchy. Lead is the binding technical arbiter inside its
-project; Supervisor observes across projects and can route the Human's decisions, but
-does not own technical acceptance. Human keeps product goals, priority, material cost,
-external effects and irreversible risk.
+- **One control plane.** Paseo owns agent lifecycle, so every native multi-agent path in
+  the agent runtime must be closed.
+- **Role separation needs isolated runtime state.** Three seats, three configurations, one
+  login.
+- **Capability discipline.** Orchestration tools go to the seats that orchestrate.
 
-Two consequences shape the whole tool:
+## 2. Closing the runtime's own multi-agent paths
 
-- **Peer is one profile, not one job.** A Peer becomes Engineer, Architect, Reviewer or
-  Scout through its task brief. That is why there are three seats and not six, and why
-  the Peer contract is the thinnest of the three.
-- **Naming matters.** The seat is called Lead, not Root. Control-plane vocabulary
-  ("you are a subagent of root") produces compliant, bot-like behavior; engineering
-  vocabulary ("you own this bounded outcome") produces an independent co-worker.
-
-## 2. Three layers of instruction
-
-| Layer | Lifetime | Holds | Owned by |
-|---|---|---|---|
-| Role contract | Durable, across repos | Identity, authority, invariants | this tool (`src/room/clauses.ts`) |
-| `docs/WORKSPACE_PROTOCOL.md` | Durable, one repo | Topology, model policy, review rhythm, escalation | the repository |
-| Task brief | One assignment | Objective, scope, exclusions, verification, handoff | Lead, at dispatch time |
-
-Mixing them is the failure this separation prevents: a Peer that has to spend attention
-deciding which rules apply to its task is a Peer that follows none of them well.
-
-`paseo-room` owns only the first layer. It ships `room/workspace-protocol.md` as an
-operator **reference** — it is never linked into a seat, because each repository provides
-its own. Nothing is ever written into `AGENTS.md`.
-
-## 3. One control plane
-
-Paseo owns agent identity, lifecycle, parentage, workspace placement and the timeline.
-If a seat can also spawn its own agents, there are two ledgers and no way to know which
-agent owns a task, a workspace, or a correction. Review and cleanup stop being trustworthy.
-
-Every native multi-agent path is therefore closed, per agent:
+If a seat can spawn its own agents there are two ledgers and no way to say which agent owns
+a task, a workspace or a correction. Every native path is therefore closed, per agent:
 
 | Agent | Mechanism |
 |---|---|
 | Codex | `[agents].enabled = false`, `features.multi_agent = false`, `features.multi_agent_v2 = false`, **and** a model catalog with `multi_agent_version` nulled |
 | Claude | provider-level `disallowedTools: ["Task"]`, and the operator's `agents/` directory is *not* linked into a seat |
 
-The catalog scrub is not redundant with the feature flags: bundled model metadata can
-still advertise native collaboration v1 or v2 even when both flags are off. That was
-found the hard way in the reference implementation, and the same order is kept here.
+The catalog scrub is not redundant with the feature flags: bundled model metadata can still
+advertise native collaboration v1 or v2 even when both flags are off. That was found the
+hard way in the reference implementation, and the same order is kept here.
 
-Room tools are the mirror image of the same rule: `paseoTools.enabled` is on for
-Supervisor and Lead, off for Peer. A Peer with orchestration tools drifts into
-coordinating, which is Lead's job. `ROLE_PASEO_TOOLS` in `src/roles.ts` is the single
-source of that policy, applied at exactly one call site.
+Room tools are the mirror image of the same rule: `paseoTools.enabled` is on for Supervisor
+and Lead, off for Peer. `ROLE_PASEO_TOOLS` in `src/roles.ts` is the single source of that
+policy, applied at exactly one call site.
+
+## 3. Where the role contract lives
+
+`paseo-room` owns exactly one of the model's three instruction layers: the role contract,
+in `src/room/clauses.ts`, delivered as `developer_instructions` (Codex) and `CLAUDE.md`
+(Claude).
+
+It ships `room/workspace-protocol.md` as an operator **reference** — never linked into a
+seat, because each repository provides its own `docs/WORKSPACE_PROTOCOL.md`. Nothing is
+ever written into `AGENTS.md`. Task briefs are Lead's job at dispatch time and are not this
+tool's concern.
 
 ## 4. Why a separate home per seat
 
@@ -168,10 +145,11 @@ a provider entry.
 
 ## 8. Lineage
 
-The design comes from Demonthorn's agent-orchestration model, by way of
-`codex-room-setup` — a bash + Python implementation that generated the same runtime homes
-and required a patched Paseo build to limit MCP injection per provider. The clause wording
-in `src/room/clauses.ts` descends from that implementation's role overlays.
+The model's own provenance is in [orchestration-model.md](orchestration-model.md) §11.
+This tool reaches it by way of `codex-room-setup` — a bash + Python implementation that
+generated the same runtime homes and required a patched Paseo build to limit MCP injection
+per provider. The clause wording in `src/room/clauses.ts` descends from that
+implementation's role overlays.
 
 `paseo-room` differs in three ways worth stating:
 
@@ -180,8 +158,8 @@ in `src/room/clauses.ts` descends from that implementation's role overlays.
 2. It seats Claude Code as well as Codex, from one contract.
 3. It generates once at `setup` instead of on every launch (see §7).
 
-Where the deep-dive document and the reference implementation disagree, the implementation
-wins, because it is what actually ran. Two such disagreements are live:
+Where the written model and the reference implementation disagree, this tool follows the
+implementation, because it is what actually ran. Two such disagreements are live:
 
 - The document reserves `WORKSPACE_PROTOCOL.md` for Lead and keeps it away from Peer; all
   three reference overlays tell every seat to read it. The room follows the overlays.

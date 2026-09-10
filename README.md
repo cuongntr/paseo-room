@@ -144,8 +144,11 @@ Human keeps product goals, priority, material cost, external effects and irrever
 
 ## Documentation
 
-- [docs/design.md](docs/design.md) — why the room is built this way, and what it deliberately
-  does not do. Read this before changing an override.
+- [docs/orchestration-model.md](docs/orchestration-model.md) — the reference model this
+  tool implements: roles, authority, instruction layers, invariants, anti-patterns and
+  operating checklists. Tool-agnostic; useful on its own.
+- [docs/design.md](docs/design.md) — how and why this tool implements that model, and what
+  it deliberately does not do. Read this before changing an override.
 - [AGENTS.md](AGENTS.md) — working rules for contributors and coding agents.
 - [docs/product/paseo-room-prd.md](docs/product/paseo-room-prd.md) — the original PRD, kept
   for history; the transactional-installer requirements in it were deliberately dropped.
