@@ -59,8 +59,10 @@ it.each([false, true])('npm-distributed 0.8.0-beta.1 isolated handshake (passwor
     await exec(executable, ['daemon', 'start', '--home', localHome, '--listen', `127.0.0.1:${String(port)}`, '--no-relay', '--no-mcp', '--no-inject-mcp', '--no-web-ui'], { env: { ...env, ...(password === undefined ? {} : { PASEO_PASSWORD: password }) }, shell: false, timeout: 30_000 }).catch(() => { throw new Error('Isolated daemon start failed'); });
     await expect.poll(async () => {
       try {
-        await Promise.all(['server-id', 'paseo.pid'].map(name => lstat(join(localHome, name))));
-        return true;
+        await lstat(join(localHome, 'server-id'));
+        const pid: unknown = JSON.parse(await readFile(join(localHome, 'paseo.pid'), 'utf8'));
+        return z.object({ pid: z.number().int().positive(), uid: z.number().int().nonnegative(),
+          hostname: z.string().min(1), listen: z.string().min(1) }).safeParse(pid).success;
       } catch { return false; }
     }, { timeout: 15_000, interval: 100 }).toBe(true);
     const input = { executable, home, localHome, paseoUrl: `ws://localhost:${String(port)}`, timeoutMs: 10_000 };
