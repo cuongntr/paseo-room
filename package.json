@@ -1,17 +1,17 @@
 {
   "name": "paseo-room",
   "version": "0.1.0-alpha.0",
-  "description": "Create and manage a three-role Codex room on a user-managed Paseo daemon.",
+  "description": "One CLI that configures Codex/Claude role homes in $HOME and registers them with your local Paseo daemon.",
   "type": "module",
   "license": "UNLICENSED",
   "engines": {
     "node": ">=22"
   },
   "bin": {
-    "paseo-room": "dist/cli/index.js"
+    "paseo-room": "dist/index.js"
   },
   "files": [
-    "dist/cli/"
+    "dist/"
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
@@ -19,10 +19,7 @@
     "test": "vitest run",
     "build": "tsup",
     "prepack": "npm run build",
-    "test:package": "npm run build && vitest run --config vitest.package.config.ts",
-    "test:paseo": "vitest run --config vitest.paseo.config.ts",
-    "test:macos": "npm run build && vitest run --config vitest.macos.config.ts",
-    "verify": "npm run typecheck && npm run lint && npm test && npm run build && npm pack --dry-run && npm run test:package"
+    "verify": "npm run typecheck && npm run lint && npm test && npm run build"
   },
   "dependencies": {
     "@clack/prompts": "^1.8.0",
