@@ -12,6 +12,7 @@ import { commandResultSchema } from '../src/core/result.js';
 import { fixtureEnvironment, snapshotFixture } from './helpers/home.js';
 import { packedCodex } from './helpers/packed-codex.js';
 import { connectFixturePaseo, waitForFixturePaseo } from './helpers/paseo-sdk.js';
+import { removeFixtureRootAfterConfirmedTermination } from './helpers/fixture-cleanup.js';
 
 it('packed CLI: disposable lifecycle, persistent launches, drift, recovery and ownership', async () => {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'paseo-room-packed-')));
@@ -274,7 +275,11 @@ it('packed CLI: disposable lifecycle, persistent launches, drift, recovery and o
       expect(await readFile(recoveryGuardPath)).toEqual(Buffer.alloc(0));
       await rm(recoveryGuardPath);
     });
-    await cleanup(() => rm(root, { recursive: true, force: true }));
+    await cleanup(async () => {
+      const removed = await removeFixtureRootAfterConfirmedTermination(cleanupErrors.length === 0,
+        () => rm(root, { recursive: true, force: true }));
+      if (!removed) throw new Error('Private fixture preserved because termination was not confirmed.');
+    });
     expect(cleanupErrors, 'Packed fixture cleanup failures').toEqual([]);
   }
 }, 600_000);

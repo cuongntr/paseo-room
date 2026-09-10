@@ -117,15 +117,21 @@ app-server argv/home. The canonical synthetic home remains unchanged. Only
 fixture initialization writes synthetic auth `{}`; no real credentials are used.
 Teardown independently closes the SDK, stops and checks the fixture daemon,
 waits for every recorded fake PID to disappear without signaling arbitrary
-PIDs, removes only a validated fixture-keyed dead installer lock if necessary,
-and removes the exact temporary root. Cleanup failures are reported by sanitized
-check IDs, never raw SDK/daemon output.
+PIDs, and removes only a validated fixture-keyed dead installer lock if
+necessary. It removes the exact temporary root only after termination and lock
+cleanup are confirmed; otherwise it preserves private evidence and reports
+sanitized check IDs, never raw SDK/daemon output.
 
 Local focused evidence: macOS typecheck and lint passed; system `expect` 5.45
-was present; `npm run test:macos` passed (one test, 101.29 seconds). This invocation
-did not rerun the full packed lifecycle suite, standalone contract, or Linux
-matrix. Green hosted Linux/macOS CI remains required before closing platform
-acceptance; workflow creation alone is not evidence of a green matrix.
+was present; the final focused `npm run test:macos` passed (one test, 99.39
+seconds). Hosted GitHub Actions run
+[`34424578281`](https://github.com/cuongntr/paseo-room/actions/runs/34424578281)
+passed the complete ordered Node 22 matrix: Ubuntu in 18m00s and macOS in 19m36s.
+Both jobs passed typecheck, lint, 1,142 unit/integration tests, build, pack
+inspection, both packed suites, and both isolated Paseo contracts; macOS also
+passed the focused GUI-like smoke. Bounded fixture readiness waits account for
+the pinned daemon publishing its WebSocket and PID/listen authority
+asynchronously without weakening or skipping either platform.
 
 Limitations: this is a GUI-like environment simulation, not a launchd/Desktop
 installation or the owner-approved real user-home R3 rehearsal. It covers the
