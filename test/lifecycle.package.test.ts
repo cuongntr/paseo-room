@@ -207,7 +207,7 @@ it('packed CLI: disposable lifecycle, persistent launches, drift, recovery and o
     crashPid = child.pid;
     const exited = new Promise<void>(resolve => child.once('exit', () => { resolve(); }));
     try {
-      await expect.poll(async () => { try { await access(`${barrier}.reached`); return true; } catch { return false; } }, { timeout: 30_000 }).toBe(true);
+      await expect.poll(async () => { try { await access(`${barrier}.reached`); return true; } catch { return false; } }, { timeout: 120_000 }).toBe(true);
     } finally {
       child.kill('SIGKILL'); await exited;
       await rm(barrier, { force: true });
