@@ -2,7 +2,7 @@ import { readFile, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { runCli } from '../src/cli.js';
-import { fakeClient, makeFixture, RUNNING_STATUS, type FakeDaemon } from './helpers.js';
+import { emptyDaemon, fakeClient, makeFixture, RUNNING_STATUS, type FakeDaemon } from './helpers.js';
 
 async function run(argv: readonly string[], env: NodeJS.ProcessEnv, daemon: FakeDaemon): Promise<{ code: number; out: string; err: string }> {
   let out = '';
@@ -13,7 +13,6 @@ async function run(argv: readonly string[], env: NodeJS.ProcessEnv, daemon: Fake
   });
   return { code, out, err };
 }
-const emptyDaemon = (): FakeDaemon => ({ providers: {}, refreshed: [], connects: 0 });
 
 describe('paseo-room CLI', () => {
   it('is a dry run by default and writes nothing', async () => {
@@ -153,5 +152,79 @@ describe('provider-level pins', () => {
     const verified = await run(['verify'], fixture.env, daemon);
     expect(verified.code).toBe(1);
     expect(verified.out).toContain('Paseo providers are missing or differ');
+  });
+});
+
+describe('agent profiles', () => {
+  const ids = (daemon: FakeDaemon): string[] => daemon.agentProfiles.map(entry => String(entry.id)).sort();
+
+  it('seats one picker preset per seat, pointing at that seat provider', async () => {
+    const fixture = await makeFixture();
+    const daemon = emptyDaemon();
+    await run(['setup', '--agent', 'codex', '--agent', 'claude', '--apply'], fixture.env, daemon);
+    expect(ids(daemon)).toEqual([
+      'room-claude-lead', 'room-claude-peer', 'room-claude-supervisor',
+      'room-codex-lead', 'room-codex-peer', 'room-codex-supervisor',
+    ]);
+    const lead = daemon.agentProfiles.find(entry => entry.id === 'room-codex-lead');
+    expect(lead).toMatchObject({ name: 'Codex Lead', provider: 'codex-lead' });
+    // Effort is a per-seat policy: Supervisor only routes, so it starts cheap.
+    const effort = (id: string): unknown => daemon.agentProfiles.find(entry => entry.id === id)?.thinkingOptionId;
+    expect([effort('room-codex-supervisor'), effort('room-codex-lead'), effort('room-codex-peer')])
+      .toEqual(['low', 'high', 'high']);
+    // Neither seat starts on the delegating top option.
+    for (const entry of daemon.agentProfiles) expect(['ultra', 'ultracode']).not.toContain(entry.thinkingOptionId);
+    // Lead reads these through list_profiles when it picks a seat to open.
+    expect(String(daemon.agentProfiles.find(entry => entry.id === 'room-codex-lead')?.notes)).toContain('Creates Peer seats only');
+  });
+
+  it('leaves profiles it does not own alone, and keeps operator tuning on the ones it does', async () => {
+    const fixture = await makeFixture();
+    const daemon = { ...emptyDaemon(), agentProfiles: [{ id: 'mine', name: 'My preset', provider: 'codex' }] };
+    await run(['setup', '--apply'], fixture.env, daemon);
+    expect(daemon.agentProfiles[0]).toEqual({ id: 'mine', name: 'My preset', provider: 'codex' });
+
+    // The operator retunes a room seat and renames it; setup restores the name it owns
+    // and keeps the model and effort, which it only ever seeds.
+    const seat = daemon.agentProfiles.find(entry => entry.id === 'room-codex-peer');
+    if (!seat) throw new Error('expected the Peer profile');
+    Object.assign(seat, { name: 'renamed', model: 'gpt-5.5', thinkingOptionId: 'max', icon: 'bolt' });
+    await run(['setup', '--apply'], fixture.env, daemon);
+    expect(daemon.agentProfiles.find(entry => entry.id === 'room-codex-peer'))
+      .toMatchObject({ name: 'Codex Peer', model: 'gpt-5.5', thinkingOptionId: 'max', icon: 'bolt' });
+    expect(ids(daemon)).toEqual(['mine', 'room-codex-lead', 'room-codex-peer', 'room-codex-supervisor']);
+  });
+
+  it('drops the profiles of a seat the new selection no longer covers', async () => {
+    const fixture = await makeFixture();
+    const daemon = emptyDaemon();
+    await run(['setup', '--agent', 'codex', '--agent', 'claude', '--apply'], fixture.env, daemon);
+    await run(['setup', '--agent', 'codex', '--apply'], fixture.env, daemon);
+    expect(ids(daemon)).toEqual(['room-codex-lead', 'room-codex-peer', 'room-codex-supervisor']);
+  });
+
+  it('verify fails when a room profile is deleted, and remove clears only the room profiles', async () => {
+    const fixture = await makeFixture();
+    const daemon = { ...emptyDaemon(), agentProfiles: [{ id: 'mine', name: 'My preset', provider: 'codex' }] };
+    await run(['setup', '--apply'], fixture.env, daemon);
+    daemon.agentProfiles = daemon.agentProfiles.filter(entry => entry.id !== 'room-codex-lead');
+    const drifted = await run(['verify'], fixture.env, daemon);
+    expect(drifted.code).toBe(1);
+    expect(drifted.out).toContain('agent profiles are missing or differ');
+
+    await run(['remove', '--apply'], fixture.env, daemon);
+    expect(ids(daemon)).toEqual(['mine']);
+  });
+});
+
+describe('agent profiles', () => {
+  // One write replaces the whole host array, so an unchanged room must not issue one.
+  it('does not rewrite the host profile array when nothing about them changed', async () => {
+    const fixture = await makeFixture();
+    const daemon = emptyDaemon();
+    await run(['setup', '--apply'], fixture.env, daemon);
+    const written = daemon.agentProfiles;
+    await run(['setup', '--apply'], fixture.env, daemon);
+    expect(daemon.agentProfiles).toBe(written);
   });
 });

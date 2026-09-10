@@ -2,7 +2,7 @@ import { stat } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 import { runCli } from '../src/cli.js';
 import type { Prompts } from '../src/wizard.js';
-import { fakeClient, makeFixture, type FakeDaemon } from './helpers.js';
+import { emptyDaemon, fakeClient, makeFixture, type FakeDaemon } from './helpers.js';
 
 /** Scripted answers for the no-argument path; a symbol means the user cancelled. */
 function scripted(answers: { action: string; agents?: string[]; confirm?: boolean | symbol }): Prompts {
@@ -23,7 +23,7 @@ async function wizard(prompts: Prompts, env: NodeJS.ProcessEnv, daemon: FakeDaem
 describe('the no-argument wizard', () => {
   it('previews, then applies once confirmed', async () => {
     const fixture = await makeFixture();
-    const daemon: FakeDaemon = { providers: {}, refreshed: [], connects: 0 };
+    const daemon: FakeDaemon = emptyDaemon();
     const result = await wizard(scripted({ action: 'setup', agents: ['codex'], confirm: true }), fixture.env, daemon);
     expect(result.code).toBe(0);
     expect(Object.keys(daemon.providers)).toHaveLength(3);
@@ -32,7 +32,7 @@ describe('the no-argument wizard', () => {
 
   it('changes nothing when the confirmation is declined', async () => {
     const fixture = await makeFixture();
-    const daemon: FakeDaemon = { providers: {}, refreshed: [], connects: 0 };
+    const daemon: FakeDaemon = emptyDaemon();
     const result = await wizard(scripted({ action: 'setup', confirm: false }), fixture.env, daemon);
     expect(result.out).toContain('Cancelled');
     expect(daemon.providers).toEqual({});
@@ -41,7 +41,7 @@ describe('the no-argument wizard', () => {
 
   it('treats a cancelled prompt as a no-op', async () => {
     const fixture = await makeFixture();
-    const daemon: FakeDaemon = { providers: {}, refreshed: [], connects: 0 };
+    const daemon: FakeDaemon = emptyDaemon();
     const cancel = Symbol('cancel');
     const result = await wizard({ ...scripted({ action: 'setup' }), select: () => Promise.resolve(cancel) }, fixture.env, daemon);
     expect(result.code).toBe(0);

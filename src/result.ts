@@ -7,7 +7,7 @@ export interface Check {
 }
 export interface Operation {
   readonly action: 'create' | 'update' | 'remove' | 'noop';
-  readonly kind: 'dir' | 'file' | 'link' | 'provider';
+  readonly kind: 'dir' | 'file' | 'link' | 'provider' | 'profile';
   readonly target: string;
 }
 export type Outcome = 'ok' | 'changes-planned' | 'failed';

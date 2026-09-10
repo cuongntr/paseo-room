@@ -14,6 +14,20 @@ export interface Provider {
   /** Native tools the seat must not receive, whatever the agent's own config says. */
   readonly disallowedTools?: readonly string[];
 }
+/**
+ * A saved preset in Paseo's agent picker, and what its `list_profiles` tool shows an
+ * orchestrating agent. Paseo keeps these in one host-wide array, so the room owns only
+ * the fields below and leaves every other field on an existing entry alone.
+ */
+export interface Profile {
+  readonly id: string;
+  readonly name: string;
+  readonly provider: string;
+  /** Seeded when the profile is created; the operator's later choice is left in place. */
+  readonly thinkingOptionId: string;
+  readonly notes: string;
+}
+
 /** Provider-level pins: what the room must hold regardless of the agent's own config. */
 export type ProviderPins = Pick<Provider, 'params' | 'disallowedTools'>;
 export interface AgentPlan {

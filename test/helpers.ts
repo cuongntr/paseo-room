@@ -41,8 +41,12 @@ async function script(path: string, output: string): Promise<void> {
 
 export interface FakeDaemon {
   providers: Record<string, unknown>;
+  agentProfiles: Record<string, unknown>[];
   refreshed: string[];
   connects: number;
+}
+export function emptyDaemon(): FakeDaemon {
+  return { providers: {}, agentProfiles: [], refreshed: [], connects: 0 };
 }
 /** Stands in for the Paseo daemon: config.get/patch over an in-memory object. */
 export function fakeClient(state: FakeDaemon): ClientFactory {
@@ -50,12 +54,14 @@ export function fakeClient(state: FakeDaemon): ClientFactory {
     connect: () => { state.connects += 1; return Promise.resolve(); },
     close: () => Promise.resolve(),
     config: {
-      get: () => Promise.resolve({ config: { providers: state.providers } }),
-      patch: (patch: { providers?: Record<string, unknown>; removeProviders?: string[] }) => {
+      get: () => Promise.resolve({ config: { providers: state.providers, agentProfiles: state.agentProfiles } }),
+      patch: (patch: { providers?: Record<string, unknown>; removeProviders?: string[]; agentProfiles?: Record<string, unknown>[] }) => {
         if (patch.providers) Object.assign(state.providers, patch.providers);
         const removed = new Set(patch.removeProviders ?? []);
         state.providers = Object.fromEntries(Object.entries(state.providers).filter(([id]) => !removed.has(id)));
-        return Promise.resolve({ config: { providers: state.providers } });
+        // Paseo replaces the whole array, so the fake must too or a drop would never stick.
+        if (patch.agentProfiles) state.agentProfiles = patch.agentProfiles;
+        return Promise.resolve({ config: { providers: state.providers, agentProfiles: state.agentProfiles } });
       },
     },
     providers: {

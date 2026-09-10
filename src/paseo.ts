@@ -3,7 +3,7 @@ import { gte, valid } from 'semver';
 import { z } from 'zod';
 import type { Layout } from './layout.js';
 import { fail, pass, type Check } from './result.js';
-import type { Provider } from './agents/types.js';
+import type { Profile, Provider } from './agents/types.js';
 import { probe, which } from './which.js';
 
 export const MINIMUM_VERSION = '0.8.0-beta.1';
@@ -76,12 +76,22 @@ export async function checkDaemon(layout: Layout, env: NodeJS.ProcessEnv = proce
   catch { return assessStatus(undefined); }
 }
 
-const configSchema = z.object({ config: z.object({ providers: z.record(z.string(), z.unknown()).optional() }) });
+const configSchema = z.object({
+  config: z.object({
+    providers: z.record(z.string(), z.unknown()).optional(),
+    // Read loosely: entries carry operator fields the room neither knows nor touches.
+    agentProfiles: z.array(z.record(z.string(), z.unknown())).optional(),
+  }),
+});
+export type LiveProfile = Record<string, unknown>;
 
 export interface Session {
   readProviders(): Promise<Record<string, unknown>>;
   writeProviders(providers: Readonly<Record<string, Provider>>): Promise<void>;
   removeProviders(ids: readonly string[]): Promise<void>;
+  readProfiles(): Promise<readonly LiveProfile[]>;
+  /** Paseo has no remove-one call for profiles, so this replaces the whole array. */
+  writeProfiles(profiles: readonly LiveProfile[]): Promise<void>;
   refresh(ids: readonly string[]): Promise<void>;
 }
 export type ClientFactory = (config: PaseoClientConfig) => PaseoClient;
@@ -116,6 +126,13 @@ export async function withSession<T>(
       async removeProviders(ids) {
         await client.config.patch({ removeProviders: [...ids] });
       },
+      async readProfiles() {
+        const response = configSchema.parse(await client.config.get());
+        return response.config.agentProfiles ?? [];
+      },
+      async writeProfiles(profiles) {
+        await client.config.patch({ agentProfiles: [...profiles] } as unknown as Parameters<PaseoClient['config']['patch']>[0]);
+      },
       async refresh(ids) {
         await client.providers.refresh({ providers: [...ids] });
       },
@@ -141,4 +158,36 @@ export function providerMatches(desired: Provider, live: unknown): boolean {
     // Pins are the room's guarantee: drifting them silently re-enables what they block.
     same(entry.params, desired.params) &&
     same(entry.disallowedTools, desired.disallowedTools);
+}
+
+/** Compare only the fields the room writes on an update; the rest are the operator's. */
+export function profileMatches(desired: Profile, live: unknown): boolean {
+  if (live === null || typeof live !== 'object') return false;
+  const entry = live as Record<string, unknown>;
+  return entry.name === desired.name && entry.provider === desired.provider && entry.notes === desired.notes;
+}
+
+/**
+ * Paseo stores every profile in one host-wide array, so the room rewrites that array
+ * rather than patching an entry. Operator profiles pass through untouched, and so does
+ * every field of a room profile that the room does not own.
+ */
+export function mergeProfiles(
+  live: readonly LiveProfile[],
+  desired: readonly Profile[],
+  drop: readonly string[],
+): LiveProfile[] {
+  const dropped = new Set(drop);
+  const wanted = new Map(desired.map(profile => [profile.id, profile]));
+  const seen = new Set<string>();
+  const kept = live
+    .filter(entry => !dropped.has(String(entry.id)))
+    .map(entry => {
+      const profile = wanted.get(String(entry.id));
+      if (!profile) return entry;
+      seen.add(profile.id);
+      // thinkingOptionId is seeded on create only, so a retuned seat survives setup.
+      return { ...entry, name: profile.name, provider: profile.provider, notes: profile.notes };
+    });
+  return [...kept, ...desired.filter(profile => !seen.has(profile.id)).map(profile => ({ ...profile }))];
 }
