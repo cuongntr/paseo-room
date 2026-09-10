@@ -45,7 +45,7 @@ export const claudeAgent: Agent = {
   pins: { disallowedTools: ['Task'] },
   async build(layout: Layout, roles: readonly Role[]): Promise<AgentPlan> {
     const home = layout.agentHome.claude;
-    const binary = await which(layout.bin.claude);
+    const binary = await which(layout.bin.claude, layout.path);
     if (!binary) {
       return { entries: [], checks: [fail('claude.bin', 'Claude Code executable not found.', 'Install Claude Code, or pass --claude-bin /path/to/claude.')] };
     }

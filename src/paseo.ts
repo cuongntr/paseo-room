@@ -61,12 +61,12 @@ export function assessStatus(raw: unknown): DaemonResult {
 }
 
 export async function checkDaemon(layout: Layout, env: NodeJS.ProcessEnv = process.env): Promise<DaemonResult> {
-  const binary = await which(layout.bin.paseo, env);
+  const binary = await which(layout.bin.paseo, layout.path);
   if (!binary) {
     return { checks: [fail('paseo.bin', 'Paseo executable not found.', 'Install Paseo, or pass --paseo-bin /path/to/paseo.')] };
   }
   const output = await probe(binary, ['daemon', 'status', '--json'], {
-    HOME: layout.home, PASEO_HOME: layout.paseoHome, PATH: env.PATH ?? '',
+    HOME: layout.home, PASEO_HOME: layout.paseoHome, PATH: layout.path,
     ...(env.PASEO_PASSWORD === undefined ? {} : { PASEO_PASSWORD: env.PASEO_PASSWORD }),
   });
   if (!output.ok) {

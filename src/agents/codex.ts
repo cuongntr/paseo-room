@@ -70,7 +70,7 @@ export const codexAgent: Agent = {
   async build(layout: Layout, roles: readonly Role[]): Promise<AgentPlan> {
     const checks: Check[] = [];
     const home = layout.agentHome.codex;
-    const binary = await which(layout.bin.codex);
+    const binary = await which(layout.bin.codex, layout.path);
     if (!binary) {
       return { entries: [], checks: [fail('codex.bin', 'Codex executable not found.', 'Install Codex, or pass --codex-bin /path/to/codex.')] };
     }
@@ -89,7 +89,7 @@ export const codexAgent: Agent = {
 
     // The catalog is optional: an older Codex simply keeps its built-in models.
     let catalogSource: string | undefined;
-    const models = await probe(binary, ['debug', 'models'], { HOME: layout.home, CODEX_HOME: home, PATH: process.env.PATH ?? '' });
+    const models = await probe(binary, ['debug', 'models'], { HOME: layout.home, CODEX_HOME: home, PATH: layout.path });
     if (models.ok) {
       try { catalogSource = renderCatalog(JSON.parse(models.stdout)); } catch { catalogSource = undefined; }
     }
