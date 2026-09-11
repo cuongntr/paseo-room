@@ -22,7 +22,12 @@ export interface Provider {
 export interface Profile {
   readonly id: string;
   readonly name: string;
+  /** Stable keys from Paseo's profile appearance registry. */
+  readonly icon: string;
+  readonly color: string;
   readonly provider: string;
+  /** The no-prompt mode the seat starts in. */
+  readonly modeId: string;
   /** Seeded when the profile is created; the operator's later choice is left in place. */
   readonly thinkingOptionId: string;
   readonly notes: string;
@@ -41,6 +46,10 @@ export interface Agent {
   readonly label: string;
   /** The environment variable that points this agent at a role home. */
   readonly homeEnv: string;
+  /** Provider environment pins needed to close native control-plane paths. */
+  readonly providerEnv?: Readonly<Record<string, string>>;
+  /** Paseo mode id that implements this room's bypass-permission default. */
+  readonly defaultModeId: string;
   readonly pins: ProviderPins;
   /** Reads the operator's own config; never writes outside the room home. */
   build(layout: Layout, roles: readonly Role[]): Promise<AgentPlan>;

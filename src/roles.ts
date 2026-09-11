@@ -14,10 +14,14 @@ export const ROLE_PASEO_TOOLS: Record<Role, boolean> = { supervisor: true, lead:
  */
 export const ROLE_THINKING: Record<Role, string> = { supervisor: 'low', lead: 'high', peer: 'high' };
 
+/** Paseo profile appearance encodes the room role, independent of agent runtime. */
+export const ROLE_ICON: Record<Role, string> = { supervisor: 'eye', lead: 'compass', peer: 'code' };
+export const ROLE_COLOR: Record<Role, string> = { supervisor: 'violet', lead: 'blue', peer: 'emerald' };
+
 /** Paseo shows these to orchestrating agents, so each one says who may open the seat. */
 export const ROLE_NOTES: Record<Role, string> = {
   supervisor: 'Human-facing routing seat. Opened by Human, never by another agent.',
-  lead: 'Project technical owner. Opened by Human or Supervisor. Creates Peer seats only.',
+  lead: 'Sole project technical owner. Open only when none exists; otherwise reuse it. Creates Peer seats only.',
   peer: 'Runs one Lead brief, writing or read-only. Created by Lead, one per brief, closed with it.',
 };
 

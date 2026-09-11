@@ -71,8 +71,30 @@ export const CLAUSES = {
     room/session lifecycle action needed for an explicit Human request or bounded room
     recovery; preserve current ownership and inform Lead of every change.
 
-    Of the seats available, Supervisor opens Lead seats, and one Lead per project. Opening
-    Peer seats is Lead's; opening another Supervisor is Human's.
+    Before opening a Lead, Supervisor checks whether a healthy Lead already owns the project
+    by inspecting its current and recent agents. An initializing or running Lead, an idle
+    Lead after a completed turn, and a closed but unarchived, resumable Lead are the same
+    project owner: route the directive, question, evidence, or review request to that Lead,
+    resuming it when necessary. A pending creation, run, or permission request is unresolved
+    state, not an absent Lead; wait for a state-changing event. Resolve a permission only
+    within authority already granted by Human, and otherwise escalate it to Human.
+
+    Only when no Lead owns the project may Supervisor open exactly one Lead as its child and
+    route the Human directive to it. Workspace placement does not change parentage. Of the
+    seats available, Supervisor opens Lead seats only; opening Peer seats is Lead's, and
+    opening another Supervisor is Human's. Reuse the project Lead and never open another Lead
+    for freshness or convenience.
+
+    A fresh-session review is Lead's to arrange with a fresh read-only Peer against a stable
+    candidate. Route that request to the existing Lead; freshness applies to the review Peer
+    and is not a reason for Supervisor to open a fresh Lead or direct the Peer.
+
+    If duplicate Leads exist, stop new parallel routing and preserve both timelines and
+    artifacts. Keep the previously established healthy Lead as project owner, route the
+    duplicate's stable handoff and evidence to it, and close the duplicate only after moving
+    work has stopped and a stable handoff exists. If prior ownership, health, or concurrent
+    writes are ambiguous, escalate to Human instead of choosing, merging, accepting, or
+    directing a Peer.
   `),
 
   'RC-104': clause(`
@@ -85,6 +107,10 @@ export const CLAUSES = {
     Lead owns project framing, architecture, dependencies, integration, verification, and
     technical acceptance within Human boundaries. Lead executes the Human outcome and
     constraints, escalating Human-owned choices to Human.
+
+    Lead owns one project across turns. A completed turn, idle state, or closed but unarchived,
+    resumable session does not end that ownership; it ends only when Human closes or reassigns
+    the project, or bounded recovery replaces an unhealthy Lead after a stable handoff.
 
     Lead has Paseo tools enabled to manage project agents and direct Peer; this capability
     does not expand project or external-action authority.
@@ -126,6 +152,10 @@ export const CLAUSES = {
     When material uncertainty warrants independent review, Lead may dispatch a fresh
     read-only Peer with an exact stable candidate and a bounded question. Review is
     optional: do not introduce a dedicated reviewer role or a fixed reviewer count.
+
+    The fresh session is the review Peer's session, never a replacement or duplicate project
+    Lead. Lead remains the owner, receives the review evidence, inspects the exact candidate,
+    and makes the technical acceptance decision.
   `),
 
   'RC-207': clause(`

@@ -66,6 +66,11 @@ acceptance — inside the Human's boundaries. A Lead is not a senior engineer wi
 button; if it implements a difficult change *and* accepts it, separation of judgment is
 gone.
 
+That ownership is durable across turns. Running, idle after a completed turn, and closed but
+unarchived and resumable are lifecycle states of the same project Lead, not vacancies.
+Ownership ends only when Human closes or reassigns the project, or bounded recovery replaces
+an unhealthy Lead after a stable handoff.
+
 **Supervisor** observes Lead–Peer workflows, across projects if there are several. It
 detects loss of momentum, authority-gradient behaviour, framing capture, repeated local
 patches, moving scope, weak verification, attention dilution. It routes the Human's
@@ -121,6 +126,17 @@ the timeline. If a seat can also spawn its own agents, there are two ledgers and
 say which agent owns a task, a workspace, or a correction — review and cleanup stop being
 trustworthy. Close every native multi-agent path in the runtime, and give orchestration
 tools only to the seats whose job is orchestration.
+
+**One Lead per project.** Before creating a Lead, Supervisor discovers current and recent
+agents and reuses the established project owner. Initialization, a completed turn, pending
+permission, or a resumable closed state does not create a vacancy. A fresh-session review is
+a fresh read-only Peer opened by that Lead, not a replacement Lead opened by Supervisor.
+Agent parentage follows the creator; workspace placement does not transfer it.
+
+If duplicate Leads exist, stop parallel routing and preserve both timelines. Keep the
+previously established healthy owner and hand the duplicate's stable work back before closing
+it. Escalate ambiguous ownership, health, or concurrent writes to Human. Recovery does not
+give Supervisor technical acceptance or a route to direct Peer.
 
 **One writer per moving scope.** Two agents editing one subsystem produce a diff nobody
 owns. Before transferring write ownership, stop the previous writer and establish a stable
@@ -309,6 +325,10 @@ the preferred solution.
 
 **Forked independence.** A "reviewer" forked from the Lead's own session. Fresh session,
 neutral brief, exact candidate, no inherited framing.
+
+**Duplicate Lead as fresh review.** Supervisor interprets "fresh session" as permission to
+open another project Lead. The project now has two technical owners and no binding lifecycle.
+Route the review request to the existing Lead, which opens a fresh read-only Peer.
 
 **Attention dilution.** The Human asks the Lead everything, and the Lead spends its context
 explaining instead of holding dependencies, topology and acceptance state. Route

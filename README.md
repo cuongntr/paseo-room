@@ -6,7 +6,8 @@ using the Codex and/or Claude Code you already have installed.
 It does three things:
 
 1. Reads your existing Codex / Claude Code configuration.
-2. Writes one isolated role home per seat under `~/.paseo-room`, sharing your login, skills and plugins by symlink.
+2. Writes one isolated role home per seat under `~/.paseo-room`, sharing file-backed login
+   where supported, plus skills and plugins, by symlink.
 3. Registers those role homes with your running Paseo daemon as providers — room tools on for Supervisor and Lead, off for Peer — and adds one agent profile per seat so opening one is a single pick.
 
 Everything it creates lives in `$HOME`, under one directory it owns outright. It reads
@@ -54,7 +55,11 @@ Exit codes: `0` success, `1` a check failed, `2` bad usage.
   version. `paseo-room` checks this before touching anything, and never installs or upgrades
   Paseo for you.
 - An initialised Codex home (`~/.codex/config.toml`) and/or Claude Code home (`~/.claude`).
-  Log in to those tools yourself first; the room shares that login, it does not create one.
+  Log in to those tools yourself first; the room never creates credentials. Codex auth and
+  Claude's file-backed `.credentials.json` are shared. On macOS, Claude's default Keychain
+  login is scoped to `CLAUDE_CONFIG_DIR`, so use inherited environment auth or log in once
+  in each Claude seat instead. See Anthropic's
+  [credential-management reference](https://code.claude.com/docs/en/authentication#credential-management).
 
 ## What gets created
 
@@ -68,14 +73,17 @@ Exit codes: `0` success, `1` a check failed, `2` bad usage.
     model-catalog.json            # your catalog with native multi-agent metadata removed
     auth.json, AGENTS.md, skills, plugins, hooks.json   → symlinks into ~/.codex
   roles/claude/<role>/
-    CLAUDE.md                     # role instructions, as user memory
+    CLAUDE.md                     # your global memory + role instructions
     settings.json                 # your settings.json + PASEO_ROOM_ROLE
     .claude.json                  # seeded once from yours, then owned by Claude
-    .credentials.json, skills, plugins, commands, hooks → symlinks into ~/.claude
+    .credentials.json, skills, plugins, commands, hooks, rules, output-styles,
+    keybindings.json, themes                         → symlinks into ~/.claude
 ```
 
 Each seat keeps its own sessions, history and projects inside its role home, so three seats
-never share conversation state — but they do share one login and one set of skills.
+never share conversation state. Skills and file-backed credentials are shared by reference.
+The filename is `.credentials.json` (plural); on macOS Claude normally uses Keychain instead,
+and keys that entry to the configured directory rather than sharing it across role homes.
 
 ## What the room changes
 
@@ -105,7 +113,10 @@ agent's own configuration:
 | Pin | Applies to | Why |
 |---|---|---|
 | `params: {sandbox_mode, approval_policy}` | Codex | Without it Paseo sends its own mode preset (default `auto-review`) to the Codex app-server, and that outranks the generated `config.toml`. |
-| `disallowedTools: ["Task"]` | Claude | Claude's own subagents would be a second control plane. This is the counterpart of Codex's `[agents].enabled = false`. |
+| `disallowedTools` for `Task`, `Agent`, `Workflow`, coordination, task-list, cron and team tools | Claude | Blocks legacy/current subagents, dynamic workflows, cross-session coordination and agent teams. |
+| `disableAgentView: true` + `CLAUDE_CODE_DISABLE_AGENT_VIEW=1` | Claude | Disables Claude's separate background-agent control plane across settings scopes and at launch. |
+| `disableWorkflows: true` + `CLAUDE_CODE_DISABLE_WORKFLOWS=1` | Claude | Disables dynamic workflows through every entry point, beyond denying the `Workflow` tool. |
+| `crossSessionInbound: "refuse"` | Claude | Prevents another Claude session from injecting a turn into a room seat. |
 | `paseoTools: {enabled}` | both | Room tools for Supervisor and Lead, never for Peer. |
 
 It also saves one **agent profile** per seat, which is what the Paseo picker lists under
@@ -115,18 +126,31 @@ Profiles. A profile is a preset, not a constraint: it decides where a seat *star
 |---|---|---|
 | `provider` | that seat's provider | the room — repaired on every `setup --apply` |
 | `name` | e.g. `Codex Lead` | the room |
+| `icon` | `eye` / `compass` / `code` for Supervisor / Lead / Peer | the room |
+| `color` | `violet` / `blue` / `emerald` for Supervisor / Lead / Peer | the room |
+| `modeId` | `full-access` for Codex, `bypassPermissions` for Claude | the room |
 | `notes` | who may open this seat, shown to orchestrating agents by Paseo's `list_profiles` | the room |
 | `thinkingOptionId` | `low` for Supervisor, `high` for Lead and Peer | seeded once, then yours |
-| `model`, `modeId`, `icon`, `color` | never written | yours |
+| `model` | never written | yours |
 
 Supervisor starts low because it routes rather than reasons. Neither seat starts on the top
 option — Codex's `ultra` and Claude's `ultracode` advertise automatic task delegation, which
-is a second control plane. Retune any seat in Paseo and `setup` will leave your choice alone;
-profiles you created yourself are never touched.
+is a second control plane. `setup` restores room-owned identity, appearance and mode fields,
+but leaves your model and reasoning choice alone; profiles you created yourself are never
+touched.
 
-The Claude permission mode is deliberately **not** set here. Paseo passes `--permission-mode`
-per agent (`plan`, `default`, `acceptEdits`, `auto`, `bypassPermissions`; default `auto`), and
-a command-line flag beats anything in `settings.json`. Choose the mode in Paseo.
+Claude starts in Paseo's `bypassPermissions` mode, while Codex starts in its equivalent
+`full-access` mode. Claude deny rules still apply in bypass mode, so native orchestration
+stays unavailable. The room does not write `permissions.defaultMode` to `settings.json`:
+Paseo passes the profile's mode as a command-line session setting, which outranks that file.
+The two Claude disable environment keys are pinned in both the provider and generated
+`settings.json`, because Claude applies settings-file environment values after launch values.
+The generated top-level `disableAgentView` and `disableWorkflows` settings are also forced to
+`true`; their restrictive value cannot be weakened by another ordinary settings scope.
+
+No default model is pinned. The profile schema supports `model`, but leaving it absent lets
+each provider use its current default and avoids silently choosing a cost/capability tier for
+the operator.
 
 ## Keeping the room current
 
@@ -147,22 +171,29 @@ unrelated Paseo providers alone.
 The exact wording every seat reads lives in [`src/room/clauses.ts`](src/room/clauses.ts).
 In short:
 
-- **Supervisor** routes Human directives to Lead and observes. It does not edit project work,
-  run validation, or decide technical acceptance. Room tools: on.
-- **Lead** owns framing, decomposition, routing, integration and technical acceptance. One
-  moving write scope has exactly one owner, and at most one Peer is writable at a time.
-  Room tools: on.
+- **Supervisor** routes Human directives to Lead and observes. Before opening a seat it checks
+  for and reuses the project's existing Lead, including an idle or resumable Lead. It does
+  not edit project work, run validation, direct Peer, or decide technical acceptance. Room
+  tools: on.
+- **Lead** is the durable owner of one project across turns. It owns framing, decomposition,
+  routing, integration and technical acceptance. One moving write scope has exactly one
+  owner, and at most one Peer is writable at a time. Room tools: on.
 - **Peer** owns one bounded outcome, may challenge a failed premise with
   `REOPEN_REQUEST` / `DEPENDENCY_REQUEST` / `BLOCKED`, hands back a reproducible candidate,
   and never accepts its own difficult change. Room tools: off.
 
 Human keeps product goals, priority, material cost, external effects and irreversible risk.
 
-One rule has no enforcement behind it and so is stated in the contract instead: **Lead opens
-Peer seats only, and Supervisor opens Lead seats.** Paseo takes the seat to open as a plain
-provider id, so nothing below the contract stops a Lead from opening a second Lead. If you
-ever see two Leads on one project, stop — that is two orchestrators, and the ownership rules
-stop holding.
+One rule has no runtime enforcement behind it and so is procedural and regression-tested in
+the contract instead: **one Lead owns one project; Supervisor discovers and reuses it, while
+Lead alone opens Peer seats.** A completed turn, idle state, pending permission, or resumable
+closed session is not an absent Lead. Fresh independent review means that existing Lead opens
+a fresh read-only Peer; it never means Supervisor opens another Lead.
+
+Paseo takes the seat to open as a plain provider id, so if two Leads nevertheless appear,
+Supervisor stops parallel routing, preserves both histories, keeps the previously established
+healthy owner, and closes the duplicate only after a stable handoff. Ambiguous ownership,
+health, or concurrent writes go back to Human rather than being guessed or merged.
 
 Every seat also carries a **default workspace protocol** — topology by difficulty,
 verification, review, repository conventions — so a project has that layer without doing
@@ -179,8 +210,8 @@ decide the route.
 
 1. **Talk to one seat.** Six providers is not six windows. One project: open **Lead**. Several
    projects at once, or you want an audit trail of directives: open **Supervisor** only, and
-   let it open the Leads. Opening both and then talking to Lead makes Supervisor an expensive
-   ornament with an incomplete record.
+   let it discover and reuse one Lead per project. Opening both and then talking to Lead makes
+   Supervisor an expensive ornament with an incomplete record.
 2. **Say the outcome, not the plan.** You may direct the technical route, but every time you
    do you take the acceptance risk back from Lead — and an orchestrator who has already solved
    the problem leaves the worker able to be right about only one thing.
@@ -203,7 +234,8 @@ and the technical acceptance are yours.
 With both Codex and Claude seated, the highest-value use of the second family is not splitting
 work at random — it is **independent review**. A read-only Peer from a different model family
 reading a candidate is more independent than a fresh session of the family that wrote it. Run
-one project on one family and keep the other for the review seat.
+one project on one family and keep the other for the review seat. Ask the existing Lead for
+that review; Supervisor must route the request to Lead rather than opening a fresh Lead.
 
 ## Documentation
 

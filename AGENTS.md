@@ -31,8 +31,9 @@ That design is in git history before the `v2` rewrite. Do not reintroduce it.
   of it. Role text goes in `developer_instructions` / `CLAUDE.md`.
 - **Pin at the provider level whatever the agent's own config cannot guarantee.** A Paseo
   provider entry outranks the agent config: `params` for Codex sandbox/approval,
-  `disallowedTools` for Claude's `Task`. `providerMatches` compares these, so `verify`
-  catches their removal — a pin that can be silently dropped is not a guarantee.
+  `disallowedTools` and environment pins for Claude's native agent surfaces.
+  `providerMatches` compares these, so `verify` catches their removal — a pin that can be
+  silently dropped is not a guarantee.
 - **Paseo is the only control plane.** Every native multi-agent path stays closed. If you
   add an agent adapter, close its equivalent before shipping it.
 - **Peer never gets room tools.** `ROLE_PASEO_TOOLS` in `src/roles.ts` is the single source
@@ -64,7 +65,8 @@ docs/design.md                              # this tool's rationale; keep curren
    does that from `homeEnv` and `pins`, so the tool policy stays in one place.
 3. Close the agent's native multi-agent path in `pins` or in the generated config, and say
    how in `docs/design.md` §3.
-4. Share the operator's credentials and skills by symlink; never copy secrets.
+4. Share supported file-backed credentials and skills by symlink; never copy secrets or
+   claim that a platform credential store follows a role home.
 5. Register it in `AGENTS` in `src/commands.ts`.
 
 ## Working on the role contract

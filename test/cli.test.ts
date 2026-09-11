@@ -133,12 +133,22 @@ describe('provider-level pins', () => {
     }
   });
 
-  it('denies Claude the Task tool so Paseo stays the only control plane', async () => {
+  it('denies Claude native orchestration tools so Paseo stays the only control plane', async () => {
     const fixture = await makeFixture();
     const daemon = emptyDaemon();
     await run(['setup', '--agent', 'claude', '--apply'], fixture.env, daemon);
     for (const id of ['claude-supervisor', 'claude-lead', 'claude-peer']) {
-      expect(daemon.providers[id]).toMatchObject({ disallowedTools: ['Task'] });
+      expect(daemon.providers[id]).toMatchObject({
+        env: {
+          CLAUDE_CODE_DISABLE_AGENT_VIEW: '1',
+          CLAUDE_CODE_DISABLE_WORKFLOWS: '1',
+        },
+        disallowedTools: [
+          'Task', 'Agent', 'Workflow', 'ListAgents', 'SendMessage', 'TeamCreate', 'TeamDelete',
+          'TaskCreate', 'TaskGet', 'TaskList', 'TaskUpdate',
+          'CronCreate', 'CronDelete', 'CronList',
+        ],
+      });
     }
   });
 
@@ -149,6 +159,17 @@ describe('provider-level pins', () => {
     const live = { ...(daemon.providers['codex-lead'] as Record<string, unknown>) };
     delete live.params;
     daemon.providers['codex-lead'] = live;
+    const verified = await run(['verify'], fixture.env, daemon);
+    expect(verified.code).toBe(1);
+    expect(verified.out).toContain('Paseo providers are missing or differ');
+  });
+
+  it('verify fails when a Claude control-plane environment pin is removed', async () => {
+    const fixture = await makeFixture();
+    const daemon = emptyDaemon();
+    await run(['setup', '--agent', 'claude', '--apply'], fixture.env, daemon);
+    const live = daemon.providers['claude-lead'] as { env: Record<string, string> };
+    delete live.env.CLAUDE_CODE_DISABLE_WORKFLOWS;
     const verified = await run(['verify'], fixture.env, daemon);
     expect(verified.code).toBe(1);
     expect(verified.out).toContain('Paseo providers are missing or differ');
@@ -167,15 +188,27 @@ describe('agent profiles', () => {
       'room-codex-lead', 'room-codex-peer', 'room-codex-supervisor',
     ]);
     const lead = daemon.agentProfiles.find(entry => entry.id === 'room-codex-lead');
-    expect(lead).toMatchObject({ name: 'Codex Lead', provider: 'codex-lead' });
+    expect(lead).toMatchObject({
+      name: 'Codex Lead', provider: 'codex-lead', modeId: 'full-access', icon: 'compass', color: 'blue',
+    });
+    expect(daemon.agentProfiles.find(entry => entry.id === 'room-claude-lead'))
+      .toMatchObject({ modeId: 'bypassPermissions', icon: 'compass', color: 'blue' });
+    expect(daemon.agentProfiles.find(entry => entry.id === 'room-codex-supervisor'))
+      .toMatchObject({ icon: 'eye', color: 'violet' });
+    expect(daemon.agentProfiles.find(entry => entry.id === 'room-codex-peer'))
+      .toMatchObject({ icon: 'code', color: 'emerald' });
+    for (const entry of daemon.agentProfiles) expect(entry.model).toBeUndefined();
     // Effort is a per-seat policy: Supervisor only routes, so it starts cheap.
     const effort = (id: string): unknown => daemon.agentProfiles.find(entry => entry.id === id)?.thinkingOptionId;
     expect([effort('room-codex-supervisor'), effort('room-codex-lead'), effort('room-codex-peer')])
       .toEqual(['low', 'high', 'high']);
     // Neither seat starts on the delegating top option.
     for (const entry of daemon.agentProfiles) expect(['ultra', 'ultracode']).not.toContain(entry.thinkingOptionId);
-    // Lead reads these through list_profiles when it picks a seat to open.
-    expect(String(daemon.agentProfiles.find(entry => entry.id === 'room-codex-lead')?.notes)).toContain('Creates Peer seats only');
+    // Orchestrators read these through list_profiles before choosing a seat to open.
+    const leadNotes = String(daemon.agentProfiles.find(entry => entry.id === 'room-codex-lead')?.notes);
+    expect(leadNotes).toContain('Sole project technical owner');
+    expect(leadNotes).toContain('Open only when none exists; otherwise reuse it');
+    expect(leadNotes).toContain('Creates Peer seats only');
   });
 
   it('leaves profiles it does not own alone, and keeps operator tuning on the ones it does', async () => {
@@ -184,14 +217,19 @@ describe('agent profiles', () => {
     await run(['setup', '--apply'], fixture.env, daemon);
     expect(daemon.agentProfiles[0]).toEqual({ id: 'mine', name: 'My preset', provider: 'codex' });
 
-    // The operator retunes a room seat and renames it; setup restores the name it owns
-    // and keeps the model and effort, which it only ever seeds.
+    // The operator retunes a room seat and renames it; setup restores the room identity
+    // and permission default, while keeping model and effort as operator choices.
     const seat = daemon.agentProfiles.find(entry => entry.id === 'room-codex-peer');
     if (!seat) throw new Error('expected the Peer profile');
-    Object.assign(seat, { name: 'renamed', model: 'gpt-5.5', thinkingOptionId: 'max', icon: 'bolt' });
+    Object.assign(seat, {
+      name: 'renamed', model: 'gpt-5.5', thinkingOptionId: 'max', modeId: 'auto', icon: 'bolt', color: 'red',
+    });
     await run(['setup', '--apply'], fixture.env, daemon);
     expect(daemon.agentProfiles.find(entry => entry.id === 'room-codex-peer'))
-      .toMatchObject({ name: 'Codex Peer', model: 'gpt-5.5', thinkingOptionId: 'max', icon: 'bolt' });
+      .toMatchObject({
+        name: 'Codex Peer', model: 'gpt-5.5', thinkingOptionId: 'max',
+        modeId: 'full-access', icon: 'code', color: 'emerald',
+      });
     expect(ids(daemon)).toEqual(['mine', 'room-codex-lead', 'room-codex-peer', 'room-codex-supervisor']);
   });
 

@@ -15,8 +15,8 @@ Three of its invariants drive almost every decision below:
 
 - **One control plane.** Paseo owns agent lifecycle, so every native multi-agent path in
   the agent runtime must be closed.
-- **Role separation needs isolated runtime state.** Three seats, three configurations, one
-  login.
+- **Role separation needs isolated runtime state.** Three seats need three configurations;
+  authentication is shared only through mechanisms the runtime officially supports.
 - **Capability discipline.** Orchestration tools go to the seats that orchestrate.
 
 ## 2. Closing the runtime's own multi-agent paths
@@ -27,7 +27,7 @@ a task, a workspace or a correction. Every native path is therefore closed, per 
 | Agent | Mechanism |
 |---|---|
 | Codex | `[agents].enabled = false`, `features.multi_agent = false`, `features.multi_agent_v2 = false`, **and** a model catalog with `multi_agent_version` nulled |
-| Claude | provider-level `disallowedTools: ["Task"]`, and the operator's `agents/` directory is *not* linked into a seat |
+| Claude | provider-level `disallowedTools` blocks legacy `Task`, current `Agent`, `Workflow`, cross-session, shared task-list, cron and team tools; environment pins close background Agent View and dynamic workflows; `crossSessionInbound: "refuse"` rejects messages from other Claude sessions; the operator's `agents/` and `workflows/` directories are *not* linked into a seat |
 
 The catalog scrub is not redundant with the feature flags: bundled model metadata can still
 advertise native collaboration v1 or v2 even when both flags are off. That was found the
@@ -68,15 +68,56 @@ Codex reads one `config.toml`, from `CODEX_HOME`. Claude Code reads one config
 directory, from `CLAUDE_CONFIG_DIR`. Giving three seats three different contracts means
 giving them three different homes — there is no per-invocation flag that does it.
 
-But three homes must not mean three logins or three copies of your skills. So each role
-home is generated content plus symlinks back to the resources you own:
+Each role home is generated content plus symlinks back to the resources you own. This avoids
+copying skills and file-backed credentials, but cannot merge credential stores the runtime
+itself namespaces per config directory:
 
 - generated: `config.toml` / `settings.json`, the role contract, the model catalog
-- linked: credentials, `AGENTS.md`, skills, plugins, hooks, commands
+- linked where applicable: credentials, `AGENTS.md`, skills, plugins, hooks, commands,
+  rules, output styles, keybindings and themes
 - private per seat: sessions, history, projects — the runtime state each seat accumulates
 
 `agents/` is pointedly absent from the Claude link list. Linking it would import your
-subagent definitions into every seat and reopen §3.
+subagent definitions into every seat and reopen §2. `workflows/` is absent for the same
+reason. Claude's current built-in tool name is `Agent`, while older releases used `Task`;
+both names stay denied. Current Claude also exposes `Workflow` for scripts that orchestrate
+many subagents; cross-session and agent-team tools are denied too, including every shared
+task-list and cron tool that teammates retain. Agent View and dynamic workflows also have
+entry points beyond model tool calls, so the room pins the documented
+`CLAUDE_CODE_DISABLE_AGENT_VIEW=1` and `CLAUDE_CODE_DISABLE_WORKFLOWS=1` environment controls
+in both the provider launch environment and generated `settings.env`. The duplication is
+intentional: Claude applies settings-file environment values after inherited launch values,
+so an operator value of `0` would otherwise undo the provider pin. Generated settings also
+force `disableAgentView: true` and `disableWorkflows: true`. Anthropic defines these disable
+values as restrictive: another ordinary settings scope or paired enable value cannot turn
+the feature back on. That closes the higher-precedence project/local-settings case too.
+Bare-name deny entries remove tools from Claude's context and still apply under
+`bypassPermissions`.
+
+Cross-session messaging is bidirectional. Denying `ListAgents` and `SendMessage` stops a room
+seat sending, but does not stop another Claude session delivering a message to it; in bypass
+mode that message can start a turn without an approval prompt. Each generated `settings.json`
+therefore overrides the operator's receiving policy with `crossSessionInbound: "refuse"`.
+Together these pins close Claude's documented
+[parallel-agent surfaces](https://code.claude.com/docs/en/agents) and
+[cross-session inbound channel](https://code.claude.com/docs/en/cross-session-messaging).
+
+Claude authentication has one platform-specific limit. The exact fallback filename is
+`.credentials.json` (plural), and linking it shares file-backed login on Linux, Windows and
+the macOS fallback path. Normal macOS login lives in Keychain, however, and Claude keys that
+entry to `CLAUDE_CONFIG_DIR`; three role homes therefore mean three Keychain namespaces.
+The room cannot copy or re-key a secret without violating its ownership boundary. Operators
+must use inherited environment authentication or log in once per Claude seat on macOS. This
+follows Anthropic's documented
+[credential storage](https://code.claude.com/docs/en/authentication#credential-management), plus the
+observed result of running `claude auth status` under an isolated config directory.
+
+Claude's global `CLAUDE.md` is operator-authored configuration, so it is folded into each
+generated role memory before the room contract. Top-level personal `mcpServers` from the
+source `.claude.json` are seeded with stable UI state, while `oauthAccount` and project
+history are excluded and subsequent role state remains private. The legacy default source is
+`~/.claude.json`; when `--claude-home` / `CLAUDE_CONFIG_DIR` is set, the source is
+`<CLAUDE_CONFIG_DIR>/.claude.json`.
 
 ## 5. Provider entries outrank agent configuration
 
@@ -107,12 +148,12 @@ Hence:
 "params": { "sandbox_mode": "danger-full-access", "approval_policy": "never" }
 ```
 
-Claude is different: its permission mode arrives as a command-line flag
-(`--permission-mode`, one of `plan`, `default`, `acceptEdits`, `auto`,
-`bypassPermissions`, default `auto`), and the Claude adapter does not read
+Claude is different: its permission mode arrives as a command-line session setting
+(`--permission-mode`, including `bypassPermissions`), and the Claude adapter does not read
 `providerOptions` at all. A flag beats `settings.json`, so writing
-`permissions.defaultMode` there would be dead configuration. The room does not set it;
-the operator picks the mode in Paseo.
+`permissions.defaultMode` there would be dead configuration. The room profile owns
+`modeId: "bypassPermissions"`; Codex uses the equivalent `full-access` profile mode in
+addition to its provider pins.
 
 `providerMatches` in `src/paseo.ts` compares these pins, so `verify` fails if one is
 removed from the live config. A pin that can be silently dropped is not a guarantee.
@@ -136,10 +177,14 @@ being one array for the whole host rather than a keyed map:
   the closed sets in `roles.ts`, so nothing is matched by prefix and a profile of the
   operator's cannot be mistaken for one of the room's.
 
-Only `provider`, `name` and `notes` are owned and repaired. `thinkingOptionId` is
-**seeded on create and then left alone**, which is the same bargain as Claude's
-`.claude.json`: the room wants a sensible starting point, not the last word on how you
-tune a seat. `model` is deliberately never written — pinning it would mean carrying
+`provider`, `name`, `notes`, `modeId`, `icon` and `color` are owned and repaired. The
+appearance encodes role rather than runtime: eye/violet for Supervisor, compass/blue for
+Lead, and code/emerald for Peer. These are stable keys from Paseo's profile registries; the
+fields themselves are optional in Paseo's current
+[`AgentProfileSchema`](https://github.com/getpaseo/paseo/blob/main/packages/protocol/src/messages.ts).
+`thinkingOptionId` is **seeded on create and then left alone**, which is the same bargain as
+Claude's `.claude.json`: the room wants a sensible starting point, not the last word on how
+you tune a seat. `model` is deliberately never written — pinning it would mean carrying
 model ids like `gpt-5.6-sol` in this repository and re-vendoring them as they age, the
 same debt §6 refuses for base prompts.
 
@@ -154,7 +199,7 @@ also neuters that option is **unverified**.
 `list_profiles`, so it is where each seat says who may open it — the same rule §5b
 states, arriving where an agent choosing a seat will actually read it.
 
-### 5b. The seat an agent may open: contract only
+### 5b. One project Lead: procedural enforcement
 
 `create_agent_request.config.provider` is `z.ZodString` — a free-form id chosen by the
 caller. Paseo has no way to say *this seat may only create those seats*. So with six
@@ -166,11 +211,30 @@ The only lever below the contract is the one already used: Peer has
 `paseoTools.enabled: false` and so cannot create anything at all. The middle of the
 hierarchy is open, and there is nothing to close it with at the configuration layer.
 
-RC-207 and the second statement of RC-103 therefore say it in words — Lead opens Peer
-seats only, Supervisor opens Lead seats — reinforced by the profile `notes` that
-`list_profiles` shows. That is weaker than a pin and should be read as such: it is
-guidance to a model, not a guarantee. Two Leads on one project is the failure to watch
-for, and the README says so to the operator too.
+There is likewise no project-scoped uniqueness constraint for Lead providers. Paseo's
+agent-scoped create operation always creates a new child; putting that child in an existing
+workspace does not reuse an agent or change its parentage. Lifecycle status is not identity:
+an idle Lead has merely completed a turn, and a closed unarchived Lead remains resumable
+under the same agent id. A pending creation or permission is unresolved state, not evidence
+that the seat is absent.
+
+RC-103 therefore gives Supervisor an explicit discovery-and-reuse procedure. Before create,
+it inspects current and recent project agents; if an established Lead is initializing,
+running, idle, waiting for permission, or closed but resumable, Supervisor routes to that
+agent. It opens exactly one child Lead only when none owns the project. Fresh-session review
+is routed to that Lead, which opens a fresh read-only Peer under RC-206; freshness never
+creates a second Lead or gives Supervisor a channel to Peer.
+
+Duplicate recovery is intentionally bounded rather than magical. Supervisor stops new
+parallel routing, preserves both histories and artifacts, keeps the previously established
+healthy owner, and closes a duplicate only after moving work stops and a stable handoff
+exists. Ambiguous prior ownership, health, or concurrent writes are escalated to Human.
+Supervisor never merges work, accepts a candidate, or directs Peer during recovery.
+
+RC-207 still says Lead opens Peer seats only, and `ROLE_NOTES` surfaces the sole-Lead rule at
+the `list_profiles` decision point. Focused tests assert the exact generated instructions.
+This is stronger and less ambiguous guidance, but remains procedural rather than runtime
+enforcement; a contradictory or non-compliant caller can still supply any provider id.
 
 ## 6. Add to a base prompt, never replace it
 

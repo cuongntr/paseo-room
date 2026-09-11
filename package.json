@@ -1,6 +1,6 @@
 {
   "name": "paseo-room",
-  "version": "0.1.0-alpha.3",
+  "version": "0.1.0-alpha.4",
   "description": "One CLI that configures Codex/Claude role homes in $HOME and registers them with your local Paseo daemon.",
   "keywords": [
     "paseo",

@@ -16,6 +16,8 @@ export interface Layout {
   readonly roomHome: string;
   readonly paseoHome: string;
   readonly agentHome: Record<AgentId, string>;
+  /** Claude keeps legacy default state beside ~/.claude, but custom config state inside it. */
+  readonly claudeState: string;
   readonly bin: Record<AgentId | 'paseo', string>;
   /** The PATH executables are looked up on. Resolved here so nothing reaches for process.env. */
   readonly searchPath: string;
@@ -29,6 +31,8 @@ function pick(...candidates: readonly (string | undefined)[]): string {
 /** Everything is derived from HOME; flags and environment only override defaults. */
 export function resolveLayout(options: Options = {}, env: NodeJS.ProcessEnv = process.env): Layout {
   const home = pick(env.HOME, homedir());
+  const claudeOverride = options.claudeHome?.trim() || env.CLAUDE_CONFIG_DIR?.trim() || undefined;
+  const claudeHome = resolve(pick(claudeOverride, join(home, '.claude')));
   // Relative overrides resolve against the working directory, as a CLI flag should.
   return {
     home,
@@ -36,8 +40,9 @@ export function resolveLayout(options: Options = {}, env: NodeJS.ProcessEnv = pr
     paseoHome: resolve(pick(env.PASEO_HOME, join(home, '.paseo'))),
     agentHome: {
       codex: resolve(pick(options.codexHome, env.CODEX_HOME, join(home, '.codex'))),
-      claude: resolve(pick(options.claudeHome, env.CLAUDE_CONFIG_DIR, join(home, '.claude'))),
+      claude: claudeHome,
     },
+    claudeState: claudeOverride?.trim() ? join(claudeHome, '.claude.json') : join(home, '.claude.json'),
     bin: {
       codex: pick(options.codexBin, env.CODEX_BIN, 'codex'),
       claude: pick(options.claudeBin, env.CLAUDE_BIN, 'claude'),

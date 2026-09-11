@@ -10,7 +10,7 @@ import { checkDaemon, mergeProfiles, profileMatches, providerMatches, withSessio
 import { fail, failed, hasFailure, pass, type Check, type Operation, type Result } from './result.js';
 import { renderInstructions } from './room/instructions.js';
 import { MARKER, readMarker, renderMarker, type Marker } from './room.js';
-import { profileId, providerId, providerLabel, ROLES, ROLE_NOTES, ROLE_PASEO_TOOLS, ROLE_THINKING, type AgentId, type Role } from './roles.js';
+import { profileId, providerId, providerLabel, ROLES, ROLE_COLOR, ROLE_ICON, ROLE_NOTES, ROLE_PASEO_TOOLS, ROLE_THINKING, type AgentId, type Role } from './roles.js';
 
 export const AGENTS: Record<AgentId, Agent> = { codex: codexAgent, claude: claudeAgent };
 
@@ -32,7 +32,7 @@ function roleProviders(layout: Layout, agent: Agent, binary: string, roles: read
     extends: agent.id,
     label: providerLabel(agent.id, role),
     command: [binary],
-    env: { [agent.homeEnv]: roleHome(layout, agent.id, role) },
+    env: { ...agent.providerEnv, [agent.homeEnv]: roleHome(layout, agent.id, role) },
     paseoTools: { enabled: ROLE_PASEO_TOOLS[role] },
     ...agent.pins,
   }]));
@@ -43,7 +43,10 @@ function roleProfiles(agent: Agent, roles: readonly Role[]): Profile[] {
   return roles.map(role => ({
     id: profileId(agent.id, role),
     name: providerLabel(agent.id, role),
+    icon: ROLE_ICON[role],
+    color: ROLE_COLOR[role],
     provider: providerId(agent.id, role),
+    modeId: agent.defaultModeId,
     thinkingOptionId: ROLE_THINKING[role],
     notes: ROLE_NOTES[role],
   }));

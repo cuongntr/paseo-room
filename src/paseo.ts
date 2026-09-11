@@ -164,7 +164,8 @@ export function providerMatches(desired: Provider, live: unknown): boolean {
 export function profileMatches(desired: Profile, live: unknown): boolean {
   if (live === null || typeof live !== 'object') return false;
   const entry = live as Record<string, unknown>;
-  return entry.name === desired.name && entry.provider === desired.provider && entry.notes === desired.notes;
+  return entry.name === desired.name && entry.icon === desired.icon && entry.color === desired.color &&
+    entry.provider === desired.provider && entry.modeId === desired.modeId && entry.notes === desired.notes;
 }
 
 /**
@@ -186,8 +187,12 @@ export function mergeProfiles(
       const profile = wanted.get(String(entry.id));
       if (!profile) return entry;
       seen.add(profile.id);
-      // thinkingOptionId is seeded on create only, so a retuned seat survives setup.
-      return { ...entry, name: profile.name, provider: profile.provider, notes: profile.notes };
+      // Model and thinkingOptionId remain operator choices; the room owns the
+      // role's visual identity and its no-prompt launch mode.
+      return {
+        ...entry, name: profile.name, icon: profile.icon, color: profile.color,
+        provider: profile.provider, modeId: profile.modeId, notes: profile.notes,
+      };
     });
   return [...kept, ...desired.filter(profile => !seen.has(profile.id)).map(profile => ({ ...profile }))];
 }

@@ -28,6 +28,51 @@ describe('role instructions', () => {
     expect(renderInstructions('peer')).not.toContain('## RC-207');
   });
 
+  it('discovers and reuses the sole project Lead across lifecycle states', () => {
+    const supervisor = renderInstructions('supervisor');
+    expect(supervisor).toContain('checks whether a healthy Lead already owns the project');
+    expect(supervisor).toContain('inspecting its current and recent agents');
+    expect(supervisor).toContain('An initializing or running Lead, an idle Lead after a completed turn');
+    expect(supervisor).toContain('a closed but unarchived, resumable Lead are the same project owner');
+    expect(supervisor).toContain('route the directive, question, evidence, or review request to that Lead');
+    expect(supervisor).toContain('resuming it when necessary');
+    expect(supervisor).toContain('Only when no Lead owns the project may Supervisor open exactly one Lead as its child');
+    expect(supervisor).toContain('Workspace placement does not change parentage');
+    expect(supervisor).toContain('never open another Lead for freshness or convenience');
+  });
+
+  it('routes fresh independent review through the existing Lead to a fresh Peer', () => {
+    const supervisor = renderInstructions('supervisor');
+    expect(supervisor).toContain("A fresh-session review is Lead's to arrange with a fresh read-only Peer");
+    expect(supervisor).toContain('Route that request to the existing Lead');
+    expect(supervisor).toContain('not a reason for Supervisor to open a fresh Lead');
+    expect(supervisor).toContain('or direct the Peer');
+
+    const lead = renderInstructions('lead');
+    expect(lead).toContain("The fresh session is the review Peer's session");
+    expect(lead).toContain('never a replacement or duplicate project Lead');
+    expect(lead).toContain('Lead remains the owner, receives the review evidence');
+  });
+
+  it('treats pending permission as state and bounds duplicate recovery', () => {
+    const supervisor = renderInstructions('supervisor');
+    expect(supervisor).toContain('A pending creation, run, or permission request is unresolved state, not an absent Lead');
+    expect(supervisor).toContain('Resolve a permission only within authority already granted by Human');
+    expect(supervisor).toContain('otherwise escalate it to Human');
+    expect(supervisor).toContain('If duplicate Leads exist, stop new parallel routing');
+    expect(supervisor).toContain('Keep the previously established healthy Lead as project owner');
+    expect(supervisor).toContain("route the duplicate's stable handoff and evidence to it");
+    expect(supervisor).toContain('close the duplicate only after moving work has stopped and a stable handoff exists');
+    expect(supervisor).toContain('escalate to Human instead of choosing, merging, accepting, or directing a Peer');
+  });
+
+  it('keeps Lead ownership through completed turns until an explicit lifecycle change', () => {
+    const lead = renderInstructions('lead');
+    expect(lead).toContain('Lead owns one project across turns');
+    expect(lead).toContain('A completed turn, idle state, or closed but unarchived, resumable session does not end that ownership');
+    expect(lead).toContain('Human closes or reassigns the project');
+  });
+
   it('gives Lead acceptance authority and Supervisor routing only', () => {
     expect(renderInstructions('lead')).toContain('## RC-205');
     expect(renderInstructions('supervisor')).not.toContain('## RC-205');

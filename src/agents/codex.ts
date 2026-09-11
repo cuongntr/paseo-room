@@ -64,6 +64,7 @@ export const codexAgent: Agent = {
   id: 'codex',
   label: 'Codex',
   homeEnv: 'CODEX_HOME',
+  defaultModeId: 'full-access',
   // Without these, Paseo's own mode preset (default auto-review) is sent to the
   // app-server and outranks the sandbox/approval keys in the generated config.
   pins: { params: { sandbox_mode: 'danger-full-access', approval_policy: 'never' } },
