@@ -4,9 +4,15 @@ import { z } from 'zod';
 import type { Layout } from './layout.js';
 import { fail, pass, type Check } from './result.js';
 import type { Profile, Provider } from './agents/types.js';
+import type { AgentId } from './roles.js';
 import { probe, which } from './which.js';
 
 export const MINIMUM_VERSION = '0.8.0-beta.1';
+export const PI_MINIMUM_VERSION = '0.8.0';
+
+export function minimumPaseoVersion(agents: readonly AgentId[]): string {
+  return agents.includes('pi') ? PI_MINIMUM_VERSION : MINIMUM_VERSION;
+}
 
 const statusSchema = z.object({
   listen: z.string().min(1),
@@ -33,7 +39,7 @@ export function normalizeUrl(listen: string): string | undefined {
 }
 
 /** The whole compatibility story: is Paseo running, and is it new enough? */
-export function assessStatus(raw: unknown): DaemonResult {
+export function assessStatus(raw: unknown, minimumVersion = MINIMUM_VERSION): DaemonResult {
   const parsed = statusSchema.safeParse(raw);
   if (!parsed.success) {
     return { checks: [fail('paseo.status', 'Paseo status output was not understood.', 'Upgrade Paseo, then run: paseo daemon status --json')] };
@@ -50,17 +56,17 @@ export function assessStatus(raw: unknown): DaemonResult {
   if (cli !== daemon) {
     return { checks: [fail('paseo.version', `Paseo CLI is ${cli} but the running daemon is ${daemon}.`, 'Restart the daemon with: paseo daemon restart')] };
   }
-  if (!gte(daemon, MINIMUM_VERSION)) {
-    return { checks: [fail('paseo.version', `Paseo ${daemon} is older than the required ${MINIMUM_VERSION}.`, 'Upgrade Paseo, then run setup again.')] };
+  if (!gte(daemon, minimumVersion)) {
+    return { checks: [fail('paseo.version', `Paseo ${daemon} is older than the required ${minimumVersion}.`, 'Upgrade Paseo, then run setup again.')] };
   }
   const url = normalizeUrl(status.listen);
   if (!url) {
     return { checks: [fail('paseo.listen', `Paseo listen address ${status.listen} was not understood.`, 'Use a host:port listen address in the Paseo config.')] };
   }
-  return { checks: [pass('paseo.version', `Paseo ${daemon} is running on ${url} (compatible, needs >= ${MINIMUM_VERSION}).`)], daemon: { url, version: daemon } };
+  return { checks: [pass('paseo.version', `Paseo ${daemon} is running on ${url} (compatible, needs >= ${minimumVersion}).`)], daemon: { url, version: daemon } };
 }
 
-export async function checkDaemon(layout: Layout, env: NodeJS.ProcessEnv = process.env): Promise<DaemonResult> {
+export async function checkDaemon(layout: Layout, env: NodeJS.ProcessEnv = process.env, minimumVersion = MINIMUM_VERSION): Promise<DaemonResult> {
   const binary = await which(layout.bin.paseo, layout.searchPath);
   if (!binary) {
     return { checks: [fail('paseo.bin', 'Paseo executable not found.', 'Install Paseo, or pass --paseo-bin /path/to/paseo.')] };
@@ -72,8 +78,8 @@ export async function checkDaemon(layout: Layout, env: NodeJS.ProcessEnv = proce
   if (!output.ok) {
     return { checks: [fail('paseo.status', 'Could not read Paseo daemon status.', 'Run: paseo daemon status --json')] };
   }
-  try { return assessStatus(JSON.parse(output.stdout)); }
-  catch { return assessStatus(undefined); }
+  try { return assessStatus(JSON.parse(output.stdout), minimumVersion); }
+  catch { return assessStatus(undefined, minimumVersion); }
 }
 
 const configSchema = z.object({
@@ -189,10 +195,13 @@ export function mergeProfiles(
       seen.add(profile.id);
       // Model and thinkingOptionId remain operator choices; the room owns the
       // role's visual identity and its no-prompt launch mode.
-      return {
+      const updated: LiveProfile = {
         ...entry, name: profile.name, icon: profile.icon, color: profile.color,
-        provider: profile.provider, modeId: profile.modeId, notes: profile.notes,
+        provider: profile.provider, notes: profile.notes,
       };
+      if (profile.modeId === undefined) delete updated.modeId;
+      else updated.modeId = profile.modeId;
+      return updated;
     });
   return [...kept, ...desired.filter(profile => !seen.has(profile.id)).map(profile => ({ ...profile }))];
 }

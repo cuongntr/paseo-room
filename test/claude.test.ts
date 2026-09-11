@@ -13,12 +13,13 @@ describe('renderRoleSettings', () => {
         FOO: '1',
         CLAUDE_CODE_DISABLE_AGENT_VIEW: '0',
         CLAUDE_CODE_DISABLE_WORKFLOWS: '0',
+        CLAUDE_SECURESTORAGE_CONFIG_DIR: '/operator/shared-auth',
       },
       hooks: { SessionStart: [] },
       crossSessionInbound: 'auto',
       disableAgentView: false,
       disableWorkflows: false,
-    }), 'peer')) as {
+    }), 'peer', '/room/roles/claude/peer')) as {
       env: Record<string, string>; hooks: unknown; crossSessionInbound: string;
       disableAgentView: boolean; disableWorkflows: boolean;
     };
@@ -26,6 +27,7 @@ describe('renderRoleSettings', () => {
     expect(settings.env.PASEO_ROOM_ROLE).toBe('peer');
     expect(settings.env.CLAUDE_CODE_DISABLE_AGENT_VIEW).toBe('1');
     expect(settings.env.CLAUDE_CODE_DISABLE_WORKFLOWS).toBe('1');
+    expect(settings.env.CLAUDE_SECURESTORAGE_CONFIG_DIR).toBe('/room/roles/claude/peer');
     expect(settings.hooks).toBeDefined();
     expect(settings.crossSessionInbound).toBe('refuse');
     expect(settings.disableAgentView).toBe(true);
@@ -62,7 +64,7 @@ describe('renderRoleMemory', () => {
 });
 
 describe('claudeAgent.build', () => {
-  it('creates one config dir per role and shares file-backed credentials by link', async () => {
+  it('creates one config dir per role without sharing file-backed credentials', async () => {
     const fixture = await makeFixture();
     await mkdir(join(fixture.home, '.claude', 'rules'));
     await writeFile(join(fixture.home, '.claude', '.credentials.json'), '{"key":"k"}');
@@ -78,10 +80,12 @@ describe('claudeAgent.build', () => {
     expect(memory).toContain('Keep this preference');
     expect(memory).toContain('You are Peer');
     expect(memory).toContain('## WP-02 Verification');
-    expect(await readFile(join(peer, '.credentials.json'), 'utf8')).toBe('{"key":"k"}');
+    await expect(readFile(join(peer, '.credentials.json'), 'utf8')).rejects.toThrow();
+    expect(await readFile(join(layout.agentHome.claude, '.credentials.json'), 'utf8')).toBe('{"key":"k"}');
     expect(await readFile(join(peer, 'rules/operator.md'), 'utf8')).toBe('# Keep this rule\n');
     expect(await readFile(join(peer, 'keybindings.json'), 'utf8')).toBe('{"bindings":[]}');
     expect(plan.binary).toContain('claude');
+    expect(plan.credentials).toHaveLength(3);
   });
 
   it('reads state inside a custom CLAUDE_CONFIG_DIR', async () => {

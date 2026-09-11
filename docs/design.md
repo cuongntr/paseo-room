@@ -15,8 +15,8 @@ Three of its invariants drive almost every decision below:
 
 - **One control plane.** Paseo owns agent lifecycle, so every native multi-agent path in
   the agent runtime must be closed.
-- **Role separation needs isolated runtime state.** Three seats need three configurations;
-  authentication is shared only through mechanisms the runtime officially supports.
+- **Role separation needs isolated runtime state.** Three seats need three configurations and
+  three ownership boundaries for runtime-mutable credentials.
 - **Capability discipline.** Orchestration tools go to the seats that orchestrate.
 
 ## 2. Closing the runtime's own multi-agent paths
@@ -28,6 +28,7 @@ a task, a workspace or a correction. Every native path is therefore closed, per 
 |---|---|
 | Codex | `[agents].enabled = false`, `features.multi_agent = false`, `features.multi_agent_v2 = false`, **and** a model catalog with `multi_agent_version` nulled |
 | Claude | provider-level `disallowedTools` blocks legacy `Task`, current `Agent`, `Workflow`, cross-session, shared task-list, cron and team tools; environment pins close background Agent View and dynamic workflows; `crossSessionInbound: "refuse"` rejects messages from other Claude sessions; the operator's `agents/` and `workflows/` directories are *not* linked into a seat |
+| Pi | `--no-extensions` disables extension discovery, `--extension` loads only the canonical operator-installed MCP adapter in addition to Paseo's own temporary integration extension, and `--no-approve` suppresses project-local executable resources; the appended runtime capsule forbids spawning or managing agents through Pi, shell or extensions |
 
 The catalog scrub is not redundant with the feature flags: bundled model metadata can still
 advertise native collaboration v1 or v2 even when both flags are off. That was found the
@@ -40,8 +41,8 @@ policy, applied at exactly one call site.
 ## 3. Where the instruction layers live
 
 `paseo-room` owns the model's first instruction layer outright: the role contract, in
-`src/room/clauses.ts`, delivered as `developer_instructions` (Codex) and `CLAUDE.md`
-(Claude).
+`src/room/clauses.ts`, delivered as `developer_instructions` (Codex), `CLAUDE.md`
+(Claude), and additive `APPEND_SYSTEM.md` content (Pi).
 
 It also ships a **default** for the second layer, in `src/room/workspace.ts`, appended to
 every role document. The layer is therefore never simply absent: a repository that says
@@ -65,17 +66,49 @@ tool's concern.
 ## 4. Why a separate home per seat
 
 Codex reads one `config.toml`, from `CODEX_HOME`. Claude Code reads one config
-directory, from `CLAUDE_CONFIG_DIR`. Giving three seats three different contracts means
+directory, from `CLAUDE_CONFIG_DIR`. Pi reads one agent directory from
+`PI_CODING_AGENT_DIR`. Giving three seats three different contracts means
 giving them three different homes — there is no per-invocation flag that does it.
 
-Each role home is generated content plus symlinks back to the resources you own. This avoids
-copying skills and file-backed credentials, but cannot merge credential stores the runtime
-itself namespaces per config directory:
+Each role home is generated content plus symlinks back to read-only resources you own.
+Runtime-mutable credential stores are not copied or linked:
 
-- generated: `config.toml` / `settings.json`, the role contract, the model catalog
-- linked where applicable: credentials, `AGENTS.md`, skills, plugins, hooks, commands,
+- generated: `config.toml` / `settings.json`, the role contract or additive prompt, the model catalog
+- linked where applicable: `AGENTS.md`, skills, plugins, hooks, commands,
   rules, output styles, keybindings and themes
-- private per seat: sessions, history, projects — the runtime state each seat accumulates
+- private per seat: credentials, sessions, history, projects — the runtime state each seat accumulates
+
+Credentials are a separate diagnostic plan, never an `Entry`. That distinction is load-bearing:
+generic managed-entry apply repairs files and links by removing the old path first, while a
+credential path is preserve-only under every setup/update state. `lstat` classifies the path
+and `readlink` records a legacy link target; no credential content is opened, hashed, parsed,
+copied or followed. Environment alternatives are detected from names/presence booleans only.
+Keyrings and providers are never queried, and setup never runs login or network token
+validation.
+
+The migration policy is warn-only. A missing path is `login-required` unless a safely
+recognizable static/environment method exists. A regular credential file is
+`configured structurally (diverged-file-preserve)`: it may be runtime-owned divergence, so
+the diagnostic explicitly does not claim validity or freshness. Any symlink, including one
+whose target is now missing, is `legacy-shared-risk` and gets exact manual unlink and role-login
+commands; only the stored link text is read, and its target is never probed. Setup does not
+perform the recovery. Directories and other unexpected types are
+`diverged-file-preserve/manual-recovery`. An explicit native keyring/automatic store is
+`native-keyring unverifiable`. These warnings never mask structural/provider failures and do
+not change the command exit status by themselves.
+
+Codex reads `cli_auth_credentials_store` from the generated role config when it is explicitly
+`file`, `ephemeral`, `auto`, or `keyring`. File presence is structural only; `auto` and
+`keyring` remain unverifiable because the room does not query the native store, and
+`ephemeral` has no persistent artifact to prove. An `OPENAI_API_KEY` name in the setup
+process is not treated as configured role auth: Codex's built-in API-key flow stores it through
+`codex login --with-api-key`, and the room does not copy it into Paseo's provider. The role instructions are
+`CODEX_HOME=<role-home> codex login` and `CODEX_HOME=<role-home> codex login status`; neither
+command is run by the room.
+
+Deselection during setup also retains old role homes. Recursively deleting one could erase a
+role-owned credential created after planning, so setup removes only stale providers/profiles.
+Whole-room deletion remains available solely through explicit `remove --apply`.
 
 `agents/` is pointedly absent from the Claude link list. Linking it would import your
 subagent definitions into every seat and reopen §2. `workflows/` is absent for the same
@@ -102,13 +135,20 @@ Together these pins close Claude's documented
 [parallel-agent surfaces](https://code.claude.com/docs/en/agents) and
 [cross-session inbound channel](https://code.claude.com/docs/en/cross-session-messaging).
 
-Claude authentication has one platform-specific limit. The exact fallback filename is
-`.credentials.json` (plural), and linking it shares file-backed login on Linux, Windows and
-the macOS fallback path. Normal macOS login lives in Keychain, however, and Claude keys that
-entry to `CLAUDE_CONFIG_DIR`; three role homes therefore mean three Keychain namespaces.
-The room cannot copy or re-key a secret without violating its ownership boundary. Operators
-must use inherited environment authentication or log in once per Claude seat on macOS. This
-follows Anthropic's documented
+Claude's file-backed credential path is `.credentials.json` (plural) on Linux/Windows and as
+a macOS fallback. Normal macOS login lives in Keychain. Current Claude runtimes expose a
+separate secure-storage location override, so each generated settings file and provider pins
+`CLAUDE_SECURESTORAGE_CONFIG_DIR` to the same role home as `CLAUDE_CONFIG_DIR`, overriding
+operator and daemon ambient values. Because that override is not yet in Anthropic's stable
+documentation, diagnostics still classify Keychain state as unverifiable rather than claiming
+isolation or compatibility with older runtimes. The room does not query, copy or re-key those
+secrets. It recognizes only safely inferable auth method names:
+the documented cloud-provider selectors, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY`,
+`CLAUDE_CODE_OAUTH_TOKEN`, and `apiKeyHelper`. Operators use one of those methods or run
+`CLAUDE_CONFIG_DIR=<role-home> CLAUDE_SECURESTORAGE_CONFIG_DIR=<role-home> claude auth login`
+per role (falling back to launching Claude with both values and `/login`); `claude auth status`
+is guidance for the operator, never an automatic probe.
+This follows Anthropic's documented
 [credential storage](https://code.claude.com/docs/en/authentication#credential-management), plus the
 observed result of running `claude auth status` under an isolated config directory.
 
@@ -118,6 +158,38 @@ source `.claude.json` are seeded with stable UI state, while `oauthAccount` and 
 history are excluded and subsequent role state remains private. The legacy default source is
 `~/.claude.json`; when `--claude-home` / `CLAUDE_CONFIG_DIR` is set, the source is
 `<CLAUDE_CONFIG_DIR>/.claude.json`.
+
+Environment names seen only by the setup process are reported as ambient and unverifiable,
+because the room neither copies their values into provider configuration nor proves that the
+Paseo daemon inherited them. Login guidance uses the resolved executable, including an
+operator-supplied binary override.
+
+Before reading role credential metadata or planning managed writes, setup and verify use
+`lstat` on each existing room-relative directory ancestor. A symlink or non-directory at the
+room root, shared directory, roles directory, agent directory, or role home fails structural
+safety without traversing it. This prevents a pre-existing alias from redirecting generated
+configuration or a role credential pathname outside the room.
+
+Pi's role `settings.json` keeps operator preferences but removes top-level `packages` and
+`extensions`. A role must not auto-install packages into its generated home or discover an
+unrelated extension configured by the operator. The `npm`, `git`, `extensions` and
+`trust.json` paths are never linked. Safe file-backed configuration and read-only resources
+are linked when present: `models.json`, `AGENTS.md`, skills, prompts, themes, keybindings and
+the Pi-specific `mcp.json`; `auth.json` is role-owned and preserve-only. Pi recognizes a
+bounded list of built-in provider API-key environment names by presence only, otherwise
+reports that ambient auth may exist but is not validated. Interactive setup is
+`PI_CODING_AGENT_DIR=<role-home> pi` followed by `/login`. Pi providers pin
+`PI_MCP_CONFIG_MODE=exclusive`, so the adapter
+uses that role-home `mcp.json` as its single config source instead of independently discovering
+generic global or project MCP configuration. Sessions, stores and caches remain private to
+each role.
+
+The Pi role's `APPEND_SYSTEM.md` is generated in a deliberate order: operator global append,
+small communication-style capsule, Pi runtime capsule, then the role contract and applicable
+workspace protocol. Passing this file through `--append-system-prompt` suppresses Pi's normal
+global append discovery rather than duplicating it. `--no-approve` does not disable normal
+project `AGENTS.md` / `CLAUDE.md` context loading, so repository instructions still arrive.
+No room-owned `SYSTEM.md` is created or copied.
 
 ## 5. Provider entries outrank agent configuration
 
@@ -155,6 +227,40 @@ Claude is different: its permission mode arrives as a command-line session setti
 `modeId: "bypassPermissions"`; Codex uses the equivalent `full-access` profile mode in
 addition to its provider pins.
 
+Pi has no selectable Paseo mode and no sandbox/approval mechanism to pin. Its profile omits
+`modeId`, and profile repair removes a stale owned mode value while preserving model and
+thinking choices. It extends Paseo's core `pi` provider, never OMP. The provider instead owns
+a role-specific argv tail:
+
+```text
+--no-extensions --extension <canonical adapter entry> --no-approve
+--append-system-prompt <role APPEND_SYSTEM.md>
+```
+
+Paseo itself appends a generated temporary integration extension. The room neither resolves
+nor creates that file and includes only one explicit `--extension`: `pi-mcp-adapter` from the
+operator Pi home's fixed global npm location. Before any plan can proceed, the adapter checks
+the manifest name, resolves its single `pi.extensions` entry, canonicalises package root and
+entry, and requires the entry to be a regular file contained by that root. Adapter version is
+reported only as a diagnostic: peer ranges, exact versions, digests, compatibility matrices
+and allowlists are deliberately not policy.
+
+The provider also pins `PI_MCP_CONFIG_MODE=exclusive`. This is separate from Pi's
+`--no-extensions`: the adapter has its own eager config discovery and can otherwise load
+generic home or project MCP servers while the explicit extension is starting. Exclusive mode
+leaves the role-specific `PI_CODING_AGENT_DIR/mcp.json` available and excludes those other
+sources.
+
+Path evidence alone does not prove Pi loaded the capability. A shell-free child process runs
+offline with `PI_CODING_AGENT_DIR=/dev/null`, `PI_MCP_CONFIG_MODE=exclusive`, `--mode rpc`,
+`--no-session` and the same strict extension/trust flags from a fresh empty temporary working
+directory. The probe also sets `HOME` to that directory, and removes it afterwards, so neither
+generic global nor caller-project MCP discovery can reach operator inputs. Input is one
+correlated `get_commands` JSONL request; valid UI events are ignored, output and runtime are
+capped, and malformed output or process failure fails. The response must contain exactly one
+`mcp` command from `source: "extension"` whose reported path canonicalises to the same adapter
+entry. The probe cannot write the caller project, operator home or a planned role home.
+
 `providerMatches` in `src/paseo.ts` compares these pins, so `verify` fails if one is
 removed from the live config. A pin that can be silently dropped is not a guarantee.
 
@@ -177,7 +283,8 @@ being one array for the whole host rather than a keyed map:
   the closed sets in `roles.ts`, so nothing is matched by prefix and a profile of the
   operator's cannot be mistaken for one of the room's.
 
-`provider`, `name`, `notes`, `modeId`, `icon` and `color` are owned and repaired. The
+`provider`, `name`, `notes`, `modeId` (including its required absence for Pi), `icon` and
+`color` are owned and repaired. The
 appearance encodes role rather than runtime: eye/violet for Supervisor, compass/blue for
 Lead, and code/emerald for Peer. These are stable keys from Paseo's profile registries; the
 fields themselves are optional in Paseo's current
@@ -238,13 +345,15 @@ enforcement; a contradictory or non-compliant caller can still supply any provid
 
 ## 6. Add to a base prompt, never replace it
 
-Both agents expose a replace-the-system-prompt knob: `model_instructions_file` for Codex,
-`--system-prompt` for Claude. Both are traps for a tool like this one. Using them means
+All three agents expose a replace-the-system-prompt path: `model_instructions_file` for
+Codex, `--system-prompt` for Claude, and Pi's `SYSTEM.md` / `--system-prompt`. They are traps
+for a tool like this one. Using them means
 shipping a full copy of the vendor's system prompt — and re-shipping it on every agent
 release, or silently degrading every seat when the vendor's prompt moves on.
 
 The role contract is additive by nature, so it goes in the additive channel:
-`developer_instructions` for Codex, `CLAUDE.md` (user memory) for Claude.
+`developer_instructions` for Codex, `CLAUDE.md` (user memory) for Claude, and the generated
+Pi append passed with `--append-system-prompt`.
 
 Pinning the base prompt for stability is a legitimate thing to want, but it is the
 operator's decision about their own installation, not the room's. If you set
@@ -260,11 +369,13 @@ a provider entry.
 
 - **No transactional installer.** An earlier version had a journal, rollback, a versioned
   ownership manifest, lock files and inode-level identity guards — about 10k lines to
-  protect a directory the tool creates itself. The room home is disposable: a half-finished
-  `setup` is fixed by running `setup` again, and `remove` deletes the lot. That is the
-  entire recovery story.
-- **No installing or upgrading Paseo, Codex or Claude.** The room checks compatibility and
-  explains a mismatch; it never repairs someone else's installation.
+  protect a directory the tool creates itself. A half-finished `setup` is fixed by running
+  `setup` again. Explicit `remove --apply` deletes the lot after warning that role-owned
+  credential files are included.
+- **No installing or upgrading Paseo, Codex, Claude, Pi or `pi-mcp-adapter`.** The room checks
+  compatibility and explains a mismatch; it never repairs someone else's installation.
+- **No authentication automation.** Setup and verify report structural role-auth state but do
+  not run login, read credential contents, query keyrings, or validate token freshness.
 - **No launcher script.** The reference implementation wraps each seat in a shell script
   that regenerates the runtime on every launch. That buys automatic pickup of config
   changes, and costs a wrapper process whose stdout can corrupt the app-server's JSONL
@@ -275,6 +386,11 @@ a provider entry.
   model and reasoning effort you configured.
 - **No security sandbox.** The room delivers tool policy and role authority. A Peer with
   shell access is not contained by it.
+
+`remove` is intentionally stronger than setup/update: after its dry-run warning and explicit
+`--apply`, it recursively deletes the room home, including role-owned credential files. It
+does not inspect or delete native OS keyring entries, which may remain, and never touches
+operator agent-home authentication.
 
 ## 8. Lineage
 
@@ -288,7 +404,7 @@ implementation's role overlays.
 
 1. It is an npm CLI with no launcher script and no patched daemon; per-provider room tools
    use Paseo's native `paseoTools` field.
-2. It seats Claude Code as well as Codex, from one contract.
+2. It seats Claude Code and Pi as well as Codex, from one contract.
 3. It generates once at `setup` instead of on every launch (see §7).
 
 Where the written model and the reference implementation disagree, this tool follows the

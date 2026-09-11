@@ -1,5 +1,6 @@
 import { basename, join } from 'node:path';
 import { parse, stringify, type TomlTable } from 'smol-toml';
+import { inspectCredentialPath, preservedCredentialCheck, roleCommand, type CredentialDiagnostic } from '../credentials.js';
 import type { Layout } from '../layout.js';
 import { roleHome } from '../layout.js';
 import type { Entry } from '../fsops.js';
@@ -11,8 +12,9 @@ import { probe, which } from '../which.js';
 import type { Agent, AgentPlan } from './types.js';
 
 /** Read-only operator resources every role shares by reference, never by copy. */
-const SHARED = ['auth.json', 'AGENTS.md', 'skills', 'plugins', 'hooks.json'] as const;
+const SHARED = ['AGENTS.md', 'skills', 'plugins', 'hooks.json'] as const;
 const CATALOG = 'model-catalog.json';
+export type CodexCredentialStore = 'file' | 'ephemeral' | 'auto' | 'keyring' | 'unknown';
 
 function table(parent: TomlTable, key: string): TomlTable {
   const value = parent[key];
@@ -60,6 +62,60 @@ export function renderCatalog(catalog: unknown): string {
   return JSON.stringify(catalog, (key, value: unknown) => (key === 'multi_agent_version' ? null : value), 2) + '\n';
 }
 
+/** Read only the generated config's non-secret store selector. */
+export function codexCredentialStore(config: TomlTable): CodexCredentialStore {
+  const value = config.cli_auth_credentials_store;
+  return value === 'file' || value === 'ephemeral' || value === 'auto' || value === 'keyring'
+    ? value
+    : 'unknown';
+}
+
+async function credentialDiagnostic(
+  layout: Layout,
+  role: Role,
+  store: CodexCredentialStore,
+  binary: string,
+): Promise<CredentialDiagnostic> {
+  const home = roleHome(layout, 'codex', role);
+  const path = join(home, 'auth.json');
+  const login = roleCommand({ CODEX_HOME: home }, binary, ['login']);
+  const status = roleCommand({ CODEX_HOME: home }, binary, ['login', 'status']);
+  const state = await inspectCredentialPath(path);
+  const id = `codex.auth.${role}`;
+  const checks: Check[] = [];
+  if (state.kind !== 'missing') {
+    checks.push(preservedCredentialCheck({ id, agent: 'Codex', role, path, state, login, status }));
+  } else {
+    if (store === 'keyring' || store === 'auto') {
+      checks.push({
+        id: `${id}.native-keyring-unverifiable`, status: 'warn',
+        message: `Codex ${role} auth: native-keyring unverifiable; cli_auth_credentials_store is ${store}, and no keyring was queried. Token validity and freshness were not checked.`,
+        fix: `Authenticate this role with: ${login}. Check status with: ${status}.`,
+      });
+    } else {
+      const apiKey = layout.envNames.has('OPENAI_API_KEY')
+        ? ' OPENAI_API_KEY is present only in the setup process; Codex has not stored it for this role and paseo-room does not copy it into the provider.'
+        : '';
+      const detail = store === 'ephemeral'
+        ? 'cli_auth_credentials_store is ephemeral, so no persistent credential file is expected'
+        : `no role-owned auth.json exists${store === 'file' ? ' for the configured file store' : ''}`;
+      checks.push({
+        id: `${id}.login-required`, status: 'warn',
+        message: `Codex ${role} auth: login-required; ${detail}.${apiKey} Authentication was not attempted.`,
+        fix: `Authenticate this role with: ${login}. Check status with: ${status}.`,
+      });
+    }
+  }
+  if (state.kind !== 'missing' && (store === 'keyring' || store === 'auto')) {
+    checks.push({
+      id: `${id}.native-keyring-unverifiable`, status: 'warn',
+      message: `Codex ${role} auth: native-keyring unverifiable; cli_auth_credentials_store is ${store}, and the preserved auth.json does not prove what the runtime will use. No keyring was queried.`,
+      fix: `Check status without exposing credentials: ${status}.`,
+    });
+  }
+  return { path, checks };
+}
+
 export const codexAgent: Agent = {
   id: 'codex',
   label: 'Codex',
@@ -85,8 +141,10 @@ export const codexAgent: Agent = {
       return { entries: [], checks: [fail('codex.config', `Could not read ${configPath} as TOML.`, 'Fix the syntax in your Codex config, then run setup again.')] };
     }
     checks.push(pass('codex.home', `Codex found at ${binary} using ${home}.`));
+    const store = codexCredentialStore(source);
 
     const entries: Entry[] = [];
+    const credentials: CredentialDiagnostic[] = [];
 
     // The catalog is optional: an older Codex simply keeps its built-in models.
     let catalogSource: string | undefined;
@@ -111,7 +169,8 @@ export const codexAgent: Agent = {
       });
       if (catalogSource && catalogPath) entries.push({ kind: 'file', path: catalogPath, content: catalogSource });
       for (const path of shared) entries.push({ kind: 'link', path: join(target, basename(path)), target: path });
+      credentials.push(await credentialDiagnostic(layout, role, store, binary));
     }
-    return { entries, checks, binary };
+    return { entries, credentials, checks, binary };
   },
 };

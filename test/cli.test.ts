@@ -1,4 +1,4 @@
-import { readFile, stat, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile, readlink, realpath, stat, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { runCli } from '../src/cli.js';
@@ -53,6 +53,72 @@ describe('paseo-room CLI', () => {
     expect((JSON.parse(verified.out) as { outcome: string }).outcome).toBe('ok');
   });
 
+  it('creates no role credential artifacts and leaves dummy operator credentials unread/copied', async () => {
+    const fixture = await makeFixture();
+    const daemon = emptyDaemon();
+    await writeFile(join(fixture.home, '.claude/.credentials.json'), Buffer.from([0, 1, 2, 255]));
+    const result = await run(['setup', '--agent', 'codex', '--agent', 'claude', '--agent', 'pi', '--apply'], fixture.env, daemon);
+    expect(result.code).toBe(0);
+    for (const role of ['supervisor', 'lead', 'peer']) {
+      await expect(lstat(join(fixture.roomHome, `roles/codex/${role}/auth.json`))).rejects.toThrow();
+      await expect(lstat(join(fixture.roomHome, `roles/claude/${role}/.credentials.json`))).rejects.toThrow();
+      await expect(lstat(join(fixture.roomHome, `roles/pi/${role}/auth.json`))).rejects.toThrow();
+    }
+    expect(await readFile(join(fixture.home, '.codex/auth.json'), 'utf8')).toBe('{"token":"secret"}');
+    expect(await readFile(join(fixture.home, '.claude/.credentials.json'))).toEqual(Buffer.from([0, 1, 2, 255]));
+    expect(await readFile(join(fixture.home, '.pi/agent/auth.json'), 'utf8')).toBe('{"token":"pi-secret"}');
+  });
+
+  it('preserves every credential path shape across apply, verify, and repeated update', async () => {
+    const fixture = await makeFixture();
+    const daemon = emptyDaemon();
+    const codexSupervisor = join(fixture.roomHome, 'roles/codex/supervisor/auth.json');
+    const codexLead = join(fixture.roomHome, 'roles/codex/lead/auth.json');
+    const codexPeer = join(fixture.roomHome, 'roles/codex/peer/auth.json');
+    const claudeLead = join(fixture.roomHome, 'roles/claude/lead/.credentials.json');
+    const claudePeer = join(fixture.roomHome, 'roles/claude/peer/.credentials.json');
+    const piPeer = join(fixture.roomHome, 'roles/pi/peer/auth.json');
+    const sharedTarget = join(fixture.home, '.codex/auth.json');
+    const danglingTarget = join(fixture.home, 'never-created-auth.json');
+    const codexBytes = Buffer.from([0, 10, 255, 42]);
+    const claudeBytes = Buffer.from([9, 8, 7, 0]);
+    for (const path of [codexSupervisor, codexLead, codexPeer, claudeLead, claudePeer, piPeer]) {
+      await mkdir(join(path, '..'), { recursive: true });
+    }
+    await symlink(sharedTarget, codexSupervisor);
+    await symlink(danglingTarget, codexLead);
+    await writeFile(codexPeer, codexBytes);
+    await writeFile(claudeLead, claudeBytes);
+    await mkdir(claudePeer);
+    await symlink(join(fixture.home, '.pi/agent/auth.json'), piPeer);
+
+    const argv = ['setup', '--agent', 'codex', '--agent', 'claude', '--agent', 'pi', '--apply'] as const;
+    const applied = await run(argv, fixture.env, daemon);
+    expect(applied.code).toBe(0);
+    expect(applied.out).toContain('legacy-shared-risk');
+    expect(applied.out).toContain('Its target was not inspected, followed, or changed');
+    expect(applied.out).toContain('configured structurally (diverged-file-preserve)');
+    expect(applied.out).toContain('diverged-file-preserve/manual-recovery');
+    expect(await readlink(codexSupervisor)).toBe(sharedTarget);
+    expect(await readlink(codexLead)).toBe(danglingTarget);
+    expect(await readFile(codexPeer)).toEqual(codexBytes);
+    expect(await readFile(claudeLead)).toEqual(claudeBytes);
+    expect((await lstat(claudePeer)).isDirectory()).toBe(true);
+    expect(await readlink(piPeer)).toBe(join(fixture.home, '.pi/agent/auth.json'));
+
+    const verified = await run(['verify'], fixture.env, daemon);
+    expect(verified.code).toBe(0);
+    expect(verified.out).toContain('verify: ok');
+    const repeated = await run(argv, fixture.env, daemon);
+    expect(repeated.code).toBe(0);
+    expect(await readlink(codexSupervisor)).toBe(sharedTarget);
+    expect(await readlink(codexLead)).toBe(danglingTarget);
+    expect(await readFile(codexPeer)).toEqual(codexBytes);
+    expect(await readFile(claudeLead)).toEqual(claudeBytes);
+    expect((await lstat(claudePeer)).isDirectory()).toBe(true);
+    expect(await readlink(piPeer)).toBe(join(fixture.home, '.pi/agent/auth.json'));
+  });
+
   it('verify fails when a managed file or provider drifts', async () => {
     const fixture = await makeFixture();
     const daemon = emptyDaemon();
@@ -67,10 +133,19 @@ describe('paseo-room CLI', () => {
     const fixture = await makeFixture();
     const daemon = { ...emptyDaemon(), providers: { unrelated: { extends: 'pi' } } as Record<string, unknown> };
     await run(['setup', '--apply'], fixture.env, daemon);
-    await run(['remove', '--apply'], fixture.env, daemon);
+    const roleCredential = join(fixture.roomHome, 'roles/codex/lead/auth.json');
+    const roleBytes = Buffer.from([7, 0, 9, 255]);
+    await writeFile(roleCredential, roleBytes);
+    const preview = await run(['remove'], fixture.env, daemon);
+    expect(preview.out).toContain('role-owned credential files');
+    expect(preview.out).toContain('Native OS keyring entries');
+    expect(await readFile(roleCredential)).toEqual(roleBytes);
+    const removed = await run(['remove', '--apply'], fixture.env, daemon);
+    expect(removed.out).toContain('role-owned credential files');
     expect(Object.keys(daemon.providers)).toEqual(['unrelated']);
     await expect(stat(fixture.roomHome)).rejects.toThrow();
     await expect(stat(join(fixture.home, '.codex', 'config.toml'))).resolves.toBeDefined();
+    expect(await readFile(join(fixture.home, '.codex/auth.json'), 'utf8')).toBe('{"token":"secret"}');
   });
 
   it('refuses to run when Paseo is too old, before touching anything', async () => {
@@ -85,19 +160,123 @@ describe('paseo-room CLI', () => {
   it('rejects an unknown command and an unknown agent', async () => {
     const fixture = await makeFixture();
     expect((await run(['nope'], fixture.env, emptyDaemon())).code).toBe(2);
-    expect((await run(['setup', '--agent', 'pi'], fixture.env, emptyDaemon())).code).toBe(2);
+    expect((await run(['setup', '--agent', 'omp'], fixture.env, emptyDaemon())).code).toBe(2);
+  });
+});
+
+describe('Pi rooms', () => {
+  it('accepts Pi, uses strict role argv, omits profile mode, and keeps Peer room tools off', async () => {
+    const fixture = await makeFixture();
+    const daemon = emptyDaemon();
+    const result = await run([
+      'setup', '--agent', 'pi', '--pi-home', join(fixture.home, '.pi/agent'),
+      '--pi-bin', join(fixture.home, 'bin/pi'), '--apply',
+    ], fixture.env, daemon);
+    expect(result.code).toBe(0);
+    expect(Object.keys(daemon.providers).sort()).toEqual(['pi-lead', 'pi-peer', 'pi-supervisor']);
+    const peer = daemon.providers['pi-peer'] as { command: string[]; env: Record<string, string>; paseoTools: { enabled: boolean } };
+    const adapter = await realpath(join(fixture.home, '.pi/agent/npm/node_modules/pi-mcp-adapter/index.ts'));
+    const append = join(fixture.roomHome, 'roles/pi/peer/APPEND_SYSTEM.md');
+    expect(peer.command).toEqual([
+      join(fixture.home, 'bin/pi'), '--no-extensions', '--extension', adapter,
+      '--no-approve', '--append-system-prompt', append,
+    ]);
+    expect(peer.command).not.toContain('--no-context-files');
+    for (const role of ['supervisor', 'lead', 'peer']) {
+      const provider = daemon.providers[`pi-${role}`] as { env: Record<string, string> };
+      expect(provider.env).toMatchObject({
+        PI_CODING_AGENT_DIR: join(fixture.roomHome, `roles/pi/${role}`),
+        PI_MCP_CONFIG_MODE: 'exclusive',
+      });
+    }
+    expect(peer.paseoTools.enabled).toBe(false);
+    expect((daemon.providers['pi-lead'] as { paseoTools: { enabled: boolean } }).paseoTools.enabled).toBe(true);
+    for (const profile of daemon.agentProfiles) expect(profile.modeId).toBeUndefined();
+  });
+
+  it('runs Pi setup as a write-free dry run', async () => {
+    const fixture = await makeFixture();
+    const daemon = emptyDaemon();
+    const settingsPath = join(fixture.home, '.pi/agent/settings.json');
+    const before = await readFile(settingsPath, 'utf8');
+    const result = await run(['setup', '--agent', 'pi'], fixture.env, daemon);
+    expect(result.code).toBe(0);
+    expect(result.out).toContain('Planned changes');
+    expect(await readFile(settingsPath, 'utf8')).toBe(before);
+    expect(daemon.providers).toEqual({});
+    await expect(stat(fixture.roomHome)).rejects.toThrow();
+  });
+
+  it('requires stable Paseo for Pi without raising the Codex and Claude floor', async () => {
+    const status = { ...RUNNING_STATUS, cliVersion: '0.8.0-beta.2', daemonVersion: '0.8.0-beta.2' };
+    const fixture = await makeFixture({ paseoStatus: status });
+    expect((await run(['setup', '--agent', 'codex'], fixture.env, emptyDaemon())).code).toBe(0);
+    const pi = await run(['setup', '--agent', 'pi'], fixture.env, emptyDaemon());
+    expect(pi.code).toBe(1);
+    expect(pi.out).toContain('required 0.8.0');
+  });
+
+  it('removes stale Pi providers and profiles while preserving its role homes', async () => {
+    const fixture = await makeFixture();
+    const daemon = emptyDaemon();
+    await run(['setup', '--agent', 'codex', '--agent', 'pi', '--apply'], fixture.env, daemon);
+    const credential = join(fixture.roomHome, 'roles/pi/lead/auth.json');
+    const credentialBytes = Buffer.from([1, 2, 0, 255]);
+    await writeFile(credential, credentialBytes);
+    const updated = await run(['setup', '--agent', 'codex', '--apply'], fixture.env, daemon);
+    expect(Object.keys(daemon.providers).sort()).toEqual(['codex-lead', 'codex-peer', 'codex-supervisor']);
+    expect(daemon.agentProfiles.some(entry => String(entry.id).startsWith('room-pi-'))).toBe(false);
+    await expect(stat(join(fixture.roomHome, 'roles/pi/lead'))).resolves.toBeDefined();
+    expect(await readFile(credential)).toEqual(credentialBytes);
+    expect(updated.out).toContain('deselected role homes');
+    await run(['setup', '--agent', 'codex', '--agent', 'pi', '--apply'], fixture.env, daemon);
+    expect(await readFile(credential)).toEqual(credentialBytes);
+  });
+
+  it('pins Claude secure storage to each role home despite operator and ambient overrides', async () => {
+    const fixture = await makeFixture();
+    await writeFile(join(fixture.home, '.claude/settings.json'), JSON.stringify({
+      env: { CLAUDE_SECURESTORAGE_CONFIG_DIR: '/operator/shared-auth' },
+    }));
+    const daemon = emptyDaemon();
+    await run(['setup', '--agent', 'claude', '--apply'], {
+      ...fixture.env, CLAUDE_SECURESTORAGE_CONFIG_DIR: '/ambient/shared-auth',
+    }, daemon);
+    for (const role of ['supervisor', 'lead', 'peer']) {
+      const home = join(fixture.roomHome, `roles/claude/${role}`);
+      const provider = daemon.providers[`claude-${role}`] as { env: Record<string, string> };
+      expect(provider.env.CLAUDE_SECURESTORAGE_CONFIG_DIR).toBe(home);
+      const settings = JSON.parse(await readFile(join(home, 'settings.json'), 'utf8')) as {
+        env: Record<string, string>;
+      };
+      expect(settings.env.CLAUDE_SECURESTORAGE_CONFIG_DIR).toBe(home);
+    }
+  });
+
+  it('removes a stale owned modeId from Pi profiles while preserving operator tuning', async () => {
+    const fixture = await makeFixture();
+    const daemon = emptyDaemon();
+    await run(['setup', '--agent', 'pi', '--apply'], fixture.env, daemon);
+    const peer = daemon.agentProfiles.find(entry => entry.id === 'room-pi-peer');
+    if (!peer) throw new Error('expected the Pi Peer profile');
+    Object.assign(peer, { modeId: 'full-access', model: 'operator/model', thinkingOptionId: 'max' });
+    await run(['setup', '--agent', 'pi', '--apply'], fixture.env, daemon);
+    expect(daemon.agentProfiles.find(entry => entry.id === 'room-pi-peer')).toMatchObject({
+      model: 'operator/model', thinkingOptionId: 'max', provider: 'pi-peer',
+    });
+    expect(daemon.agentProfiles.find(entry => entry.id === 'room-pi-peer')?.modeId).toBeUndefined();
   });
 });
 
 describe('changing the seated agents', () => {
-  it('drops role homes and providers the new selection no longer covers', async () => {
+  it('drops providers but preserves role homes the new selection no longer covers', async () => {
     const fixture = await makeFixture();
     const daemon = emptyDaemon();
     await run(['setup', '--agent', 'codex', '--agent', 'claude', '--apply'], fixture.env, daemon);
     const result = await run(['setup', '--agent', 'codex', '--apply'], fixture.env, daemon);
     expect(result.code).toBe(0);
     expect(Object.keys(daemon.providers).sort()).toEqual(['codex-lead', 'codex-peer', 'codex-supervisor']);
-    await expect(stat(join(fixture.roomHome, 'roles/claude/lead'))).rejects.toThrow();
+    await expect(stat(join(fixture.roomHome, 'roles/claude/lead'))).resolves.toBeDefined();
     await expect(stat(join(fixture.roomHome, 'roles/codex/lead'))).resolves.toBeDefined();
   });
 
@@ -110,6 +289,27 @@ describe('changing the seated agents', () => {
 });
 
 describe('remove safety', () => {
+  it('fails before traversing symlinked agent or role-home directories', async () => {
+    for (const seam of ['agent', 'role'] as const) {
+      const fixture = await makeFixture();
+      const external = join(fixture.home, `external-${seam}`);
+      await mkdir(external, { recursive: true });
+      await writeFile(join(external, 'sentinel'), seam);
+      if (seam === 'agent') {
+        await mkdir(join(fixture.roomHome, 'roles'), { recursive: true });
+        await symlink(external, join(fixture.roomHome, 'roles/codex'));
+      } else {
+        await mkdir(join(fixture.roomHome, 'roles/codex'), { recursive: true });
+        await symlink(external, join(fixture.roomHome, 'roles/codex/lead'));
+      }
+      const result = await run(['setup', '--apply'], fixture.env, emptyDaemon());
+      expect(result.code).toBe(1);
+      expect(result.out).toContain('every existing room directory ancestor must be a real directory');
+      expect(await readFile(join(external, 'sentinel'), 'utf8')).toBe(seam);
+      await expect(stat(join(external, 'config.toml'))).rejects.toThrow();
+    }
+  });
+
   it('refuses to delete a room home that contains the user home', async () => {
     const fixture = await makeFixture();
     const daemon = emptyDaemon();

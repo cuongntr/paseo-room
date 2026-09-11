@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { assessStatus, normalizeUrl, providerMatches, MINIMUM_VERSION } from '../src/paseo.js';
+import { assessStatus, minimumPaseoVersion, normalizeUrl, providerMatches, MINIMUM_VERSION, PI_MINIMUM_VERSION } from '../src/paseo.js';
 import type { Provider } from '../src/agents/types.js';
 import { RUNNING_STATUS as running } from './helpers.js';
 
@@ -37,6 +37,15 @@ describe('assessStatus', () => {
 
   it('fails on unreadable status output', () => {
     expect(assessStatus({ nope: true }).checks[0]?.id).toBe('paseo.status');
+  });
+});
+
+describe('minimumPaseoVersion', () => {
+  it('uses the stable floor only when Pi is selected', () => {
+    expect(minimumPaseoVersion(['codex', 'claude'])).toBe(MINIMUM_VERSION);
+    expect(minimumPaseoVersion(['pi'])).toBe(PI_MINIMUM_VERSION);
+    expect(assessStatus({ ...running, cliVersion: '0.8.0-beta.2', daemonVersion: '0.8.0-beta.2' }, PI_MINIMUM_VERSION).daemon)
+      .toBeUndefined();
   });
 });
 

@@ -1,4 +1,4 @@
-import { readFile, rename, symlink, writeFile } from 'node:fs/promises';
+import { readFile, rename, stat, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { parse } from 'smol-toml';
 import { describe, expect, it } from 'vitest';
@@ -51,7 +51,7 @@ describe('renderCatalog', () => {
 });
 
 describe('codexAgent.build', () => {
-  it('writes isolated role homes that share operator resources by link', async () => {
+  it('writes isolated role homes without sharing operator credentials', async () => {
     const fixture = await makeFixture();
     const layout = resolveLayout({}, fixture.env);
     const plan = await codexAgent.build(layout, ['supervisor', 'lead', 'peer']);
@@ -59,7 +59,8 @@ describe('codexAgent.build', () => {
     await applyEntries(plan.entries);
 
     const lead = join(layout.roomHome, 'roles/codex/lead');
-    expect(await readFile(join(lead, 'auth.json'), 'utf8')).toBe('{"token":"secret"}');
+    await expect(stat(join(lead, 'auth.json'))).rejects.toThrow();
+    expect(await readFile(join(layout.agentHome.codex, 'auth.json'), 'utf8')).toBe('{"token":"secret"}');
     const config = parse(await readFile(join(lead, 'config.toml'), 'utf8')) as Record<string, unknown>;
     expect(config.developer_instructions).toContain('Lead role instructions');
     // The whole instruction payload rides in this one key, workspace protocol included.
@@ -83,8 +84,9 @@ describe('codexAgent.build', () => {
     const fixture = await makeFixture();
     const plan = await codexAgent.build(resolveLayout({}, fixture.env), ['supervisor', 'lead', 'peer']);
     const links = plan.entries.filter(entry => entry.kind === 'link');
-    // auth.json, AGENTS.md and skills exist in the fixture; hooks.json and plugins do not.
-    expect(links).toHaveLength(9);
+    // AGENTS.md and skills exist in the fixture; auth and absent resources are not linked.
+    expect(links).toHaveLength(6);
+    expect(plan.credentials).toHaveLength(3);
     expect(plan.binary).toContain('codex');
   });
 

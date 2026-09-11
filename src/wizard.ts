@@ -36,7 +36,7 @@ export async function runWizard(
     const preview = await remove(options);
     const status = emit(preview);
     if (preview.outcome !== 'changes-planned') return status;
-    const approved = await prompts.confirm({ message: 'Delete the room home and its Paseo providers?' });
+    const approved = await prompts.confirm({ message: 'Delete the room home, including role credentials, and its Paseo providers?' });
     return approved === true ? emit(await remove({ ...options, apply: true })) : cancelled();
   }
   const agents = await prompts.multiselect({

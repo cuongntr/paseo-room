@@ -2,7 +2,7 @@
 
 ## What this repository is
 
-`paseo-room` is a small CLI that generates Codex/Claude role homes under `$HOME` and
+`paseo-room` is a small CLI that generates Codex/Claude/Pi role homes under `$HOME` and
 registers them with a local Paseo daemon. [README.md](README.md) describes the behaviour,
 [docs/orchestration-model.md](docs/orchestration-model.md) is the reference model it
 implements, and [docs/design.md](docs/design.md) explains why each override exists. **Read
@@ -20,15 +20,18 @@ That design is in git history before the `v2` rewrite. Do not reintroduce it.
   never modified.
 - **Dry run by default.** Mutation happens only under `--apply` or an explicit wizard
   confirmation.
-- **No transaction machinery.** The room home is disposable: a failed `setup` is fixed by
-  running `setup` again, and `remove` deletes it. That is the entire recovery story.
+- **No transaction machinery.** A failed `setup` is fixed by running `setup` again. Explicit
+  `remove --apply` deletes the room home, including role-owned credential files, after warning.
 - **Compatibility is one check.** `paseo daemon status --json` must report a running daemon,
-  matching CLI and daemon versions, and `>= 0.8.0-beta.1`.
+  matching CLI and daemon versions, and `>= 0.8.0-beta.1`; a selection containing Pi raises
+  that floor to `>= 0.8.0`.
 - **Copy the operator's config, override the minimum.** Never rewrite someone's model, MCP
-  servers, or hooks.
+  servers, or hooks. Pi role settings omit package and extension declarations so startup
+  cannot install packages or discover unrelated extensions.
 - **Add to a base prompt, never replace it.** `model_instructions_file` (Codex) and
   `--system-prompt` (Claude) replace the vendor prompt and would force us to vendor a copy
-  of it. Role text goes in `developer_instructions` / `CLAUDE.md`.
+  of it. Role text goes in `developer_instructions` / `CLAUDE.md` / Pi's additive
+  `APPEND_SYSTEM.md`.
 - **Pin at the provider level whatever the agent's own config cannot guarantee.** A Paseo
   provider entry outranks the agent config: `params` for Codex sandbox/approval,
   `disallowedTools` and environment pins for Claude's native agent surfaces.
@@ -36,6 +39,9 @@ That design is in git history before the `v2` rewrite. Do not reintroduce it.
   silently dropped is not a guarantee.
 - **Paseo is the only control plane.** Every native multi-agent path stays closed. If you
   add an agent adapter, close its equivalent before shipping it.
+- **Pi adapters are explicit and authenticated.** Resolve only the operator Pi home's global
+  `pi-mcp-adapter`, require canonical package containment, and prove `/mcp` attribution with
+  the bounded offline RPC probe. Never install or upgrade Pi or the adapter.
 - **Peer never gets room tools.** `ROLE_PASEO_TOOLS` in `src/roles.ts` is the single source
   of that rule, and it must stay a single call site.
 
@@ -50,7 +56,7 @@ src/
   paseo.ts                                  # version check + provider config over the SDK
   room.ts                                   # room.json marker
   agents/types.ts                           # the Agent seam: entries, checks, binary, pins
-  agents/codex.ts  agents/claude.ts         # per-agent role homes
+  agents/codex.ts  agents/claude.ts  agents/pi.ts   # per-agent role homes
   room/clauses.ts  room/instructions.ts     # the role contract text
 test/                                       # one file per area, real temp $HOME fixtures
 docs/orchestration-model.md                 # the model; changes here are conceptual
@@ -61,12 +67,13 @@ docs/design.md                              # this tool's rationale; keep curren
 
 1. Add the id to `AGENT_IDS` in `src/roles.ts`.
 2. Implement `Agent` in `src/agents/<id>.ts`: `homeEnv`, `pins`, and a `build` that returns
-   entries, checks and the resolved binary. Do not build providers there — `commands.ts`
+   managed entries, preserve-only credential diagnostics, checks and the resolved binary. Do
+   not build providers there — `commands.ts`
    does that from `homeEnv` and `pins`, so the tool policy stays in one place.
 3. Close the agent's native multi-agent path in `pins` or in the generated config, and say
    how in `docs/design.md` §3.
-4. Share supported file-backed credentials and skills by symlink; never copy secrets or
-   claim that a platform credential store follows a role home.
+4. Keep mutable credentials role-owned and preserve-only: never copy, link, inspect, replace,
+   or validate them. Share supported read-only resources such as skills by symlink.
 5. Register it in `AGENTS` in `src/commands.ts`.
 
 ## Working on the role contract

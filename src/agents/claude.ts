@@ -1,4 +1,8 @@
 import { basename, join } from 'node:path';
+import {
+  ambientNamesCheck, configuredByNamesCheck, inspectCredentialPath, presentNames, preservedCredentialCheck,
+  roleCommand, type CredentialDiagnostic,
+} from '../credentials.js';
 import type { Layout } from '../layout.js';
 import { roleHome } from '../layout.js';
 import type { Entry } from '../fsops.js';
@@ -11,13 +15,18 @@ import type { Agent, AgentPlan } from './types.js';
 
 /** Operator-authored resources shared by reference; native agent definitions stay out. */
 const SHARED = [
-  '.credentials.json', 'skills', 'plugins', 'commands', 'hooks', 'rules',
+  'skills', 'plugins', 'commands', 'hooks', 'rules',
   'output-styles', 'keybindings.json', 'themes',
+] as const;
+const AUTH_ENV = [
+  'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN',
+  'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY',
 ] as const;
 const CONTROL_PLANE_ENV = {
   CLAUDE_CODE_DISABLE_AGENT_VIEW: '1',
   CLAUDE_CODE_DISABLE_WORKFLOWS: '1',
 } as const;
+const SECURE_STORAGE_ENV = 'CLAUDE_SECURESTORAGE_CONFIG_DIR';
 /** Copied once so a fresh role home does not re-run interactive onboarding. */
 const SEEDED_KEYS = ['hasCompletedOnboarding', 'theme', 'installMethod', 'userID', 'mcpServers'] as const;
 
@@ -30,11 +39,16 @@ function readObject(source: string | undefined): Record<string, unknown> {
 }
 
 /** Keep operator configuration while closing non-Paseo inbound coordination. */
-export function renderRoleSettings(source: string | undefined, role: Role): string {
+export function renderRoleSettings(source: string | undefined, role: Role, secureStorageDir?: string): string {
   const settings = readObject(source);
   // Claude applies settings.env after the launch environment, so repeat these
   // provider pins here after operator values to make them effective.
-  settings.env = { ...asObject(settings.env), ...CONTROL_PLANE_ENV, PASEO_ROOM_ROLE: role };
+  settings.env = {
+    ...asObject(settings.env),
+    ...CONTROL_PLANE_ENV,
+    PASEO_ROOM_ROLE: role,
+    ...(secureStorageDir === undefined ? {} : { [SECURE_STORAGE_ENV]: secureStorageDir }),
+  };
   // These restrictive settings cannot be weakened by another settings scope.
   settings.disableAgentView = true;
   settings.disableWorkflows = true;
@@ -53,6 +67,51 @@ export function renderRoleState(source: string | undefined): string {
 export function renderRoleMemory(source: string | undefined, role: Role): string {
   const operator = source?.trim();
   return operator ? `${operator}\n\n${renderInstructions(role)}` : renderInstructions(role);
+}
+
+/** Detect only configuration names; never inspect environment or settings values. */
+export function claudeAuthMethodNames(settingsSource: string | undefined, envNames: ReadonlySet<string>): string[] {
+  const settings = readObject(settingsSource);
+  const settingsEnv = asObject(settings.env);
+  const names = new Set(presentNames(envNames, AUTH_ENV));
+  for (const name of AUTH_ENV) if (Object.hasOwn(settingsEnv, name)) names.add(name);
+  if (Object.hasOwn(settings, 'apiKeyHelper')) names.add('apiKeyHelper');
+  return [...names];
+}
+
+export async function claudeCredentialDiagnostic(
+  layout: Layout,
+  role: Role,
+  settingsSource: string | undefined,
+  platform: NodeJS.Platform = process.platform,
+  binary = 'claude',
+): Promise<CredentialDiagnostic> {
+  const home = roleHome(layout, 'claude', role);
+  const path = join(home, '.credentials.json');
+  const roleEnvironment = { CLAUDE_CONFIG_DIR: home, [SECURE_STORAGE_ENV]: home };
+  const login = roleCommand(roleEnvironment, binary, ['auth', 'login']);
+  const status = roleCommand(roleEnvironment, binary, ['auth', 'status']);
+  const state = await inspectCredentialPath(path);
+  const id = `claude.auth.${role}`;
+  if (state.kind !== 'missing') {
+    return { path, checks: [preservedCredentialCheck({ id, agent: 'Claude', role, path, state, login, status })] };
+  }
+  const configured = claudeAuthMethodNames(settingsSource, new Set());
+  if (configured.length > 0) return { path, checks: [configuredByNamesCheck(id, 'Claude', role, configured)] };
+  const ambient = presentNames(layout.envNames, AUTH_ENV);
+  if (ambient.length > 0) return { path, checks: [ambientNamesCheck(id, 'Claude', role, ambient)] };
+  if (platform === 'darwin') {
+    return { path, checks: [{
+      id: `${id}.native-keyring-unverifiable`, status: 'warn',
+      message: `Claude ${role} auth: native-keyring unverifiable; the current runtime's secure-storage location is pinned to this role home, but no Keychain entry was queried and older runtime behavior was not assumed. Token validity and freshness were not checked.`,
+      fix: `Authenticate this role with: ${login}. If that subcommand is unavailable, launch ${roleCommand(roleEnvironment, binary)} and run /login. Check status with: ${status}.`,
+    }] };
+  }
+  return { path, checks: [{
+    id: `${id}.login-required`, status: 'warn',
+    message: `Claude ${role} auth: login-required; no role-owned .credentials.json or configured environment/static auth method was detected. Authentication was not attempted.`,
+    fix: `Authenticate this role with: ${login}. If that subcommand is unavailable, launch ${roleCommand(roleEnvironment, binary)} and run /login. Check status with: ${status}.`,
+  }] };
 }
 
 export const claudeAgent: Agent = {
@@ -88,14 +147,18 @@ export const claudeAgent: Agent = {
     const memorySource = await readIfPresent(join(home, 'CLAUDE.md'));
     const shared = await existingPaths(home, SHARED);
     const entries: Entry[] = [];
+    const credentials: CredentialDiagnostic[] = [];
+    const providerEnv: Partial<Record<Role, Readonly<Record<string, string>>>> = {};
     for (const role of roles) {
       const target = roleHome(layout, 'claude', role);
       entries.push({ kind: 'dir', path: target });
       entries.push({ kind: 'file', path: join(target, 'CLAUDE.md'), content: renderRoleMemory(memorySource, role) });
-      entries.push({ kind: 'file', path: join(target, 'settings.json'), content: renderRoleSettings(settingsSource, role) });
+      entries.push({ kind: 'file', path: join(target, 'settings.json'), content: renderRoleSettings(settingsSource, role, target) });
       entries.push({ kind: 'file', path: join(target, '.claude.json'), content: renderRoleState(stateSource), once: true });
       for (const path of shared) entries.push({ kind: 'link', path: join(target, basename(path)), target: path });
+      credentials.push(await claudeCredentialDiagnostic(layout, role, settingsSource, process.platform, binary));
+      providerEnv[role] = { [SECURE_STORAGE_ENV]: target };
     }
-    return { entries, checks, binary };
+    return { entries, credentials, checks, binary, providerEnv };
   },
 };

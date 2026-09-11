@@ -24,7 +24,7 @@ function collectAgent(value: string, previous: AgentId[] | undefined): AgentId[]
   return seated.includes(agent) ? seated : [...seated, agent];
 }
 
-const PATH_FLAGS = ['roomHome', 'codexHome', 'claudeHome', 'codexBin', 'claudeBin', 'paseoBin'] as const;
+const PATH_FLAGS = ['roomHome', 'codexHome', 'claudeHome', 'piHome', 'codexBin', 'claudeBin', 'piBin', 'paseoBin'] as const;
 
 function optionsFrom(raw: Record<string, unknown>, base: RunOptions): RunOptions {
   const paths: Record<string, string> = {};
@@ -60,17 +60,19 @@ export async function runCli(argv: readonly string[], output: Output, context: C
 
   const program = new Command()
     .name('paseo-room')
-    .description('Configure Codex/Claude role homes in $HOME and register them with your local Paseo daemon.')
+    .description('Configure Codex/Claude/Pi role homes in $HOME and register them with your local Paseo daemon.')
     .version(metadata.version)
     .argument('<command>', 'setup | verify | remove')
-    .option('--agent <agent>', 'codex or claude; repeat for both (default: codex)', collectAgent)
+    .option('--agent <agent>', 'codex, claude, or pi; repeat to combine (default: codex)', collectAgent)
     .option('--apply', 'actually make the changes (default: dry run)')
     .option('--json', 'machine-readable output')
     .option('--room-home <path>', 'where role homes are written (default: ~/.paseo-room)')
     .option('--codex-home <path>', 'source Codex config (default: ~/.codex)')
     .option('--claude-home <path>', 'source Claude Code config (default: ~/.claude)')
+    .option('--pi-home <path>', 'source Pi config (default: ~/.pi/agent)')
     .option('--codex-bin <path>', 'Codex executable (default: found on PATH)')
     .option('--claude-bin <path>', 'Claude Code executable (default: found on PATH)')
+    .option('--pi-bin <path>', 'Pi executable (default: found on PATH)')
     .option('--paseo-bin <path>', 'Paseo executable (default: found on PATH)')
     .configureOutput({ writeOut: text => { output.stdout(text); }, writeErr: text => { output.stderr(text); } })
     .exitOverride();

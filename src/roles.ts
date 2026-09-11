@@ -1,7 +1,7 @@
 export const ROLES = ['supervisor', 'lead', 'peer'] as const;
 export type Role = (typeof ROLES)[number];
 
-export const AGENT_IDS = ['codex', 'claude'] as const;
+export const AGENT_IDS = ['codex', 'claude', 'pi'] as const;
 export type AgentId = (typeof AGENT_IDS)[number];
 
 /** Supervisor and Lead orchestrate; Peer executes one brief and gets no room tools. */

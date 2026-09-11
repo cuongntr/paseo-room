@@ -22,6 +22,9 @@ export interface Result {
 export function pass(id: string, message: string): Check {
   return { id, status: 'pass', message };
 }
+export function warn(id: string, message: string, fix?: string): Check {
+  return { id, status: 'warn', message, ...(fix === undefined ? {} : { fix }) };
+}
 export function fail(id: string, message: string, fix: string): Check {
   return { id, status: 'fail', message, fix };
 }

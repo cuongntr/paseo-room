@@ -14,7 +14,7 @@ export const RUNNING_STATUS = {
   listen: '127.0.0.1:6767', localDaemon: 'running', cliVersion: '0.8.1', daemonVersion: '0.8.1',
 };
 
-/** A throwaway $HOME with a Codex home, a Claude home, and fake executables. */
+/** A throwaway $HOME with Codex, Claude, and Pi homes plus fake executables. */
 export async function makeFixture(options: { readonly paseoStatus?: unknown } = {}): Promise<Fixture> {
   const home = await mkdtemp(join(tmpdir(), 'paseo-room-'));
   const bin = join(home, 'bin');
@@ -26,16 +26,40 @@ export async function makeFixture(options: { readonly paseoStatus?: unknown } = 
   await mkdir(join(home, '.claude'), { recursive: true });
   await writeFile(join(home, '.claude', 'settings.json'), JSON.stringify({ env: { FOO: '1' }, hooks: { SessionStart: [] } }));
   await writeFile(join(home, '.claude.json'), JSON.stringify({ hasCompletedOnboarding: true, theme: 'dark', projects: { a: 1 } }));
+  const adapterRoot = join(home, '.pi', 'agent', 'npm', 'node_modules', 'pi-mcp-adapter');
+  const adapterEntry = join(adapterRoot, 'index.ts');
+  await mkdir(join(home, '.pi', 'agent', 'skills'), { recursive: true });
+  await mkdir(adapterRoot, { recursive: true });
+  await writeFile(join(home, '.pi', 'agent', 'settings.json'), JSON.stringify({
+    defaultProvider: 'openai', packages: ['npm:pi-mcp-adapter', 'npm:unrelated'], extensions: ['./extensions/other.ts'],
+  }));
+  await writeFile(join(home, '.pi', 'agent', 'auth.json'), '{"token":"pi-secret"}');
+  await writeFile(join(adapterRoot, 'package.json'), JSON.stringify({
+    name: 'pi-mcp-adapter', version: '2.32.1', pi: { extensions: ['./index.ts'] },
+  }));
+  await writeFile(adapterEntry, 'export default function adapter() {}\n');
 
   await script(join(bin, 'paseo'), JSON.stringify(options.paseoStatus ?? RUNNING_STATUS));
   await script(join(bin, 'codex'), JSON.stringify({ models: [{ id: 'gpt-5.6-sol', multi_agent_version: 2 }] }));
   await script(join(bin, 'claude'), '{}');
+  await script(join(bin, 'pi'), [
+    JSON.stringify({ type: 'extension_ui_request', id: 'ui', method: 'setStatus' }),
+    JSON.stringify({
+      id: 'paseo-room-pi-mcp-probe', type: 'response', command: 'get_commands', success: true,
+      data: { commands: [{ name: 'mcp', source: 'extension', sourceInfo: { path: adapterEntry } }] },
+    }),
+  ].join('\n'));
   return { home, roomHome: join(home, '.paseo-room'), env: { HOME: home, PATH: bin } };
 }
 
 // Shell builtins only: the probe runs these with a PATH containing just this bin dir.
-async function script(path: string, output: string): Promise<void> {
-  await writeFile(path, `#!/bin/sh\necho '${output}'\n`);
+export async function script(path: string, output: string, exit = 0): Promise<void> {
+  await writeFile(path, `#!/bin/sh\necho '${output}'\n${exit === 0 ? '' : `exit ${String(exit)}\n`}`);
+  await chmod(path, 0o755);
+}
+
+export async function nodeScript(path: string, source: string): Promise<void> {
+  await writeFile(path, `#!${process.execPath}\n${source}\n`);
   await chmod(path, 0o755);
 }
 

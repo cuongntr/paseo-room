@@ -2,6 +2,7 @@ import type { Entry } from '../fsops.js';
 import type { Check } from '../result.js';
 import type { AgentId, Role } from '../roles.js';
 import type { Layout } from '../layout.js';
+import type { CredentialDiagnostic } from '../credentials.js';
 
 export interface Provider {
   readonly extends: AgentId;
@@ -26,8 +27,8 @@ export interface Profile {
   readonly icon: string;
   readonly color: string;
   readonly provider: string;
-  /** The no-prompt mode the seat starts in. */
-  readonly modeId: string;
+  /** The no-prompt mode the seat starts in, when the provider exposes one. */
+  readonly modeId?: string;
   /** Seeded when the profile is created; the operator's later choice is left in place. */
   readonly thinkingOptionId: string;
   readonly notes: string;
@@ -37,9 +38,15 @@ export interface Profile {
 export type ProviderPins = Pick<Provider, 'params' | 'disallowedTools'>;
 export interface AgentPlan {
   readonly entries: readonly Entry[];
+  /** Runtime-owned credential paths: diagnostics only, never managed replacement entries. */
+  readonly credentials?: readonly CredentialDiagnostic[];
   readonly checks: readonly Check[];
   /** Absent when the agent cannot be seated; the checks say why. */
   readonly binary?: string;
+  /** Agent-specific arguments for each role; Paseo may append its own integration arguments. */
+  readonly argv?: Readonly<Partial<Record<Role, readonly string[]>>>;
+  /** Role-specific provider environment pins whose values depend on generated paths. */
+  readonly providerEnv?: Readonly<Partial<Record<Role, Readonly<Record<string, string>>>>>;
 }
 export interface Agent {
   readonly id: AgentId;
@@ -48,8 +55,8 @@ export interface Agent {
   readonly homeEnv: string;
   /** Provider environment pins needed to close native control-plane paths. */
   readonly providerEnv?: Readonly<Record<string, string>>;
-  /** Paseo mode id that implements this room's bypass-permission default. */
-  readonly defaultModeId: string;
+  /** Paseo mode id that implements this room's bypass-permission default, if selectable. */
+  readonly defaultModeId?: string;
   readonly pins: ProviderPins;
   /** Reads the operator's own config; never writes outside the room home. */
   build(layout: Layout, roles: readonly Role[]): Promise<AgentPlan>;

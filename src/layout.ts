@@ -7,8 +7,10 @@ export interface Options {
   readonly roomHome?: string;
   readonly codexHome?: string;
   readonly claudeHome?: string;
+  readonly piHome?: string;
   readonly codexBin?: string;
   readonly claudeBin?: string;
+  readonly piBin?: string;
   readonly paseoBin?: string;
 }
 export interface Layout {
@@ -21,6 +23,8 @@ export interface Layout {
   readonly bin: Record<AgentId | 'paseo', string>;
   /** The PATH executables are looked up on. Resolved here so nothing reaches for process.env. */
   readonly searchPath: string;
+  /** Environment names only, for structural auth diagnostics without retaining values. */
+  readonly envNames: ReadonlySet<string>;
 }
 
 function pick(...candidates: readonly (string | undefined)[]): string {
@@ -41,14 +45,17 @@ export function resolveLayout(options: Options = {}, env: NodeJS.ProcessEnv = pr
     agentHome: {
       codex: resolve(pick(options.codexHome, env.CODEX_HOME, join(home, '.codex'))),
       claude: claudeHome,
+      pi: resolve(pick(options.piHome, env.PI_CODING_AGENT_DIR, join(home, '.pi', 'agent'))),
     },
     claudeState: claudeOverride?.trim() ? join(claudeHome, '.claude.json') : join(home, '.claude.json'),
     bin: {
       codex: pick(options.codexBin, env.CODEX_BIN, 'codex'),
       claude: pick(options.claudeBin, env.CLAUDE_BIN, 'claude'),
+      pi: pick(options.piBin, env.PI_BIN, 'pi'),
       paseo: pick(options.paseoBin, env.PASEO_BIN, 'paseo'),
     },
     searchPath: env.PATH ?? '',
+    envNames: new Set(Object.keys(env)),
   };
 }
 
