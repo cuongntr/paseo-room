@@ -119,13 +119,29 @@ describe('Claude credential diagnostics', () => {
 });
 
 describe('Pi credential diagnostics', () => {
+  it('isolates every role login command from the caller repository', async () => {
+    const fixture = await makeFixture();
+    const layout = resolveLayout({}, fixture.env);
+    for (const role of ['supervisor', 'lead', 'peer'] as const) {
+      const home = roleHome(layout, 'pi', role);
+      const check = (await piCredentialDiagnostic(layout, role, '/tmp/pi binary')).checks[0];
+      expect(check?.fix).toContain(`cd '${home}' && PI_CODING_AGENT_DIR='${home}'`);
+      expect(check?.fix).toContain("'/tmp/pi binary' '--no-extensions' '--no-approve' '--append-system-prompt' ''");
+      expect(check?.fix).toContain('minimal, non-room-equivalent interactive login session');
+      expect(check?.fix).toContain('Run /login, then exit Pi');
+    }
+  });
+
   it('reports a role auth file structurally and known provider env names by presence', async () => {
     const fixture = await makeFixture();
     const layout = resolveLayout({}, fixture.env);
     const home = roleHome(layout, 'pi', 'lead');
     await mkdir(home, { recursive: true });
     await writeFile(join(home, 'auth.json'), '{not-json');
-    expect((await piCredentialDiagnostic(layout, 'lead')).checks[0]?.id).toContain('diverged-file-preserve');
+    const fileCheck = (await piCredentialDiagnostic(layout, 'lead')).checks[0];
+    expect(fileCheck?.id).toContain('diverged-file-preserve');
+    expect(fileCheck?.fix).toContain('minimal, non-room-equivalent interactive login session');
+    expect(fileCheck?.fix).toContain('Run /login, then exit Pi');
 
     const envFixture = await makeFixture();
     const envLayout = resolveLayout({}, { ...envFixture.env, GEMINI_API_KEY: 'dummy-never-read' });

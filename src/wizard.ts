@@ -25,7 +25,7 @@ export async function runWizard(
   const action = await prompts.select({
     message: 'What do you want to do?',
     options: [
-      { value: 'setup', label: 'Set up / update the room' },
+      { value: 'setup', label: 'Set up / update the room (login stays separate)' },
       { value: 'verify', label: 'Verify the current room' },
       { value: 'remove', label: 'Remove the room' },
     ],
@@ -47,7 +47,7 @@ export async function runWizard(
   const preview = await setup({ ...options, agents });
   const status = emit(preview);
   if (preview.outcome !== 'changes-planned') return status;
-  const approved = await prompts.confirm({ message: 'Apply these changes?' });
+  const approved = await prompts.confirm({ message: 'Apply these changes? Authentication will not be validated or started.' });
   if (approved !== true) return cancelled();
   return emit(await setup({ ...options, agents, apply: true }));
 }

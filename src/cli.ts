@@ -1,5 +1,6 @@
 import { Command, CommanderError } from 'commander';
 import metadata from '../package.json' with { type: 'json' };
+import { loginRole, type LoginSpawner } from './auth.js';
 import { remove, setup, verify, type RunOptions } from './commands.js';
 import { renderHuman, renderJson } from './render.js';
 import { exitCode, fail, failed, type Result } from './result.js';
@@ -14,6 +15,7 @@ export interface CliContext {
   readonly isTTY?: boolean;
   readonly prompts?: Prompts;
   readonly options?: RunOptions;
+  readonly loginSpawn?: LoginSpawner;
 }
 
 /** Commander passes no initial value, so the first call starts the list. */
@@ -45,12 +47,12 @@ export async function runCli(argv: readonly string[], output: Output, context: C
     output.stdout(redact(json ? renderJson(result) : renderHuman(result)));
     return exitCode(result);
   };
-  const isTTY = context.isTTY ?? (process.stdin.isTTY && process.stdout.isTTY);
+  const isTTY = context.isTTY ?? (process.stdin.isTTY && process.stdout.isTTY && process.stderr.isTTY);
   const base = context.options ?? {};
 
   if (argv.length === 0) {
     if (!isTTY) {
-      output.stderr('paseo-room: no command given. Try: paseo-room setup, verify, remove, or --help.\n');
+      output.stderr('paseo-room: no command given. Try: paseo-room setup, verify, remove, auth login, or --help.\n');
       return 2;
     }
     // @clack/prompts is only reachable here, so keep it off the scripted path.
@@ -62,7 +64,9 @@ export async function runCli(argv: readonly string[], output: Output, context: C
     .name('paseo-room')
     .description('Configure Codex/Claude/Pi role homes in $HOME and register them with your local Paseo daemon.')
     .version(metadata.version)
-    .argument('<command>', 'setup | verify | remove')
+    .usage('<setup|verify|remove> [options]\n       auth login <codex|claude|pi> <supervisor|lead|peer> [options]')
+    .argument('<command>', 'setup | verify | remove | auth')
+    .argument('[command-arguments...]', 'auth login <agent> <role>')
     .option('--agent <agent>', 'codex, claude, or pi; repeat to combine (default: codex)', collectAgent)
     .option('--apply', 'actually make the changes (default: dry run)')
     .option('--json', 'machine-readable output')
@@ -78,12 +82,15 @@ export async function runCli(argv: readonly string[], output: Output, context: C
     .exitOverride();
 
   let command: string;
+  let commandArguments: string[];
   let options: RunOptions;
+  let raw: Record<string, unknown>;
   try {
     program.parse([...argv], { from: 'user' });
-    const raw = program.opts<Record<string, unknown>>();
+    raw = program.opts<Record<string, unknown>>();
     json = raw.json === true;
     command = program.args[0] ?? '';
+    commandArguments = program.args.slice(1);
     options = optionsFrom(raw, base);
   } catch (error) {
     if (error instanceof CommanderError && error.exitCode === 0) return 0;
@@ -91,6 +98,33 @@ export async function runCli(argv: readonly string[], output: Output, context: C
   }
 
   try {
+    if (command === 'auth') {
+      if (raw.apply === true) {
+        output.stderr('paseo-room auth login is already explicit and does not use --apply.\n');
+        return 2;
+      }
+      if (raw.json === true) {
+        output.stderr('paseo-room auth login is interactive and does not support --json.\n');
+        return 2;
+      }
+      if (raw.agent !== undefined) {
+        output.stderr('paseo-room auth login takes exactly one positional agent and does not use --agent.\n');
+        return 2;
+      }
+      if (commandArguments.length !== 3 || commandArguments[0] !== 'login') {
+        output.stderr('Usage: paseo-room auth login <codex|claude|pi> <supervisor|lead|peer>\n');
+        return 2;
+      }
+      return await loginRole(commandArguments[1] ?? '', commandArguments[2] ?? '', {
+        ...options,
+        isTTY,
+        ...(context.loginSpawn ? { spawn: context.loginSpawn } : {}),
+      }, output);
+    }
+    if (commandArguments.length > 0) {
+      output.stderr(`paseo-room ${command}: unexpected arguments: ${commandArguments.join(' ')}\n`);
+      return 2;
+    }
     if (command === 'setup') return emit(await setup(options));
     if (command === 'verify') return emit(await verify(options));
     if (command === 'remove') return emit(await remove(options));
@@ -98,6 +132,6 @@ export async function runCli(argv: readonly string[], output: Output, context: C
     const detail = error instanceof Error ? error.message : 'unknown error';
     return emit(failed(command, [fail(`${command}.error`, redact(detail), 'Check that Paseo is running and reachable, then try again.')]));
   }
-  output.stderr(`paseo-room: unknown command "${command}". Try: setup, verify, remove.\n`);
+  output.stderr(`paseo-room: unknown command "${command}". Try: setup, verify, remove, or auth login.\n`);
   return 2;
 }

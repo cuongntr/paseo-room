@@ -20,9 +20,9 @@ export const ROLE_COLOR: Record<Role, string> = { supervisor: 'violet', lead: 'b
 
 /** Paseo shows these to orchestrating agents, so each one says who may open the seat. */
 export const ROLE_NOTES: Record<Role, string> = {
-  supervisor: 'Human-facing routing seat. Opened by Human, never by another agent.',
-  lead: 'Sole project technical owner. Open only when none exists; otherwise reuse it. Creates Peer seats only.',
-  peer: 'Runs one Lead brief, writing or read-only. Created by Lead, one per brief, closed with it.',
+  supervisor: 'Human-facing routing seat. Opened by Human, never by another agent; cwd, title and provider label do not prove room membership.',
+  lead: 'Sole project technical owner. When opening, copy every present profile launch field. Otherwise reuse only with exact current room Lead provider/mode/workspace evidence plus corroborated ownership. Cwd, title and provider label are not membership. Creates Peer seats only.',
+  peer: 'One fresh Lead brief. Open by copying every present profile launch field; require exact current room Peer provider/mode/workspace and paseo.parent-agent-id for its Lead. Cwd, title and provider label are not membership; no orchestration.',
 };
 
 export function providerId(agent: AgentId, role: Role): string {

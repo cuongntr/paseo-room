@@ -4,8 +4,9 @@ import { tmpdir } from 'node:os';
 import { basename, isAbsolute, join, resolve } from 'node:path';
 import {
   ambientNamesCheck, inspectCredentialPath, presentNames, preservedCredentialCheck,
-  roleCommand, type CredentialDiagnostic,
+  type CredentialDiagnostic,
 } from '../credentials.js';
+import { piLoginCommand } from '../auth.js';
 import type { Entry } from '../fsops.js';
 import { existingPaths } from '../fsops.js';
 import type { Layout } from '../layout.js';
@@ -272,13 +273,16 @@ async function readPiOptional(path: string): Promise<string | undefined> {
 export async function piCredentialDiagnostic(layout: Layout, role: Role, binary = 'pi'): Promise<CredentialDiagnostic> {
   const home = roleHome(layout, 'pi', role);
   const path = join(home, 'auth.json');
-  const launch = roleCommand({ PI_CODING_AGENT_DIR: home }, binary);
+  const launch = piLoginCommand(home, binary);
   const state = await inspectCredentialPath(path);
   const id = `pi.auth.${role}`;
   if (state.kind !== 'missing') {
     return {
       path,
-      checks: [preservedCredentialCheck({ id, agent: 'Pi', role, path, state, login: `${launch}, then run /login` })],
+      checks: [preservedCredentialCheck({
+        id, agent: 'Pi', role, path, state,
+        login: `${launch}; this starts a minimal, non-room-equivalent interactive login session. Run /login, then exit Pi`,
+      })],
     };
   }
   const configured = presentNames(layout.envNames, AUTH_ENV);
@@ -286,7 +290,7 @@ export async function piCredentialDiagnostic(layout: Layout, role: Role, binary 
   return { path, checks: [{
     id: `${id}.login-required`, status: 'warn',
     message: `Pi ${role} auth: login-required; no role-owned auth.json or known provider environment name was detected. Ambient provider auth may exist, but it was not inspected or validated.`,
-    fix: `Launch the role with: ${launch}. Then run /login interactively.`,
+    fix: `Start a minimal, non-room-equivalent interactive login session with: ${launch}. Run /login, then exit Pi.`,
   }] };
 }
 

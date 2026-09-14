@@ -68,6 +68,8 @@ export interface FakeDaemon {
   agentProfiles: Record<string, unknown>[];
   refreshed: string[];
   connects: number;
+  /** One-shot fault seam for recovery tests after a command has already connected. */
+  failNextConfigGet?: boolean;
 }
 export function emptyDaemon(): FakeDaemon {
   return { providers: {}, agentProfiles: [], refreshed: [], connects: 0 };
@@ -78,7 +80,13 @@ export function fakeClient(state: FakeDaemon): ClientFactory {
     connect: () => { state.connects += 1; return Promise.resolve(); },
     close: () => Promise.resolve(),
     config: {
-      get: () => Promise.resolve({ config: { providers: state.providers, agentProfiles: state.agentProfiles } }),
+      get: () => {
+        if (state.failNextConfigGet === true) {
+          state.failNextConfigGet = false;
+          return Promise.reject(new Error('synthetic config read failure'));
+        }
+        return Promise.resolve({ config: { providers: state.providers, agentProfiles: state.agentProfiles } });
+      },
       patch: (patch: { providers?: Record<string, unknown>; removeProviders?: string[]; agentProfiles?: Record<string, unknown>[] }) => {
         if (patch.providers) Object.assign(state.providers, patch.providers);
         const removed = new Set(patch.removeProviders ?? []);

@@ -128,10 +128,29 @@ trustworthy. Close every native multi-agent path in the runtime, and give orches
 tools only to the seats whose job is orchestration.
 
 **One Lead per project.** Before creating a Lead, Supervisor discovers current and recent
-agents and reuses the established project owner. Initialization, a completed turn, pending
-permission, or a resumable closed state does not create a vacancy. A fresh-session review is
-a fresh read-only Peer opened by that Lead, not a replacement Lead opened by Supervisor.
-Agent parentage follows the creator; workspace placement does not transfer it.
+agents and reuses the established project owner, but discovery filters are not identity.
+First read the control plane's current exact Lead seat profile and materialize every launch
+field it defines; when creation accepts no profile id, combine provider/model and copy mode,
+thinking and feature values while omitting absent fields. Treat a cwd-filtered agent
+list only as candidate discovery, post-filter the exact project root if descendants are
+included, reject archived candidates and bare or wrong-role providers, then inspect full
+status. Eligibility requires the profile's exact provider, intended workspace, and matching
+current mode when the profile defines one. Parentage or known Human-opened ownership history
+corroborates ownership; an unparented or ambiguous candidate is never adopted silently.
+
+If the control plane does not retain the profile id on a session, exact provider, mode and
+workspace establish profile-equivalent configuration, not literal launch provenance. Do not
+substitute mutable titles or labels, invent generation ids, or claim enforcement the control
+plane does not provide. Initialization, a completed turn, pending permission, or a resumable
+closed state does not create a vacancy. A fresh-session review is a fresh read-only Peer
+opened by that Lead, not a replacement Lead opened by Supervisor. Agent parentage follows the
+creator; workspace placement does not transfer it.
+
+Lead applies the same eligibility rule when creating a Peer: materialize every field present
+in the current exact Peer seat profile, use the intended workspace, then require the control
+plane's parent metadata to identify the current Lead. A Peer with a wrong provider,
+workspace, mode, or parent receives no brief. It remains one fresh session for one assignment
+and does not gain orchestration.
 
 If duplicate Leads exist, stop parallel routing and preserve both timelines. Keep the
 previously established healthy owner and hand the duplicate's stable work back before closing
@@ -398,6 +417,13 @@ things — each one maps to an invariant above.
 
 If the runtime cannot disable its own subagents, you have two control planes and the
 ownership invariants do not hold — fix that before building on top of it.
+
+Configuration evidence also has a boundary. A generator and verifier can prove that the
+expected role document, launch configuration and live control-plane record agree. Runtime
+ingestion is then supported by the agent runtime's configuration contract. Neither fact
+proves that an already-running process loaded the latest generation or that the model obeyed
+the instructions it received. Keep generated/live configuration, runtime ingestion, and
+model behavior as separate claims.
 
 ## 11. Provenance and how to adapt this
 

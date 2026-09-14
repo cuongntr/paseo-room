@@ -1,8 +1,12 @@
 import { lstat, mkdir, readFile, readlink, realpath, stat, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { parse } from 'smol-toml';
 import { describe, expect, it } from 'vitest';
 import { runCli } from '../src/cli.js';
-import { emptyDaemon, fakeClient, makeFixture, RUNNING_STATUS, type FakeDaemon } from './helpers.js';
+import { protocolIds, renderInstructions } from '../src/room/instructions.js';
+import { DEFAULT_PROTOCOL } from '../src/room/workspace.js';
+import type { AgentId, Role } from '../src/roles.js';
+import { emptyDaemon, fakeClient, makeFixture, RUNNING_STATUS, script, type FakeDaemon } from './helpers.js';
 
 async function run(argv: readonly string[], env: NodeJS.ProcessEnv, daemon: FakeDaemon): Promise<{ code: number; out: string; err: string }> {
   let out = '';
@@ -12,6 +16,10 @@ async function run(argv: readonly string[], env: NodeJS.ProcessEnv, daemon: Fake
     options: { env, factory: fakeClient(daemon) },
   });
   return { code, out, err };
+}
+
+function protocolHeadings(document: string): string[] {
+  return [...document.matchAll(/^## (WP-[^\n]+)$/gm)].map(match => match[1] ?? '');
 }
 
 describe('paseo-room CLI', () => {
@@ -40,6 +48,59 @@ describe('paseo-room CLI', () => {
     const tools = (id: string): unknown => (daemon.providers[id] as { paseoTools: { enabled: boolean } }).paseoTools.enabled;
     expect([tools('codex-supervisor'), tools('codex-lead'), tools('codex-peer')]).toEqual([true, true, false]);
     expect([tools('claude-supervisor'), tools('claude-lead'), tools('claude-peer')]).toEqual([true, true, false]);
+  });
+
+  it('connects every profile and provider to the exact role home and complete role document', async () => {
+    const fixture = await makeFixture();
+    const daemon = emptyDaemon();
+    const agents: readonly AgentId[] = ['codex', 'claude', 'pi'];
+    const roles: readonly Role[] = ['supervisor', 'lead', 'peer'];
+    const homeEnv: Record<AgentId, string> = {
+      codex: 'CODEX_HOME', claude: 'CLAUDE_CONFIG_DIR', pi: 'PI_CODING_AGENT_DIR',
+    };
+    const mode: Partial<Record<AgentId, string>> = {
+      codex: 'full-access', claude: 'bypassPermissions',
+    };
+    const result = await run([
+      'setup', '--agent', 'codex', '--agent', 'claude', '--agent', 'pi', '--apply',
+    ], fixture.env, daemon);
+    expect(result.code).toBe(0);
+
+    for (const agent of agents) {
+      for (const role of roles) {
+        const providerId = `${agent}-${role}`;
+        const rolePath = join(fixture.roomHome, `roles/${agent}/${role}`);
+        const provider = daemon.providers[providerId] as { command: string[]; env: Record<string, string> };
+        const profile = daemon.agentProfiles.find(entry => entry.id === `room-${agent}-${role}`);
+        expect(profile?.provider).toBe(providerId);
+        expect(profile?.modeId).toBe(mode[agent]);
+        expect(Object.hasOwn(profile ?? {}, 'modeId')).toBe(agent !== 'pi');
+        expect(provider.env[homeEnv[agent]]).toBe(rolePath);
+
+        const expected = renderInstructions(role);
+        let delivered: string;
+        if (agent === 'codex') {
+          const config = parse(await readFile(join(rolePath, 'config.toml'), 'utf8')) as Record<string, unknown>;
+          expect(config.developer_instructions).toBe(expected);
+          delivered = String(config.developer_instructions);
+        } else if (agent === 'claude') {
+          delivered = await readFile(join(rolePath, 'CLAUDE.md'), 'utf8');
+          expect(delivered.endsWith(expected)).toBe(true);
+        } else {
+          const appendPath = join(rolePath, 'APPEND_SYSTEM.md');
+          delivered = await readFile(appendPath, 'utf8');
+          expect(delivered.endsWith(expected)).toBe(true);
+          const flag = provider.command.indexOf('--append-system-prompt');
+          expect(flag).toBeGreaterThan(-1);
+          expect(provider.command[flag + 1]).toBe(appendPath);
+        }
+        expect(protocolHeadings(delivered)).toEqual(protocolIds(role));
+      }
+    }
+
+    const workspace = await readFile(join(fixture.roomHome, 'room/WORKSPACE_PROTOCOL.md'), 'utf8');
+    expect(workspace).toBe(renderInstructions('workspace'));
+    expect(protocolHeadings(workspace)).toEqual(Object.keys(DEFAULT_PROTOCOL));
   });
 
   it('is idempotent: a second run plans no changes and verify passes', async () => {
@@ -127,6 +188,25 @@ describe('paseo-room CLI', () => {
     const verified = await run(['verify'], fixture.env, daemon);
     expect(verified.code).toBe(1);
     expect(verified.out).toContain('Paseo providers are missing or differ');
+  });
+
+  it('verify detects drift in every vendor prompt carrier', async () => {
+    const fixture = await makeFixture();
+    const daemon = emptyDaemon();
+    await run(['setup', '--agent', 'codex', '--agent', 'claude', '--agent', 'pi', '--apply'], fixture.env, daemon);
+    const carriers = [
+      join(fixture.roomHome, 'roles/codex/lead/config.toml'),
+      join(fixture.roomHome, 'roles/claude/lead/CLAUDE.md'),
+      join(fixture.roomHome, 'roles/pi/lead/APPEND_SYSTEM.md'),
+    ];
+    for (const path of carriers) {
+      const original = await readFile(path, 'utf8');
+      await writeFile(path, `${original}\ndrift\n`);
+      const verified = await run(['verify'], fixture.env, daemon);
+      expect(verified.code).toBe(1);
+      expect(verified.out).toContain('managed role files are missing or outdated');
+      await writeFile(path, original);
+    }
   });
 
   it('removes only the room home and its providers', async () => {
@@ -289,6 +369,62 @@ describe('changing the seated agents', () => {
 });
 
 describe('remove safety', () => {
+  it('preserves the room marker when Paseo is unavailable so a later remove can finish', async () => {
+    const fixture = await makeFixture();
+    const daemon = emptyDaemon();
+    await run(['setup', '--apply'], fixture.env, daemon);
+    const marker = join(fixture.roomHome, 'room.json');
+    await script(join(fixture.home, 'bin/paseo'), JSON.stringify({
+      ...RUNNING_STATUS, localDaemon: 'stopped',
+    }));
+
+    const unavailable = await run(['remove', '--apply'], fixture.env, daemon);
+    expect(unavailable.code).toBe(1);
+    expect(unavailable.out).toContain(`Preserved ${fixture.roomHome}, including its room marker`);
+    expect(unavailable.out).toContain('Start Paseo, then run: paseo-room remove --apply');
+    await expect(stat(marker)).resolves.toBeDefined();
+    await expect(stat(join(fixture.roomHome, 'roles/codex/lead'))).resolves.toBeDefined();
+    expect(Object.keys(daemon.providers)).toHaveLength(3);
+
+    await script(join(fixture.home, 'bin/paseo'), JSON.stringify(RUNNING_STATUS));
+    const recovered = await run(['remove', '--apply'], fixture.env, daemon);
+    expect(recovered.code).toBe(0);
+    await expect(stat(fixture.roomHome)).rejects.toThrow();
+    expect(daemon.providers).toEqual({});
+    expect(daemon.agentProfiles.filter(profile => String(profile.id).startsWith('room-'))).toEqual([]);
+  });
+
+  it('preserves local state after partial daemon cleanup so retry can finish safely', async () => {
+    const fixture = await makeFixture();
+    const unrelatedProfile = { id: 'mine', provider: 'unrelated' };
+    const daemon: FakeDaemon = {
+      ...emptyDaemon(),
+      providers: { unrelated: { extends: 'pi' } },
+      agentProfiles: [unrelatedProfile],
+    };
+    await run(['setup', '--apply'], fixture.env, daemon);
+    const marker = join(fixture.roomHome, 'room.json');
+    const roleCredential = join(fixture.roomHome, 'roles/codex/lead/auth.json');
+    await writeFile(roleCredential, 'dummy role-owned credential fixture');
+
+    daemon.failNextConfigGet = true;
+    const interrupted = await run(['remove', '--apply'], fixture.env, daemon);
+    expect(interrupted.code).toBe(1);
+    expect(interrupted.out).toContain('Paseo provider/profile cleanup did not complete');
+    expect(interrupted.out).toContain('Restore Paseo connectivity, then run: paseo-room remove --apply');
+    await expect(stat(marker)).resolves.toBeDefined();
+    await expect(readFile(roleCredential, 'utf8')).resolves.toBe('dummy role-owned credential fixture');
+    expect(daemon.providers).toEqual({ unrelated: { extends: 'pi' } });
+    expect(daemon.agentProfiles).toContainEqual(unrelatedProfile);
+    expect(daemon.agentProfiles.some(profile => String(profile.id).startsWith('room-'))).toBe(true);
+
+    const recovered = await run(['remove', '--apply'], fixture.env, daemon);
+    expect(recovered.code).toBe(0);
+    await expect(stat(fixture.roomHome)).rejects.toThrow();
+    expect(daemon.providers).toEqual({ unrelated: { extends: 'pi' } });
+    expect(daemon.agentProfiles).toEqual([unrelatedProfile]);
+  });
+
   it('fails before traversing symlinked agent or role-home directories', async () => {
     for (const seam of ['agent', 'role'] as const) {
       const fixture = await makeFixture();
@@ -374,6 +510,37 @@ describe('provider-level pins', () => {
     expect(verified.code).toBe(1);
     expect(verified.out).toContain('Paseo providers are missing or differ');
   });
+
+  it('verify detects each vendor role-home environment drifting from its generated home', async () => {
+    const fixture = await makeFixture();
+    const daemon = emptyDaemon();
+    await run(['setup', '--agent', 'codex', '--agent', 'claude', '--agent', 'pi', '--apply'], fixture.env, daemon);
+    for (const [providerId, envName] of [
+      ['codex-lead', 'CODEX_HOME'],
+      ['claude-lead', 'CLAUDE_CONFIG_DIR'],
+      ['pi-lead', 'PI_CODING_AGENT_DIR'],
+    ] as const) {
+      const provider = daemon.providers[providerId] as { env: Record<string, string> };
+      const expected = provider.env[envName];
+      provider.env[envName] = '/wrong-role-home';
+      const verified = await run(['verify'], fixture.env, daemon);
+      expect(verified.code).toBe(1);
+      expect(verified.out).toContain('Paseo providers are missing or differ');
+      if (expected !== undefined) provider.env[envName] = expected;
+    }
+  });
+
+  it('verify detects a Pi provider no longer appending its generated role prompt', async () => {
+    const fixture = await makeFixture();
+    const daemon = emptyDaemon();
+    await run(['setup', '--agent', 'pi', '--apply'], fixture.env, daemon);
+    const provider = daemon.providers['pi-peer'] as { command: string[] };
+    const flag = provider.command.indexOf('--append-system-prompt');
+    provider.command[flag + 1] = '/wrong/APPEND_SYSTEM.md';
+    const verified = await run(['verify'], fixture.env, daemon);
+    expect(verified.code).toBe(1);
+    expect(verified.out).toContain('Paseo providers are missing or differ');
+  });
 });
 
 describe('agent profiles', () => {
@@ -407,8 +574,15 @@ describe('agent profiles', () => {
     // Orchestrators read these through list_profiles before choosing a seat to open.
     const leadNotes = String(daemon.agentProfiles.find(entry => entry.id === 'room-codex-lead')?.notes);
     expect(leadNotes).toContain('Sole project technical owner');
-    expect(leadNotes).toContain('Open only when none exists; otherwise reuse it');
+    expect(leadNotes).toContain('copy every present profile launch field');
+    expect(leadNotes).toContain('exact current room Lead provider/mode/workspace evidence');
+    expect(leadNotes).toContain('Cwd, title and provider label are not membership');
     expect(leadNotes).toContain('Creates Peer seats only');
+    const peerNotes = String(daemon.agentProfiles.find(entry => entry.id === 'room-codex-peer')?.notes);
+    expect(peerNotes).toContain('copying every present profile launch field');
+    expect(peerNotes).toContain('exact current room Peer provider/mode/workspace');
+    expect(peerNotes).toContain('paseo.parent-agent-id for its Lead');
+    expect(peerNotes).toContain('Cwd, title and provider label are not membership');
   });
 
   it('leaves profiles it does not own alone, and keeps operator tuning on the ones it does', async () => {
@@ -452,6 +626,18 @@ describe('agent profiles', () => {
 
     await run(['remove', '--apply'], fixture.env, daemon);
     expect(ids(daemon)).toEqual(['mine']);
+  });
+
+  it('verify detects a room profile pointing at the wrong provider', async () => {
+    const fixture = await makeFixture();
+    const daemon = emptyDaemon();
+    await run(['setup', '--apply'], fixture.env, daemon);
+    const profile = daemon.agentProfiles.find(entry => entry.id === 'room-codex-lead');
+    if (!profile) throw new Error('expected the Codex Lead profile');
+    profile.provider = 'codex';
+    const verified = await run(['verify'], fixture.env, daemon);
+    expect(verified.code).toBe(1);
+    expect(verified.out).toContain('agent profiles are missing or differ');
   });
 });
 

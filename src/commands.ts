@@ -5,6 +5,7 @@ import { claudeAgent } from './agents/claude.js';
 import { codexAgent } from './agents/codex.js';
 import { piAgent } from './agents/pi.js';
 import type { Agent, AgentPlan, Profile, Provider } from './agents/types.js';
+import { AUTHENTICATION_GUIDE, renderAuthenticationGuide } from './auth.js';
 import { applyEntries, exists, planEntries, type Entry } from './fsops.js';
 import { layoutChecks, resolveLayout, roleHome, sharedRoom, type Layout, type Options } from './layout.js';
 import { checkDaemon, mergeProfiles, minimumPaseoVersion, profileMatches, providerMatches, withSession, type ClientFactory, type LiveProfile, type Session } from './paseo.js';
@@ -75,6 +76,7 @@ async function buildDesired(layout: Layout, agents: readonly AgentId[], roles: r
   const providers: Record<string, Provider> = {};
   const profiles: Profile[] = [];
   const checks: Check[] = [];
+  const binaries: Partial<Record<AgentId, string>> = {};
   for (const id of agents) {
     const agent = AGENTS[id];
     const plan = await agent.build(layout, roles);
@@ -90,12 +92,23 @@ async function buildDesired(layout: Layout, agents: readonly AgentId[], roles: r
         'This is an adapter defect; do not apply the plan.'));
     }
     if (plan.binary === undefined) continue;
+    binaries[id] = plan.binary;
     Object.assign(providers, roleProviders(layout, agent, {
       binary: plan.binary,
       ...(plan.argv ? { argv: plan.argv } : {}),
       ...(plan.providerEnv ? { providerEnv: plan.providerEnv } : {}),
     }, roles));
     profiles.push(...roleProfiles(agent, roles));
+  }
+  if (agents.every(id => binaries[id] !== undefined)) {
+    entries.push({
+      kind: 'file',
+      path: join(layout.roomHome, AUTHENTICATION_GUIDE),
+      content: renderAuthenticationGuide(layout.roomHome, binaries, agents, roles),
+    });
+    checks.push(warn('room.authentication-not-validated',
+      `Role authentication was not validated. Login instructions are managed at ${join(layout.roomHome, AUTHENTICATION_GUIDE)}.`,
+      'After setup --apply, follow that guide or run: paseo-room auth login <agent> <role>'));
   }
   entries.push({ kind: 'file', path: join(layout.roomHome, MARKER), content: renderMarker(metadata.version, agents, roles) });
   return { entries, providers, profiles, checks };
@@ -307,7 +320,18 @@ export async function remove(options: RunOptions = {}): Promise<Result> {
   }
   const daemon = await checkDaemon(layout, options.env);
   const checks: Check[] = [credentialWarning];
-  if (daemon.daemon) {
+  if (!daemon.daemon) {
+    return failed('remove', [
+      credentialWarning,
+      ...daemon.checks,
+      fail(
+        'room.files',
+        `Preserved ${layout.roomHome}, including its room marker, because Paseo cleanup could not start.`,
+        'Start Paseo, then run: paseo-room remove --apply',
+      ),
+    ]);
+  }
+  try {
     await withSession(daemon.daemon, async session => {
       await session.removeProviders(ids);
       const live = await session.readProfiles();
@@ -315,8 +339,15 @@ export async function remove(options: RunOptions = {}): Promise<Result> {
       if (kept.length !== live.length) await session.writeProfiles(kept);
     }, sessionOptions(options));
     checks.push(pass('room.providers', `Removed ${String(ids.length)} Paseo providers and their agent profiles.`));
-  } else {
-    checks.push({ id: 'room.providers', status: 'warn', message: 'Paseo is unreachable; provider and profile entries were left in place.', fix: 'Start Paseo and run remove again to clear them.' });
+  } catch {
+    return failed('remove', [
+      credentialWarning,
+      fail(
+        'room.providers',
+        `Paseo provider/profile cleanup did not complete; ${layout.roomHome} and its room marker were preserved.`,
+        'Restore Paseo connectivity, then run: paseo-room remove --apply',
+      ),
+    ]);
   }
   // Explicit remove owns the whole room home, including runtime-owned role credentials.
   await rm(layout.roomHome, { recursive: true, force: true });

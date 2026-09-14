@@ -30,9 +30,25 @@ describe('role instructions', () => {
 
   it('discovers and reuses the sole project Lead across lifecycle states', () => {
     const supervisor = renderInstructions('supervisor');
-    expect(supervisor).toContain('checks whether a healthy Lead already owns the project');
-    expect(supervisor).toContain('inspecting its current and recent agents');
-    expect(supervisor).toContain('An initializing or running Lead, an idle Lead after a completed turn');
+    expect(supervisor).toContain('read list_profiles and select the exact current room Lead profile');
+    expect(supervisor).toContain('materialize every launch field present in that profile');
+    expect(supervisor).toContain('combine provider and model');
+    expect(supervisor).toContain('copy modeId, thinkingOptionId, and featureValues');
+    expect(supervisor).toContain('omit fields the profile does not define');
+    expect(supervisor).toContain('A cwd, title or provider label is never room membership');
+    expect(supervisor).toContain('Use list_agents(cwd) only to discover current and recent candidates');
+    expect(supervisor).toContain('also returns descendant working directories');
+    expect(supervisor).toContain('post-filter candidates whose cwd is not exactly the intended project cwd');
+    expect(supervisor).toContain('Reject archived candidates');
+    expect(supervisor).toContain("selected current room Lead profile's exact provider");
+    expect(supervisor).toContain('Inspect every remaining candidate with get_agent_status');
+    expect(supervisor).toContain('require the status workspaceId to match it');
+    expect(supervisor).toContain('require currentModeId to equal it');
+    expect(supervisor).toContain('Paseo currently stores no profileId on an agent session');
+    expect(supervisor).toContain('proves only that a direct launch is profile-equivalent');
+    expect(supervisor).toContain('parentage or known Human-opened ownership history');
+    expect(supervisor).toContain('Never silently adopt an unparented candidate');
+    expect(supervisor).toContain('An eligible initializing or running Lead, an idle Lead after a completed turn');
     expect(supervisor).toContain('a closed but unarchived, resumable Lead are the same project owner');
     expect(supervisor).toContain('route the directive, question, evidence, or review request to that Lead');
     expect(supervisor).toContain('resuming it when necessary');
@@ -52,6 +68,17 @@ describe('role instructions', () => {
     expect(lead).toContain("The fresh session is the review Peer's session");
     expect(lead).toContain('never a replacement or duplicate project Lead');
     expect(lead).toContain('Lead remains the owner, receives the review evidence');
+    expect(lead).toContain('read list_profiles and select the exact current room Peer profile');
+    expect(lead).toContain('materialize every launch field present in that profile');
+    expect(lead).toContain('combine provider and model');
+    expect(lead).toContain('copy modeId, thinkingOptionId, and featureValues');
+    expect(lead).toContain('omit absent fields');
+    expect(lead).toContain('daemon-added paseo.parent-agent-id matching this Lead');
+    expect(lead).toContain('A cwd, title or provider label is not room membership');
+    expect(lead).toContain('proves profile-equivalent configuration, not literal profile-click provenance');
+    expect(lead).toContain('Do not invent a profile provenance claim or provider-generation id');
+    expect(lead).toContain('A Peer belongs to one fresh brief');
+    expect(lead).toContain('Peer does not orchestrate');
   });
 
   it('treats pending permission as state and bounds duplicate recovery', () => {

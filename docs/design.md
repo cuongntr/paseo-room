@@ -86,6 +86,21 @@ copied or followed. Environment alternatives are detected from names/presence bo
 Keyrings and providers are never queried, and setup never runs login or network token
 validation.
 
+`AUTHENTICATION.md` is different from a credential path: it is a managed, secret-free guide
+at the room root. Setup renders it from the binaries it already resolved and the deterministic
+role homes it is about to manage, so custom binary and room-home paths are exact and
+POSIX-shell quoted without storing them in `room.json`. Dry-run previews the guide through the
+ordinary entry diff, and only `setup --apply` writes or regenerates it. Setup and verify point
+to the guide while stating that authentication was not validated.
+
+Interactive login is deliberately a separate command,
+`paseo-room auth login <agent> <role>`. It reads only the room marker and path metadata needed
+to prove that the selected role home is a real installed directory, resolves the current
+per-agent binary override or `PATH` entry, and spawns the vendor CLI with an argv array,
+`shell: false`, and inherited stdin/stdout/stderr. It neither invokes setup nor accepts
+`--apply`; there is no all-roles or status operation. A vendor exit code passes through, while
+a terminating signal maps to the conventional `128 + signal number` process status.
+
 The migration policy is warn-only. A missing path is `login-required` unless a safely
 recognizable static/environment method exists. A regular credential file is
 `configured structurally (diverged-file-preserve)`: it may be runtime-owned divergence, so
@@ -102,9 +117,9 @@ Codex reads `cli_auth_credentials_store` from the generated role config when it 
 `keyring` remain unverifiable because the room does not query the native store, and
 `ephemeral` has no persistent artifact to prove. An `OPENAI_API_KEY` name in the setup
 process is not treated as configured role auth: Codex's built-in API-key flow stores it through
-`codex login --with-api-key`, and the room does not copy it into Paseo's provider. The role instructions are
-`CODEX_HOME=<role-home> codex login` and `CODEX_HOME=<role-home> codex login status`; neither
-command is run by the room.
+`codex login --with-api-key`, and the room does not copy it into Paseo's provider. The
+generated guide uses `CODEX_HOME=<role-home> codex login`. Setup and verify never run it; the
+explicit `auth login` command runs the same argv only for the one role the operator names.
 
 Deselection during setup also retains old role homes. Recursively deleting one could erase a
 role-owned credential created after planning, so setup removes only stale providers/profiles.
@@ -146,8 +161,8 @@ secrets. It recognizes only safely inferable auth method names:
 the documented cloud-provider selectors, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY`,
 `CLAUDE_CODE_OAUTH_TOKEN`, and `apiKeyHelper`. Operators use one of those methods or run
 `CLAUDE_CONFIG_DIR=<role-home> CLAUDE_SECURESTORAGE_CONFIG_DIR=<role-home> claude auth login`
-per role (falling back to launching Claude with both values and `/login`); `claude auth status`
-is guidance for the operator, never an automatic probe.
+per role, directly from the guide or through `paseo-room auth login claude <role>`.
+Authentication status and token validity are never probed automatically.
 This follows Anthropic's documented
 [credential storage](https://code.claude.com/docs/en/authentication#credential-management), plus the
 observed result of running `claude auth status` under an isolated config directory.
@@ -177,8 +192,14 @@ unrelated extension configured by the operator. The `npm`, `git`, `extensions` a
 are linked when present: `models.json`, `AGENTS.md`, skills, prompts, themes, keybindings and
 the Pi-specific `mcp.json`; `auth.json` is role-owned and preserve-only. Pi recognizes a
 bounded list of built-in provider API-key environment names by presence only, otherwise
-reports that ambient auth may exist but is not validated. Interactive setup is
-`PI_CODING_AGENT_DIR=<role-home> pi` followed by `/login`. Pi providers pin
+reports that ambient auth may exist but is not validated. Interactive authentication is a
+minimal Pi login session that starts in the role home instead of inheriting the caller repository:
+`PI_CODING_AGENT_DIR=<role-home> pi --no-extensions --no-approve
+--append-system-prompt ''` session followed by `/login`. Pi treats the explicit empty append
+source as present and resolves it to no content, suppressing fallback discovery of the role
+home's generated `APPEND_SYSTEM.md`, including its runtime capsule and role instructions.
+That direct launch neither resolves nor probes the adapter and cannot load the adapter or
+Paseo's generated integration extension; it is visibly described as non-room-equivalent. Pi providers pin
 `PI_MCP_CONFIG_MODE=exclusive`, so the adapter
 uses that role-home `mcp.json` as its single config source instead of independently discovering
 generic global or project MCP configuration. Sessions, stores and caches remain private to
@@ -325,12 +346,41 @@ an idle Lead has merely completed a turn, and a closed unarchived Lead remains r
 under the same agent id. A pending creation or permission is unresolved state, not evidence
 that the seat is absent.
 
-RC-103 therefore gives Supervisor an explicit discovery-and-reuse procedure. Before create,
-it inspects current and recent project agents; if an established Lead is initializing,
-running, idle, waiting for permission, or closed but resumable, Supervisor routes to that
-agent. It opens exactly one child Lead only when none owns the project. Fresh-session review
-is routed to that Lead, which opens a fresh read-only Peer under RC-206; freshness never
-creates a second Lead or gives Supervisor a channel to Peer.
+RC-103 therefore gives Supervisor an explicit discovery-and-reuse procedure whose evidence
+comes from the current live configuration rather than display names:
+
+1. Read `list_profiles` and select the exact current room Lead profile for the intended agent
+   implementation. Agent creation accepts no profile id, so combine its provider/model and
+   copy every present `modeId`, `thinkingOptionId`, and `featureValues`, omitting absent
+   fields. A profile name, agent title, cwd, or provider label is not membership.
+2. Call `list_agents(cwd)` only for candidate discovery. In Paseo 0.8.0 that filter includes
+   agents in descendant directories, so post-filter exact cwd and reject archived sessions,
+   ordinary bare `codex` / `claude` / `pi`, wrong-role providers, and providers other than
+   the selected profile's current exact provider.
+3. Inspect each survivor with `get_agent_status`. Require the intended `workspaceId` when
+   available and require `currentModeId` to equal the profile's `modeId` when one exists.
+4. Corroborate the established owner from parentage or known Human-opened ownership history.
+   An unparented or ambiguous candidate is not adopted silently; it enters duplicate recovery
+   and, where ownership cannot be resolved technically, Human escalation.
+
+An eligible established Lead may be initializing, running, idle, waiting for permission, or
+closed but unarchived and resumable; those are lifecycle states of one owner. Supervisor
+opens exactly one child Lead only when no eligible, corroborated owner exists. Fresh-session
+review is routed to that Lead, which opens a fresh read-only Peer under RC-206; freshness
+never creates a second Lead or gives Supervisor a channel to Peer.
+
+RC-207 applies the same live-config rule to a Lead-created Peer. Lead first reads the exact
+current room Peer profile, materializes every launch field it defines in the intended
+workspace, then inspects the live seat and requires the daemon-added
+`paseo.parent-agent-id` to equal the current Lead. A wrong provider, workspace, mode or
+parent is not eligible for a brief. The Peer remains one fresh session for one brief and has
+no room tools or orchestration path.
+
+Paseo currently does not retain `profileId` on an agent session; compact `list_agents`
+results also omit `workspaceId` and `currentModeId`, which is why status inspection is a
+separate step. Exact provider, mode and workspace prove that a direct launch is
+profile-equivalent, not that someone literally clicked the profile. This design deliberately
+does not add generation-versioned provider ids and does not claim daemon enforcement.
 
 Duplicate recovery is intentionally bounded rather than magical. Supervisor stops new
 parallel routing, preserves both histories and artifacts, keeps the previously established
@@ -342,6 +392,24 @@ RC-207 still says Lead opens Peer seats only, and `ROLE_NOTES` surfaces the sole
 the `list_profiles` decision point. Focused tests assert the exact generated instructions.
 This is stronger and less ambiguous guidance, but remains procedural rather than runtime
 enforcement; a contradictory or non-compliant caller can still supply any provider id.
+
+### 5c. Configuration evidence and runtime limits
+
+Setup and verify share one desired-state plan. It covers managed role files, exact provider
+commands and role-home environment pins, profile provider/mode identity, and the shared room
+protocol copy. Regression tests traverse that whole chain for Codex, Claude and Pi and apply
+negative drift to each prompt carrier, each role-home environment family, Pi's append path,
+and a profile provider. This proves generated content and the live daemon configuration
+observed by the commands.
+
+The next link is a vendor contract, not something `paseo-room` can observe from outside the
+process: Codex ingests `developer_instructions` from its role `config.toml`, Claude ingests
+its role `CLAUDE.md`, and Pi ingests the generated file named by
+`--append-system-prompt`. Tests prove those exact carriers and arguments. They do not prove
+that a process already running when setup changed the files reloaded them, and neither setup
+nor verify can prove that a model obeyed instructions in a particular turn. Generated/live
+configuration evidence, vendor-runtime ingestion contracts, and model behavior are three
+different claims.
 
 ## 6. Add to a base prompt, never replace it
 
@@ -374,8 +442,11 @@ a provider entry.
   credential files are included.
 - **No installing or upgrading Paseo, Codex, Claude, Pi or `pi-mcp-adapter`.** The room checks
   compatibility and explains a mismatch; it never repairs someone else's installation.
-- **No authentication automation.** Setup and verify report structural role-auth state but do
-  not run login, read credential contents, query keyrings, or validate token freshness.
+- **No setup-time login or authentication validation.** Setup and verify report structural
+  role-auth state and manage a secret-free guide, but do not run login, read credential
+  contents, query keyrings, or validate token freshness. The separate, explicit `auth login`
+  command only launches one vendor's interactive flow under the selected role home; it does
+  not inspect the resulting credential store.
 - **No launcher script.** The reference implementation wraps each seat in a shell script
   that regenerates the runtime on every launch. That buys automatic pickup of config
   changes, and costs a wrapper process whose stdout can corrupt the app-server's JSONL
@@ -390,7 +461,9 @@ a provider entry.
 `remove` is intentionally stronger than setup/update: after its dry-run warning and explicit
 `--apply`, it recursively deletes the room home, including role-owned credential files. It
 does not inspect or delete native OS keyring entries, which may remain, and never touches
-operator agent-home authentication.
+operator agent-home authentication. Remote provider/profile cleanup is a precondition for that
+local deletion: if Paseo is unavailable or cleanup errors, the room home and marker are retained
+so rerunning `remove --apply` after recovery can finish without a journal or rollback mechanism.
 
 ## 8. Lineage
 
