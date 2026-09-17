@@ -67,7 +67,7 @@ interface Desired {
 }
 async function buildDesired(layout: Layout, agents: readonly AgentId[], roles: readonly Role[]): Promise<Desired> {
   // Template, not linked into any seat: each repo owns its own docs/WORKSPACE_PROTOCOL.md.
-  // Named exactly as RC-002 names it, so a copy needs no rename.
+  // Named exactly as Workspace Protocol Precedence names it, so a copy needs no rename.
   const entries: Entry[] = [
     { kind: 'dir', path: layout.roomHome },
     { kind: 'dir', path: sharedRoom(layout) },
@@ -350,7 +350,18 @@ export async function remove(options: RunOptions = {}): Promise<Result> {
     ]);
   }
   // Explicit remove owns the whole room home, including runtime-owned role credentials.
-  await rm(layout.roomHome, { recursive: true, force: true });
+  try {
+    await rm(layout.roomHome, { recursive: true, force: true });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : 'unknown filesystem error';
+    checks.push(fail(
+      'room.files',
+      `Removed the Paseo providers and profiles, but could not fully delete ${layout.roomHome}: ${detail}`,
+      'Delete that directory manually after reviewing it for role-owned credentials; the Paseo side is already clean.',
+    ));
+    const completedOperations = operations.filter(operation => operation.kind !== 'dir');
+    return { command: 'remove', outcome: 'failed', changed: true, checks, operations: completedOperations };
+  }
   checks.push(pass('room.files', `Deleted ${layout.roomHome}.`));
   return { command: 'remove', outcome: 'ok', changed: true, checks, operations };
 }
