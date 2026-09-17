@@ -11,8 +11,8 @@ layers, invariants and failure modes; it names no product. Two words appear thro
   timeline of what happened.
 
 [`docs/design.md`](design.md) describes how one particular tool implements this model, and
-[`src/room/clauses.ts`](../src/room/clauses.ts) is the model rendered as instructions an
-agent reads. This file is the concept layer both of those depend on.
+the canonical Markdown under [`src/room/prompts/`](../src/room/prompts/) renders the model
+as instructions an agent reads. This file is the concept layer both of those depend on.
 
 ## 1. The problem
 

@@ -291,11 +291,37 @@ provider ids or claim that the daemon enforces this procedural eligibility check
 ## Keeping the room current
 
 Role homes are generated once, at `setup` time. After you edit `~/.codex/config.toml`,
-`~/.claude/settings.json`, or Pi's `settings.json` / `APPEND_SYSTEM.md`, run `setup --apply`
-again to fold the change into every seat.
-The same update regenerates `AUTHENTICATION.md` from the newly resolved binaries. `verify`
-reports drift in the meantime, and re-running `setup` is safe: it rewrites only
-managed configuration that differs and never replaces role credential paths.
+`~/.claude/settings.json`, or Pi's `settings.json` / `APPEND_SYSTEM.md`, run setup again to
+fold the change into every seat. The same applies after upgrading `paseo-room`; a release
+that changes generated headings or prompt assets produces expected one-time managed-file
+drift.
+
+Use the upgraded version with the same repeated `--agent` selection as the installed room:
+
+```bash
+npx paseo-room@<new-version> setup --agent codex --agent claude --agent pi
+npx paseo-room@<new-version> setup --agent codex --agent claude --agent pi --apply
+npx paseo-room@<new-version> verify
+```
+
+First inspect the dry run, then apply it. The apply regenerates managed prompt carriers and
+`AUTHENTICATION.md` from the newly resolved binaries, but preserves role credential paths
+and the operator agent homes. Stop and restart every affected seat after the apply; sending
+another turn to an already-running seat is not a restart. `setup` and `verify` prove the
+files and live Paseo configuration, not that an existing model context reloaded them. Only a
+newly launched seat context is expected to ingest the regenerated instructions.
+
+To roll back, run the prior package version with the same agent selection and `setup --apply`,
+then restart the affected seats again:
+
+```bash
+npx paseo-room@<prior-version> setup --agent codex --agent claude --agent pi --apply
+npx paseo-room@<prior-version> verify
+```
+
+No reverse data migration is needed. Do not use `remove` for a version rollback: it deletes
+the room home, including role-owned credential files. Re-running setup is safe because it
+rewrites only managed configuration that differs and never replaces role credential paths.
 
 There are three separate evidence boundaries:
 
@@ -325,8 +351,9 @@ command again.
 
 ## The role contract
 
-The exact wording every seat reads lives in [`src/room/clauses.ts`](src/room/clauses.ts).
-In short:
+The exact model-facing wording every seat reads lives in the canonical Markdown under
+[`src/room/prompts/`](src/room/prompts/). TypeScript selects those semantic sections with
+`instructionKeys()` and `protocolKeys()`; it does not duplicate their prose. In short:
 
 - **Supervisor** routes Human directives to Lead and observes. Before opening a seat it checks
   for and reuses the project's existing Lead, including an idle or resumable Lead. It does
@@ -410,7 +437,7 @@ that review; Supervisor must route the request to Lead rather than opening a fre
 ## Development
 
 ```bash
-npm run verify   # typecheck, lint, test, build — the gate order
+npm run verify   # typecheck, lint, test, build, packed-package test — the gate order
 ```
 
 Releases are published to npm from a GitHub Release; see

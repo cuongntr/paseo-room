@@ -57,7 +57,8 @@ src/
   room.ts                                   # room.json marker
   agents/types.ts                           # the Agent seam: entries, checks, binary, pins
   agents/codex.ts  agents/claude.ts  agents/pi.ts   # per-agent role homes
-  room/clauses.ts  room/instructions.ts     # the role contract text
+  room/instructions.ts                      # semantic role/protocol composition
+  room/prompts.ts  room/prompts/             # typed registry + canonical Markdown assets
 test/                                       # one file per area, real temp $HOME fixtures
 docs/orchestration-model.md                 # the model; changes here are conceptual
 docs/design.md                              # this tool's rationale; keep current with code
@@ -78,28 +79,31 @@ docs/design.md                              # this tool's rationale; keep curren
 
 ## Working on the role contract
 
-`src/room/clauses.ts` is prose, written as ordinary wrapped text — blank lines separate
-statements, line breaks inside a statement collapse when rendered. It is the role-profile
-layer of [the model](docs/orchestration-model.md) §3, so it carries identity, authority and
-invariants — never repository tactics or task detail.
+`src/room/prompts/` is the canonical model-facing prose. Contract sections under
+`prompts/contract/` are the role-profile layer of [the model](docs/orchestration-model.md)
+§3, so they carry identity, authority, and invariants — never repository tactics or task
+detail. Document heads live under `prompts/documents/`; Pi-only additive capsules live under
+`prompts/pi/`. Do not duplicate their authoritative prose in TypeScript or documentation.
 
-Changing a clause changes what every seat is told, so state the authority it grants or
-removes in the commit message. Shared clauses (`SHARED_IDS`) go to all three seats; role
-clauses go to one.
+Contract and workspace section files use ordinary wrapped prose: blank lines separate
+statements, and line breaks inside a statement collapse when rendered. Changing a contract
+section changes what at least one seat is told, so state the authority it grants or removes
+in the commit message. `instructionKeys()` in `src/room/instructions.ts` defines the shared
+and role-specific semantic section sequence.
 
-`src/room/workspace.ts` is the default for the *workspace* layer, appended to every role
-document and written out whole as `room/WORKSPACE_PROTOCOL.md`. `PROTOCOL_IDS` in
-`instructions.ts` decides which sections each seat receives.
+The Markdown files under `prompts/workspace/` are the default *workspace* layer, appended to
+every role document and written out whole as `room/WORKSPACE_PROTOCOL.md`. `protocolKeys()`
+in `src/room/instructions.ts` decides which semantic sections each seat receives.
 
-Every statement there must be workflow and must be new. Authority belongs in `clauses.ts`:
-restating a clause here teaches the seat nothing and blurs the boundary the two layers
-depend on. Anything true of only one project belongs in that project's own
-`docs/WORKSPACE_PROTOCOL.md`, which wins over this default wherever it speaks.
+Every workspace statement must be workflow and must be new. Authority belongs in the
+contract sections: restating it in the workspace layer teaches the seat nothing and blurs the
+boundary the two layers depend on. Anything true of only one project belongs in that
+project's own `docs/WORKSPACE_PROTOCOL.md`, which wins over the default wherever it speaks.
 
 ## Before committing
 
 ```bash
-npm run verify   # typecheck → lint → test → build, in that order
+npm run verify   # typecheck → lint → test → build → packed-package test, in that order
 ```
 
 Do not report work as done on a subset of that chain.

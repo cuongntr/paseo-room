@@ -40,28 +40,31 @@ policy, applied at exactly one call site.
 
 ## 3. Where the instruction layers live
 
-`paseo-room` owns the model's first instruction layer outright: the role contract, in
-`src/room/clauses.ts`, delivered as `developer_instructions` (Codex), `CLAUDE.md`
-(Claude), and additive `APPEND_SYSTEM.md` content (Pi).
+`paseo-room` owns the model's first instruction layer outright: the role contract, in the
+canonical Markdown under `src/room/prompts/contract/`, delivered as
+`developer_instructions` (Codex), `CLAUDE.md` (Claude), and additive `APPEND_SYSTEM.md`
+content (Pi). Document heads and Pi-specific capsules live alongside it under
+`src/room/prompts/`; `src/room/prompts.ts` is the typed registry and loader rather than a
+second prose source.
 
-It also ships a **default** for the second layer, in `src/room/workspace.ts`, appended to
-every role document. The layer is therefore never simply absent: a repository that says
-nothing still gets rules for topology, verification, review and conventions. A repository
-that needs different ones writes `docs/WORKSPACE_PROTOCOL.md`, and RC-002 gives that file
-precedence point by point — it wins wherever it speaks, the default holds wherever it is
-silent. Whole-file replacement was considered and rejected: it would mean a repository
-that states one rule loses every other rule, which is worse than the gap this default was
-added to close.
+It also ships a **default** for the second layer under `src/room/prompts/workspace/`,
+appended to every role document. The layer is therefore never simply absent: a repository
+that says nothing still gets rules for topology, verification, review and conventions. A
+repository that needs different ones writes `docs/WORKSPACE_PROTOCOL.md`, and **Workspace
+Protocol Precedence** gives that file precedence point by point — it wins wherever it
+speaks, the default holds wherever it is silent. Whole-file replacement was considered and
+rejected: it would mean a repository that states one rule loses every other rule, which is
+worse than the gap this default was added to close.
 
 Each seat gets the part of the protocol that bears on its own work. Topology goes to Lead
-and Supervisor only, because RC-303 forbids Peer to infer room topology and a document
-that both forbids and teaches it is incoherent.
+and Supervisor only, because **No Orchestration** forbids Peer to infer room topology and a
+document that both forbids and teaches it is incoherent.
 
 `room/WORKSPACE_PROTOCOL.md` is that default written out as one file: not linked into any
 seat, since the seats already carry the text, but readable by the operator and usable as a
-starting point. It carries the name RC-002 uses so a copy needs no rename. Nothing is ever
-written into `AGENTS.md`, and task briefs are Lead's job at dispatch time rather than this
-tool's concern.
+starting point. It carries the name used by **Workspace Protocol Precedence**, so a copy
+needs no rename. Nothing is ever written into `AGENTS.md`, and task briefs are Lead's job
+at dispatch time rather than this tool's concern.
 
 ## 4. Why a separate home per seat
 
@@ -346,8 +349,9 @@ an idle Lead has merely completed a turn, and a closed unarchived Lead remains r
 under the same agent id. A pending creation or permission is unresolved state, not evidence
 that the seat is absent.
 
-RC-103 therefore gives Supervisor an explicit discovery-and-reuse procedure whose evidence
-comes from the current live configuration rather than display names:
+**Lead Discovery and Recovery** therefore gives Supervisor an explicit discovery-and-reuse
+procedure whose evidence comes from the current live configuration rather than display
+names:
 
 1. Read `list_profiles` and select the exact current room Lead profile for the intended agent
    implementation. Agent creation accepts no profile id, so combine its provider/model and
@@ -366,11 +370,11 @@ comes from the current live configuration rather than display names:
 An eligible established Lead may be initializing, running, idle, waiting for permission, or
 closed but unarchived and resumable; those are lifecycle states of one owner. Supervisor
 opens exactly one child Lead only when no eligible, corroborated owner exists. Fresh-session
-review is routed to that Lead, which opens a fresh read-only Peer under RC-206; freshness
-never creates a second Lead or gives Supervisor a channel to Peer.
+review is routed to that Lead, which opens a fresh read-only Peer under **Independent
+Review**; freshness never creates a second Lead or gives Supervisor a channel to Peer.
 
-RC-207 applies the same live-config rule to a Lead-created Peer. Lead first reads the exact
-current room Peer profile, materializes every launch field it defines in the intended
+**Peer Seat Lifecycle** applies the same live-config rule to a Lead-created Peer. Lead first
+reads the exact current room Peer profile, materializes every launch field it defines in the intended
 workspace, then inspects the live seat and requires the daemon-added
 `paseo.parent-agent-id` to equal the current Lead. A wrong provider, workspace, mode or
 parent is not eligible for a brief. The Peer remains one fresh session for one brief and has
@@ -388,8 +392,9 @@ healthy owner, and closes a duplicate only after moving work stops and a stable 
 exists. Ambiguous prior ownership, health, or concurrent writes are escalated to Human.
 Supervisor never merges work, accepts a candidate, or directs Peer during recovery.
 
-RC-207 still says Lead opens Peer seats only, and `ROLE_NOTES` surfaces the sole-Lead rule at
-the `list_profiles` decision point. Focused tests assert the exact generated instructions.
+**Peer Seat Lifecycle** still says Lead opens Peer seats only, and `ROLE_NOTES` surfaces the
+sole-Lead rule at the `list_profiles` decision point. Focused tests assert the exact generated
+instructions.
 This is stronger and less ambiguous guidance, but remains procedural rather than runtime
 enforcement; a contradictory or non-compliant caller can still supply any provider id.
 
@@ -470,7 +475,7 @@ so rerunning `remove --apply` after recovery can finish without a journal or rol
 The model's own provenance is in [orchestration-model.md](orchestration-model.md) §11.
 This tool reaches it by way of `codex-room-setup` — a bash + Python implementation that
 generated the same runtime homes and required a patched Paseo build to limit MCP injection
-per provider. The clause wording in `src/room/clauses.ts` descends from that
+per provider. The contract wording in `src/room/prompts/contract/` descends from that
 implementation's role overlays.
 
 `paseo-room` differs in three ways worth stating:
