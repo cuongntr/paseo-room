@@ -1,10 +1,11 @@
-import { Command, CommanderError } from 'commander';
+import { Command, CommanderError, InvalidArgumentError } from 'commander';
 import metadata from '../package.json' with { type: 'json' };
 import { loginRole, type LoginSpawner } from './auth.js';
 import { remove, setup, verify, type RunOptions } from './commands.js';
 import { renderHuman, renderJson } from './render.js';
 import { exitCode, fail, failed, type Result } from './result.js';
 import { AGENT_IDS, type AgentId } from './roles.js';
+import { PromptAssetError } from './room/prompts.js';
 import type { Prompts } from './wizard.js';
 
 export interface Output {
@@ -21,7 +22,7 @@ export interface CliContext {
 /** Commander passes no initial value, so the first call starts the list. */
 function collectAgent(value: string, previous: AgentId[] | undefined): AgentId[] {
   const agent = AGENT_IDS.find(id => id === value);
-  if (!agent) throw new CommanderError(2, 'agent', `Unknown agent: ${value}`);
+  if (!agent) throw new InvalidArgumentError(`Unknown agent: ${value}`);
   const seated = previous ?? [];
   return seated.includes(agent) ? seated : [...seated, agent];
 }
@@ -36,6 +37,22 @@ function optionsFrom(raw: Record<string, unknown>, base: RunOptions): RunOptions
   }
   const agents = Array.isArray(raw.agent) && raw.agent.length > 0 ? (raw.agent as AgentId[]) : undefined;
   return { ...base, ...paths, ...(agents ? { agents } : {}), ...(raw.apply === true ? { apply: true } : {}) };
+}
+
+function failedFromThrown(command: string, error: unknown): Result {
+  if (error instanceof PromptAssetError) {
+    return failed(command, [fail(
+      `${command}.prompt-asset`,
+      error.message,
+      'Reinstall paseo-room, then try again.',
+    )]);
+  }
+  const detail = error instanceof Error ? error.message : 'unknown error';
+  return failed(command, [fail(
+    `${command}.error`,
+    detail,
+    'Check that Paseo is running and reachable, then try again.',
+  )]);
 }
 
 export async function runCli(argv: readonly string[], output: Output, context: CliContext = {}): Promise<number> {
@@ -55,11 +72,21 @@ export async function runCli(argv: readonly string[], output: Output, context: C
       output.stderr('paseo-room: no command given. Try: paseo-room setup, verify, remove, auth login, or --help.\n');
       return 2;
     }
-    // @clack/prompts is only reachable here, so keep it off the scripted path.
-    const { runWizard, terminalPrompts } = await import('./wizard.js');
-    return runWizard(context.prompts ?? terminalPrompts, emit, text => { output.stdout(text); }, base);
+    let wizardCommand = 'wizard';
+    try {
+      // @clack/prompts is only reachable here, so keep it off the scripted path.
+      const { runWizard, terminalPrompts } = await import('./wizard.js');
+      return await runWizard(
+        context.prompts ?? terminalPrompts,
+        emit,
+        text => { output.stdout(text); },
+        base,
+        action => { wizardCommand = action; },
+      );
+    } catch (error) {
+      return emit(failedFromThrown(wizardCommand, error));
+    }
   }
-
   const program = new Command()
     .name('paseo-room')
     .description('Configure Codex/Claude/Pi role homes in $HOME and register them with your local Paseo daemon.')
@@ -129,8 +156,7 @@ export async function runCli(argv: readonly string[], output: Output, context: C
     if (command === 'verify') return emit(await verify(options));
     if (command === 'remove') return emit(await remove(options));
   } catch (error) {
-    const detail = error instanceof Error ? error.message : 'unknown error';
-    return emit(failed(command, [fail(`${command}.error`, redact(detail), 'Check that Paseo is running and reachable, then try again.')]));
+    return emit(failedFromThrown(command, error));
   }
   output.stderr(`paseo-room: unknown command "${command}". Try: setup, verify, remove, or auth login.\n`);
   return 2;

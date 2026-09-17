@@ -20,6 +20,7 @@ export async function runWizard(
   emit: (result: Result) => number,
   write: (text: string) => void,
   options: RunOptions = {},
+  onAction?: (action: string) => void,
 ): Promise<number> {
   const cancelled = (): number => { write('Cancelled; nothing was changed.\n'); return 0; };
   const action = await prompts.select({
@@ -31,6 +32,7 @@ export async function runWizard(
     ],
   });
   if (typeof action === 'symbol') return cancelled();
+  onAction?.(action);
   if (action === 'verify') return emit(await verify(options));
   if (action === 'remove') {
     const preview = await remove(options);

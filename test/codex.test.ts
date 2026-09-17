@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { codexAgent, renderCatalog, renderRoleConfig } from '../src/agents/codex.js';
 import { applyEntries } from '../src/fsops.js';
 import { resolveLayout } from '../src/layout.js';
+import { renderInstructions } from '../src/room/instructions.js';
 import { makeFixture } from './helpers.js';
 
 describe('renderRoleConfig', () => {
@@ -59,12 +60,13 @@ describe('codexAgent.build', () => {
     await applyEntries(plan.entries);
 
     const lead = join(layout.roomHome, 'roles/codex/lead');
+    const expected = renderInstructions('lead');
     await expect(stat(join(lead, 'auth.json'))).rejects.toThrow();
     expect(await readFile(join(layout.agentHome.codex, 'auth.json'), 'utf8')).toBe('{"token":"secret"}');
     const config = parse(await readFile(join(lead, 'config.toml'), 'utf8')) as Record<string, unknown>;
-    expect(config.developer_instructions).toContain('Lead role instructions');
-    // The whole instruction payload rides in this one key, workspace protocol included.
-    expect(config.developer_instructions).toContain('## WP-02 Verification');
+    expect(config.developer_instructions).toBe(expected);
+    // The readable operator copy and the runtime carrier receive the same complete document.
+    expect(await readFile(join(lead, 'role-instructions.md'), 'utf8')).toBe(expected);
     expect(await readFile(join(layout.agentHome.codex, 'config.toml'), 'utf8')).not.toContain('danger-full-access');
   });
 

@@ -14,6 +14,7 @@ import { contains, roleHome } from '../layout.js';
 import { fail, pass, type Check } from '../result.js';
 import type { Role } from '../roles.js';
 import { renderInstructions } from '../room/instructions.js';
+import { loadPromptAsset } from '../room/prompts.js';
 import { which } from '../which.js';
 import type { Agent, AgentPlan } from './types.js';
 
@@ -32,20 +33,6 @@ const AUTH_ENV = [
   'COPILOT_GITHUB_TOKEN',
 ] as const;
 
-export const PI_STYLE_CAPSULE = `# Room communication style
-
-Lead with the outcome. Match the user's language and technical depth. Prefer plain language
-and minimal formatting. State material assumptions, risks, and decisions. Describe what tools
-accomplished rather than narrating their mechanics.`;
-
-export const PI_RUNTIME_CAPSULE = `# Pi room runtime
-
-Paseo is the only control plane. Do not spawn, delegate, or manage agents through Pi, shell
-commands, or extensions. Pi's lack of a sandbox or approval prompt does not grant authority.
-Extension discovery is disabled; only Paseo's generated temporary integration extension and
-the resolved Pi MCP adapter may be loaded. Do not install, enable, reload, or substitute
-extensions. Report a missing capability instead of acquiring or replacing it.`;
-
 function asObject(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? { ...value } : undefined;
 }
@@ -62,9 +49,12 @@ export function renderPiSettings(source: string | undefined): string {
 
 /** Preserve the operator append first; room-specific guidance is additive and stronger. */
 export function renderPiAppend(source: string | undefined, role: Role): string {
-  return [source?.trim(), PI_STYLE_CAPSULE, PI_RUNTIME_CAPSULE, renderInstructions(role)]
-    .filter((part): part is string => Boolean(part))
-    .join('\n\n');
+  return [
+    source?.trim(),
+    loadPromptAsset('pi', 'communicationStyle'),
+    loadPromptAsset('pi', 'runtime'),
+    renderInstructions(role),
+  ].filter((part): part is string => Boolean(part)).join('\n\n');
 }
 
 interface ResolvedAdapter {

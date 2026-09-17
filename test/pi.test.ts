@@ -1,11 +1,11 @@
 import { mkdir, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import {
-  PI_RUNTIME_CAPSULE, PI_STYLE_CAPSULE, piAgent, probePiMcp, renderPiAppend, renderPiSettings,
-} from '../src/agents/pi.js';
+import { piAgent, probePiMcp, renderPiAppend, renderPiSettings } from '../src/agents/pi.js';
+import { loadPromptAsset } from '../src/room/prompts.js';
 import { applyEntries } from '../src/fsops.js';
 import { resolveLayout } from '../src/layout.js';
+import { renderInstructions } from '../src/room/instructions.js';
 import { makeFixture, nodeScript, script } from './helpers.js';
 
 const probeId = 'paseo-room-pi-mcp-probe';
@@ -41,15 +41,17 @@ async function waitForFile(path: string, timeoutMs: number): Promise<void> {
 }
 
 describe('Pi prompt and settings composition', () => {
-  it('preserves operator append content before style, runtime, and the role contract', () => {
-    const rendered = renderPiAppend('# Operator append', 'peer');
-    const positions = [
-      rendered.indexOf('# Operator append'), rendered.indexOf(PI_STYLE_CAPSULE),
-      rendered.indexOf(PI_RUNTIME_CAPSULE), rendered.indexOf('You are Peer'),
-    ];
-    expect(positions.every(position => position >= 0)).toBe(true);
-    expect(positions).toEqual([...positions].sort((a, b) => a - b));
-    expect(rendered).not.toContain('--system-prompt');
+  it('preserves the exact operator, style, runtime, and role-document order', () => {
+    const roleDocument = renderInstructions('peer');
+    const roomAppend = [
+      loadPromptAsset('pi', 'communicationStyle'),
+      loadPromptAsset('pi', 'runtime'),
+      roleDocument,
+    ].join('\n\n');
+    const expected = `# Operator append\n\n${roomAppend}`;
+    expect(renderPiAppend('# Operator append\n', 'peer')).toBe(expected);
+    expect(renderPiAppend(undefined, 'peer')).toBe(roomAppend);
+    expect(expected).not.toContain('--system-prompt');
   });
 
   it('copies preferences while removing package and extension declarations', () => {
@@ -85,7 +87,7 @@ describe('piAgent.build', () => {
     expect(settings.extensions).toBeUndefined();
     await expect(readFile(join(peer, 'auth.json'), 'utf8')).rejects.toThrow();
     expect(await readFile(join(piHome, 'auth.json'), 'utf8')).toBe('{"token":"pi-secret"}');
-    expect(await readFile(join(peer, 'APPEND_SYSTEM.md'), 'utf8')).toContain('You are Peer');
+    expect(await readFile(join(peer, 'APPEND_SYSTEM.md'), 'utf8')).toBe(renderPiAppend('# Operator append\n', 'peer'));
     for (const role of ['supervisor', 'lead', 'peer']) {
       const roleMcp = join(fixture.roomHome, `roles/pi/${role}/mcp.json`);
       expect(await realpath(roleMcp)).toBe(await realpath(operatorMcpPath));

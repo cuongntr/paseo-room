@@ -1,22 +1,67 @@
+import { readdir } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
-import { instructionIds, renderInstructions } from '../src/room/instructions.js';
+import { instructionKeys, protocolKeys, renderInstructions } from '../src/room/instructions.js';
+import { PROMPT_ASSETS, loadPromptAsset } from '../src/room/prompts.js';
 import { ROLES } from '../src/roles.js';
-import { protocolIds } from '../src/room/instructions.js';
-import { DEFAULT_PROTOCOL } from '../src/room/workspace.js';
+
+const SHARED_HEADINGS = [
+  'Human Authority',
+  'Workspace Protocol Precedence',
+  'Evidence and Event-Driven Waiting',
+  'Scope and Unrelated Work',
+] as const;
+const PROTOCOL_HEADINGS = ['Topology', 'Verification', 'Review', 'Repository Conventions'] as const;
+
+function headings(document: string): string[] {
+  return [...document.matchAll(/^## (.+)$/gm)].map(match => match[1] ?? '');
+}
 
 describe('role instructions', () => {
   it('gives every role the shared authority contract', () => {
     for (const role of ROLES) {
       const document = renderInstructions(role);
-      for (const id of ['RC-001', 'RC-002', 'RC-003', 'RC-004']) expect(document).toContain(`## ${id}`);
+      for (const heading of SHARED_HEADINGS) expect(document).toContain(`## ${heading}`);
     }
+  });
+
+  it('renders the exact semantic heading sequence for every document', () => {
+    expect(headings(renderInstructions('supervisor'))).toEqual([
+      ...SHARED_HEADINGS,
+      'Directive Integrity',
+      'Technical Non-Interference',
+      'Lead Discovery and Recovery',
+      'Escalation Boundaries',
+      ...PROTOCOL_HEADINGS,
+    ]);
+    expect(headings(renderInstructions('lead'))).toEqual([
+      ...SHARED_HEADINGS,
+      'Project Technical Ownership',
+      'Moving Write Ownership',
+      'Complete Peer Brief',
+      'Challenge Signals',
+      'Technical Acceptance',
+      'Independent Review',
+      'Peer Seat Lifecycle',
+      ...PROTOCOL_HEADINGS,
+    ]);
+    expect(headings(renderInstructions('peer'))).toEqual([
+      ...SHARED_HEADINGS,
+      'Challenge Signals',
+      'Bounded Outcome',
+      'Writing and Review Scope',
+      'No Orchestration',
+      'Reproducible Handoff',
+      'No Self-Acceptance',
+      ...PROTOCOL_HEADINGS.slice(1),
+    ]);
+    expect(headings(renderInstructions('workspace'))).toEqual(PROTOCOL_HEADINGS);
   });
 
   it('keeps orchestration out of the Peer document', () => {
     const peer = renderInstructions('peer');
-    expect(peer).toContain('## RC-303');
-    expect(peer).not.toContain('## RC-103');
-    expect(peer).not.toContain('## RC-202');
+    expect(peer).toContain('## No Orchestration');
+    expect(peer).not.toContain('## Lead Discovery and Recovery');
+    expect(peer).not.toContain('## Moving Write Ownership');
   });
 
   // Paseo takes the seat to open as a free-form provider id, so nothing below the
@@ -25,7 +70,7 @@ describe('role instructions', () => {
   it('tells each seat with room tools which seat it may open', () => {
     expect(renderInstructions('lead')).toContain('Lead opens Peer seats and no others');
     expect(renderInstructions('supervisor')).toContain('Supervisor opens Lead seats');
-    expect(renderInstructions('peer')).not.toContain('## RC-207');
+    expect(renderInstructions('peer')).not.toContain('## Peer Seat Lifecycle');
   });
 
   it('discovers and reuses the sole project Lead across lifecycle states', () => {
@@ -101,31 +146,31 @@ describe('role instructions', () => {
   });
 
   it('gives Lead acceptance authority and Supervisor routing only', () => {
-    expect(renderInstructions('lead')).toContain('## RC-205');
-    expect(renderInstructions('supervisor')).not.toContain('## RC-205');
+    expect(renderInstructions('lead')).toContain('## Technical Acceptance');
+    expect(renderInstructions('supervisor')).not.toContain('## Technical Acceptance');
   });
 
   // The default protocol ships in force, so no repository has to opt in to have one.
   it('carries the workspace protocol that bears on each role', () => {
     for (const role of ROLES) {
       const document = renderInstructions(role);
-      for (const id of protocolIds(role)) expect(document).toContain(`## ${id}`);
-      for (const id of instructionIds(role)) expect(document).toContain(`## ${id}`);
+      for (const key of protocolKeys(role)) expect(document).toContain(loadPromptAsset('workspace', key));
+      for (const key of instructionKeys(role)) expect(document).toContain(loadPromptAsset('contract', key));
     }
   });
 
-  // RC-303 forbids Peer to infer room topology; handing it the topology rules
-  // would contradict that in the same document.
+  // No Orchestration forbids Peer to infer room topology; handing it the topology
+  // rules would contradict that in the same document.
   it('keeps topology out of the Peer document', () => {
-    expect(renderInstructions('peer')).not.toContain('## WP-01');
-    expect(renderInstructions('lead')).toContain('## WP-01');
-    expect(renderInstructions('supervisor')).toContain('## WP-01');
+    expect(renderInstructions('peer')).not.toContain('## Topology');
+    expect(renderInstructions('lead')).toContain('## Topology');
+    expect(renderInstructions('supervisor')).toContain('## Topology');
   });
 
   it('writes the whole protocol to the room copy, without the role contract', () => {
     const workspace = renderInstructions('workspace');
-    for (const id of Object.keys(DEFAULT_PROTOCOL)) expect(workspace).toContain(`## ${id}`);
-    expect(workspace).not.toContain('## RC-');
+    expect(headings(workspace)).toEqual(PROTOCOL_HEADINGS);
+    expect(workspace).not.toContain('## Human Authority');
   });
 
   // The default is worthless if a repository cannot displace it point by point.
@@ -140,5 +185,59 @@ describe('role instructions', () => {
     const path = 'docs/WORKSPACE_PROTOCOL.md';
     expect(renderInstructions('workspace')).toContain(path);
     for (const role of ROLES) expect(renderInstructions(role)).toContain(path);
+  });
+
+  it('renders repeatedly with byte-identical output and no retired heading patterns', () => {
+    for (const kind of [...ROLES, 'workspace'] as const) {
+      const first = renderInstructions(kind);
+      expect(renderInstructions(kind)).toBe(first);
+      expect(first).not.toMatch(/^## (?:RC-|WP-)/m);
+    }
+    for (const role of ROLES) {
+      expect([...instructionKeys(role), ...protocolKeys(role)].join('\n')).not.toMatch(/^(?:RC-|WP-)/m);
+    }
+  });
+});
+
+describe('prompt assets', () => {
+  it('has a manifest/filesystem bijection with the expected fragment kinds', async () => {
+    const root = new URL('../src/room/prompts/', import.meta.url);
+    const files = (await readdir(root, { recursive: true }))
+      .filter(path => path.endsWith('.md'))
+      .sort();
+    const documentAssets = Object.values(PROMPT_ASSETS.documents);
+    const contractAssets = Object.values(PROMPT_ASSETS.contract);
+    const workspaceAssets = Object.values(PROMPT_ASSETS.workspace);
+    const piAssets = Object.values(PROMPT_ASSETS.pi);
+    const registered = [
+      ...documentAssets,
+      ...contractAssets,
+      ...workspaceAssets,
+      ...piAssets,
+    ].map(asset => asset.path).sort();
+
+    expect(registered).toEqual(files);
+    expect(documentAssets.map(asset => asset.kind)).toEqual(Array(4).fill('head'));
+    expect(contractAssets.map(asset => asset.kind)).toEqual(Array(20).fill('section'));
+    expect(workspaceAssets.map(asset => asset.kind)).toEqual(Array(4).fill('section'));
+    expect(piAssets.map(asset => asset.kind)).toEqual(Array(2).fill('capsule'));
+  });
+
+  it('validates and normalizes sections while preserving heads and Pi capsule hard lines', () => {
+    expect(loadPromptAsset('contract', 'humanAuthority')).toMatch(
+      /^## Human Authority\n- Human owns product goals/,
+    );
+    expect(loadPromptAsset('workspace', 'verification')).toContain(
+      '## Verification\n- The repository\'s own gate is the evidence.',
+    );
+    expect(loadPromptAsset('documents', 'workspace')).toContain(
+      'different rules\nprovides `docs/WORKSPACE_PROTOCOL.md`',
+    );
+    expect(loadPromptAsset('pi', 'communicationStyle')).toContain(
+      'Prefer plain language\nand minimal formatting.',
+    );
+    expect(loadPromptAsset('pi', 'runtime')).toContain(
+      'through Pi, shell\ncommands, or extensions.',
+    );
   });
 });

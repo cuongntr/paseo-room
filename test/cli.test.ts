@@ -2,9 +2,11 @@ import { lstat, mkdir, readFile, readlink, realpath, stat, symlink, writeFile } 
 import { join } from 'node:path';
 import { parse } from 'smol-toml';
 import { describe, expect, it } from 'vitest';
+import { renderRoleMemory } from '../src/agents/claude.js';
+import { renderPiAppend } from '../src/agents/pi.js';
 import { runCli } from '../src/cli.js';
-import { protocolIds, renderInstructions } from '../src/room/instructions.js';
-import { DEFAULT_PROTOCOL } from '../src/room/workspace.js';
+import { protocolKeys, renderInstructions } from '../src/room/instructions.js';
+import { loadPromptAsset, type WorkspaceKey } from '../src/room/prompts.js';
 import type { AgentId, Role } from '../src/roles.js';
 import { emptyDaemon, fakeClient, makeFixture, RUNNING_STATUS, script, type FakeDaemon } from './helpers.js';
 
@@ -18,8 +20,16 @@ async function run(argv: readonly string[], env: NodeJS.ProcessEnv, daemon: Fake
   return { code, out, err };
 }
 
+const PROTOCOL_HEADINGS = ['Topology', 'Verification', 'Review', 'Repository Conventions'] as const;
+
 function protocolHeadings(document: string): string[] {
-  return [...document.matchAll(/^## (WP-[^\n]+)$/gm)].map(match => match[1] ?? '');
+  return [...document.matchAll(/^## (.+)$/gm)]
+    .map(match => match[1] ?? '')
+    .filter(heading => PROTOCOL_HEADINGS.includes(heading as typeof PROTOCOL_HEADINGS[number]));
+}
+
+function protocolHeading(key: WorkspaceKey): string {
+  return loadPromptAsset('workspace', key).split('\n', 1)[0]?.slice(3) ?? '';
 }
 
 describe('paseo-room CLI', () => {
@@ -53,6 +63,10 @@ describe('paseo-room CLI', () => {
   it('connects every profile and provider to the exact role home and complete role document', async () => {
     const fixture = await makeFixture();
     const daemon = emptyDaemon();
+    const claudeMemory = '# Operator Claude memory\n';
+    const piAppend = '# Operator Pi append\n';
+    await writeFile(join(fixture.home, '.claude/CLAUDE.md'), claudeMemory);
+    await writeFile(join(fixture.home, '.pi/agent/APPEND_SYSTEM.md'), piAppend);
     const agents: readonly AgentId[] = ['codex', 'claude', 'pi'];
     const roles: readonly Role[] = ['supervisor', 'lead', 'peer'];
     const homeEnv: Record<AgentId, string> = {
@@ -82,25 +96,28 @@ describe('paseo-room CLI', () => {
         if (agent === 'codex') {
           const config = parse(await readFile(join(rolePath, 'config.toml'), 'utf8')) as Record<string, unknown>;
           expect(config.developer_instructions).toBe(expected);
+          expect(await readFile(join(rolePath, 'role-instructions.md'), 'utf8')).toBe(expected);
           delivered = String(config.developer_instructions);
         } else if (agent === 'claude') {
           delivered = await readFile(join(rolePath, 'CLAUDE.md'), 'utf8');
+          expect(delivered).toBe(renderRoleMemory(claudeMemory, role));
           expect(delivered.endsWith(expected)).toBe(true);
         } else {
           const appendPath = join(rolePath, 'APPEND_SYSTEM.md');
           delivered = await readFile(appendPath, 'utf8');
+          expect(delivered).toBe(renderPiAppend(piAppend, role));
           expect(delivered.endsWith(expected)).toBe(true);
           const flag = provider.command.indexOf('--append-system-prompt');
           expect(flag).toBeGreaterThan(-1);
           expect(provider.command[flag + 1]).toBe(appendPath);
         }
-        expect(protocolHeadings(delivered)).toEqual(protocolIds(role));
+        expect(protocolHeadings(delivered)).toEqual(protocolKeys(role).map(protocolHeading));
       }
     }
 
     const workspace = await readFile(join(fixture.roomHome, 'room/WORKSPACE_PROTOCOL.md'), 'utf8');
     expect(workspace).toBe(renderInstructions('workspace'));
-    expect(protocolHeadings(workspace)).toEqual(Object.keys(DEFAULT_PROTOCOL));
+    expect(protocolHeadings(workspace)).toEqual(PROTOCOL_HEADINGS);
   });
 
   it('is idempotent: a second run plans no changes and verify passes', async () => {
@@ -190,23 +207,69 @@ describe('paseo-room CLI', () => {
     expect(verified.out).toContain('Paseo providers are missing or differ');
   });
 
-  it('verify detects drift in every vendor prompt carrier', async () => {
+  it('detects, describes, repairs, and stabilizes drift in every managed prompt carrier', async () => {
     const fixture = await makeFixture();
     const daemon = emptyDaemon();
-    await run(['setup', '--agent', 'codex', '--agent', 'claude', '--agent', 'pi', '--apply'], fixture.env, daemon);
+    const argv = ['setup', '--agent', 'codex', '--agent', 'claude', '--agent', 'pi'] as const;
+    expect((await run([...argv, '--apply'], fixture.env, daemon)).code).toBe(0);
+
     const carriers = [
       join(fixture.roomHome, 'roles/codex/lead/config.toml'),
       join(fixture.roomHome, 'roles/claude/lead/CLAUDE.md'),
       join(fixture.roomHome, 'roles/pi/lead/APPEND_SYSTEM.md'),
+      join(fixture.roomHome, 'room/WORKSPACE_PROTOCOL.md'),
     ];
+    const originals = new Map<string, string>();
     for (const path of carriers) {
       const original = await readFile(path, 'utf8');
+      originals.set(path, original);
       await writeFile(path, `${original}\ndrift\n`);
-      const verified = await run(['verify'], fixture.env, daemon);
-      expect(verified.code).toBe(1);
-      expect(verified.out).toContain('managed role files are missing or outdated');
-      await writeFile(path, original);
     }
+    const expectedCarrier = (path: string): string => {
+      const content = originals.get(path);
+      if (content === undefined) throw new Error(`missing original carrier for ${path}`);
+      return content;
+    };
+    const roleCredential = join(fixture.roomHome, 'roles/pi/lead/auth.json');
+    const credentialBytes = Buffer.from([5, 0, 255, 8]);
+    await writeFile(roleCredential, credentialBytes);
+    const operatorCredentials = new Map([
+      [join(fixture.home, '.codex/auth.json'), await readFile(join(fixture.home, '.codex/auth.json'))],
+      [join(fixture.home, '.pi/agent/auth.json'), await readFile(join(fixture.home, '.pi/agent/auth.json'))],
+    ]);
+    const providersBefore = JSON.stringify(daemon.providers);
+    const profilesBefore = JSON.stringify(daemon.agentProfiles);
+
+    const verified = await run(['verify'], fixture.env, daemon);
+    expect(verified.code).toBe(1);
+    expect(verified.out).toContain('managed role files are missing or outdated');
+
+    const preview = await run(argv, fixture.env, daemon);
+    expect(preview.code).toBe(0);
+    expect(preview.out).toContain('Planned changes');
+    for (const path of carriers) {
+      expect(preview.out).toContain(`update file ${path}`);
+      expect(await readFile(path, 'utf8')).toBe(`${expectedCarrier(path)}\ndrift\n`);
+    }
+    expect(JSON.stringify(daemon.providers)).toBe(providersBefore);
+    expect(JSON.stringify(daemon.agentProfiles)).toBe(profilesBefore);
+
+    const repaired = await run([...argv, '--apply'], fixture.env, daemon);
+    expect(repaired.code).toBe(0);
+    expect(repaired.out).toContain('Applied:');
+    for (const path of carriers) expect(await readFile(path, 'utf8')).toBe(expectedCarrier(path));
+    expect(await readFile(roleCredential)).toEqual(credentialBytes);
+    for (const [path, bytes] of operatorCredentials) expect(await readFile(path)).toEqual(bytes);
+    expect(JSON.stringify(daemon.providers)).toBe(providersBefore);
+    expect(JSON.stringify(daemon.agentProfiles)).toBe(profilesBefore);
+    for (const agent of ['codex', 'claude', 'pi']) {
+      expect((daemon.providers[`${agent}-peer`] as { paseoTools: { enabled: boolean } }).paseoTools.enabled).toBe(false);
+      expect(daemon.agentProfiles.find(profile => profile.id === `room-${agent}-peer`)?.provider).toBe(`${agent}-peer`);
+    }
+
+    const stable = await run(argv, fixture.env, daemon);
+    expect(stable.out).toContain('Everything is already up to date.');
+    expect((await run(['verify'], fixture.env, daemon)).code).toBe(0);
   });
 
   it('removes only the room home and its providers', async () => {
@@ -237,10 +300,13 @@ describe('paseo-room CLI', () => {
     expect(daemon.connects).toBe(0);
   });
 
-  it('rejects an unknown command and an unknown agent', async () => {
+  it('rejects an unknown command and reports an unknown agent', async () => {
     const fixture = await makeFixture();
     expect((await run(['nope'], fixture.env, emptyDaemon())).code).toBe(2);
-    expect((await run(['setup', '--agent', 'omp'], fixture.env, emptyDaemon())).code).toBe(2);
+    const unknownAgent = await run(['setup', '--agent', 'omp'], fixture.env, emptyDaemon());
+    expect(unknownAgent.code).toBe(2);
+    expect(unknownAgent.out).toBe('');
+    expect(unknownAgent.err).toContain('Unknown agent: omp');
   });
 });
 

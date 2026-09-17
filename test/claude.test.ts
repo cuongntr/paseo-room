@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { claudeAgent, renderRoleMemory, renderRoleSettings, renderRoleState } from '../src/agents/claude.js';
 import { applyEntries } from '../src/fsops.js';
 import { resolveLayout } from '../src/layout.js';
+import { renderInstructions } from '../src/room/instructions.js';
 import { makeFixture } from './helpers.js';
 
 describe('renderRoleSettings', () => {
@@ -55,11 +56,11 @@ describe('renderRoleState', () => {
 });
 
 describe('renderRoleMemory', () => {
-  it('keeps the operator global memory and appends the role contract', () => {
-    const memory = renderRoleMemory('# Operator preferences\n', 'peer');
-    expect(memory).toContain('# Operator preferences');
-    expect(memory).toContain('You are Peer');
-    expect(memory.indexOf('# Operator preferences')).toBeLessThan(memory.indexOf('You are Peer'));
+  it('keeps the operator global memory before the exact role contract', () => {
+    const operator = '# Operator preferences\n';
+    const expected = renderInstructions('peer');
+    expect(renderRoleMemory(operator, 'peer')).toBe(`# Operator preferences\n\n${expected}`);
+    expect(renderRoleMemory(undefined, 'peer')).toBe(expected);
   });
 });
 
@@ -77,9 +78,7 @@ describe('claudeAgent.build', () => {
 
     const peer = join(layout.roomHome, 'roles/claude/peer');
     const memory = await readFile(join(peer, 'CLAUDE.md'), 'utf8');
-    expect(memory).toContain('Keep this preference');
-    expect(memory).toContain('You are Peer');
-    expect(memory).toContain('## WP-02 Verification');
+    expect(memory).toBe(`# Keep this preference\n\n${renderInstructions('peer')}`);
     await expect(readFile(join(peer, '.credentials.json'), 'utf8')).rejects.toThrow();
     expect(await readFile(join(layout.agentHome.claude, '.credentials.json'), 'utf8')).toBe('{"key":"k"}');
     expect(await readFile(join(peer, 'rules/operator.md'), 'utf8')).toBe('# Keep this rule\n');
