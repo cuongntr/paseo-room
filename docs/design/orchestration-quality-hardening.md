@@ -88,7 +88,7 @@ Claude `.claude.json` remains seed-once and runtime-owned. Setup/verify may pars
 
 ### D7 — Managed replacement safety
 
-Unexpected path types fail before deletion. A regular managed file may replace only an absent path or regular file; a managed symlink may replace only an absent path or symlink. The explicit managed-directory projection may migrate the legacy whole-directory symlink and reconcile only its declared child names.
+Unexpected path types fail before deletion. A regular managed file may replace only an absent path or regular file; a managed symlink may replace only an absent path or symlink. A path the room declares absent — generated content a current option suppresses — is deleted only when it is a regular file, so a directory, symlink or special file there fails instead. The explicit managed-directory projection may migrate the legacy whole-directory symlink and reconcile only its declared child names.
 
 Files and symlinks are created at a unique sibling temporary path and atomically renamed into place. Temporary artifacts are cleaned on failure. This is local replacement safety, not transaction machinery; rerunning setup remains the recovery model.
 

@@ -4,7 +4,7 @@ import metadata from '../package.json' with { type: 'json' };
 import { claudeAgent } from './agents/claude.js';
 import { codexAgent } from './agents/codex.js';
 import { piAgent } from './agents/pi.js';
-import type { Agent, AgentPlan, Profile, Provider } from './agents/types.js';
+import type { Agent, AgentPlan, BuildOptions, Profile, Provider } from './agents/types.js';
 import { AUTHENTICATION_GUIDE, renderAuthenticationGuide } from './auth.js';
 import { applyEntries, exists, planEntries, type Entry } from './fsops.js';
 import { layoutChecks, resolveLayout, roleHome, sharedRoom, type Layout, type Options } from './layout.js';
@@ -20,6 +20,12 @@ export const AGENTS: Record<AgentId, Agent> = { codex: codexAgent, claude: claud
 export interface RunOptions extends Options {
   readonly agents?: readonly AgentId[];
   readonly apply?: boolean;
+  /**
+   * Write the role contract into Claude's `CLAUDE.md` as well as the plugin. Defaults to true:
+   * the plugin is the strong carrier, but whether a resumed session re-enters its creation hook
+   * is unproven, so the file fallback is only dropped when asked for.
+   */
+  readonly claudeMemoryContract?: boolean;
   readonly env?: NodeJS.ProcessEnv;
   readonly factory?: ClientFactory;
 }
@@ -67,7 +73,12 @@ interface Desired {
   readonly checks: readonly Check[];
   readonly pluginPath?: string;
 }
-async function buildDesired(layout: Layout, agents: readonly AgentId[], roles: readonly Role[]): Promise<Desired> {
+async function buildDesired(
+  layout: Layout,
+  agents: readonly AgentId[],
+  roles: readonly Role[],
+  build: BuildOptions = {},
+): Promise<Desired> {
   // Template, not linked into any seat: each repo owns its own root WORKSPACE_PROTOCOL.md.
   // Named exactly as Workspace Protocol Precedence names it, so a copy needs no rename.
   const entries: Entry[] = [
@@ -81,7 +92,7 @@ async function buildDesired(layout: Layout, agents: readonly AgentId[], roles: r
   const binaries: Partial<Record<AgentId, string>> = {};
   for (const id of agents) {
     const agent = AGENTS[id];
-    const plan = await agent.build(layout, roles);
+    const plan = await agent.build(layout, roles, build);
     entries.push(...plan.entries);
     checks.push(...plan.checks);
     const credentials = plan.credentials ?? [];
@@ -114,7 +125,7 @@ async function buildDesired(layout: Layout, agents: readonly AgentId[], roles: r
   }
   const pluginPath = agents.includes('claude') ? claudeCarrierPluginDir(layout) : undefined;
   if (pluginPath !== undefined) entries.push(...claudeCarrierEntries(layout, roles));
-  entries.push({ kind: 'file', path: join(layout.roomHome, MARKER), content: renderMarker(metadata.version, agents, roles, contractDigest()) });
+  entries.push({ kind: 'file', path: join(layout.roomHome, MARKER), content: renderMarker(metadata.version, agents, roles, contractDigest(), markerMemoryContract(agents, build.memoryContract ?? true)) });
   return { entries, providers, profiles, checks, ...(pluginPath === undefined ? {} : { pluginPath }) };
 }
 
@@ -154,6 +165,19 @@ function thinkingDiagnostics(live: readonly LiveProfile[], desired: readonly Pro
   return [warn('room.thinking',
     `${String(selected.length)} room seats are set to a top reasoning option that Paseo describes as including automatic task delegation: ${selected.join(', ')}. Whether that option can actually delegate once the room has closed the native multi-agent paths is unverified: paseo-room has not verified whether those closures prevent that option from delegating, and left your selection in place.`,
     `Choose a lower reasoning option for those seats in Paseo if you want the room's own defaults (${ROLE_THINKING.supervisor} for Supervisor, ${ROLE_THINKING.lead} for Lead and Peer).`)];
+}
+
+/**
+ * Names what kind of drift was found. A path the room suppressed needs deleting rather than
+ * rewriting, so reporting every difference as "missing or outdated" would name the wrong fix.
+ */
+function fileDriftSummary(drifted: readonly Operation[]): string {
+  const removals = drifted.filter(operation => operation.action === 'remove').length;
+  const count = String(drifted.length);
+  const subject = drifted.length === 1 ? 'managed role file is' : 'managed role files are';
+  if (removals === 0) return `${count} ${subject} missing or outdated.`;
+  if (removals === drifted.length) return `${count} ${subject} present but suppressed by this room.`;
+  return `${count} ${subject} missing or outdated, and ${String(removals)} of them are present but suppressed by this room.`;
 }
 
 /** Catalog copies are one of the room's three native multi-agent closures, so their drift is named. */
@@ -340,10 +364,32 @@ async function reconcilePlugin(
   return [pluginRuntimeCheck(plugin, expectedPath)];
 }
 
+/**
+ * The marker value for the Claude memory-contract choice. A room with no Claude seat records
+ * nothing: the choice only describes Claude's `CLAUDE.md`, and storing it anyway would leave
+ * state in the marker that nothing generated and nothing reads.
+ */
+function markerMemoryContract(agents: readonly AgentId[], memoryContract: boolean): boolean | undefined {
+  return agents.includes('claude') ? memoryContract : undefined;
+}
+
+/**
+ * With the file carrier suppressed, the plugin is the room's only Claude carrier. The plugin
+ * is verified, so this is not a silent risk — but whether a resumed session re-enters the
+ * creation hook is unproven, so the operator is told what they gave up rather than reassured.
+ */
+function memoryContractDiagnostic(agents: readonly AgentId[], memoryContract: boolean): Check[] {
+  if (memoryContract || !agents.includes('claude')) return [];
+  return [warn('claude.memory-contract',
+    'Claude role CLAUDE.md files carry your global memory only: the role contract was not written to them, so the trusted server plugin is this room\'s only Claude carrier. Only a newly created agent passes through its creation hook, and whether a resumed session re-enters that hook is unproven.',
+    'Drop --no-claude-memory-contract and run setup --apply to restore the file fallback.')];
+}
+
 /** The whole product: write the role homes, then register them with Paseo. */
 export async function setup(options: RunOptions = {}): Promise<Result> {
   const layout = resolveLayout(options, options.env);
   const agents = options.agents ?? ['codex'];
+  const memoryContract = options.claudeMemoryContract ?? true;
   const invalid = layoutChecks(layout, agents);
   if (invalid.length > 0) return failed('setup', invalid);
   const rootSafety = await roomPathSafety(layout, [], []);
@@ -356,7 +402,7 @@ export async function setup(options: RunOptions = {}): Promise<Result> {
   const compatibilityAgents = [...new Set([...agents, ...(previous?.agents ?? [])])];
   const daemon = await checkDaemon(layout, options.env, minimumPaseoVersion(compatibilityAgents));
   if (!daemon.daemon) return failed('setup', daemon.checks);
-  const desired = await buildDesired(layout, agents, ROLES);
+  const desired = await buildDesired(layout, agents, ROLES, { memoryContract });
   const stale = await staleFrom(layout, previous, agents, ROLES);
   const retained = stale.retainedDirectories.length === 0 ? [] : [warn(
     'room.stale-role-homes-preserved',
@@ -375,7 +421,7 @@ export async function setup(options: RunOptions = {}): Promise<Result> {
       ? plan.pluginChecks
       : [pluginsEnabledCheck(await session.pluginsEnabled()), ...plan.pluginChecks];
     // Diagnostics last: nothing above may be reached only through a warning.
-    const preApplyDiagnostics = [...checks, ...pluginPreconditions, ...contractProvenance(previous), ...thinkingDiagnostics(liveProfiles, desired.profiles)];
+    const preApplyDiagnostics = [...checks, ...pluginPreconditions, ...memoryContractDiagnostic(agents, memoryContract), ...contractProvenance(previous), ...thinkingDiagnostics(liveProfiles, desired.profiles)];
     if (hasFailure(preApplyDiagnostics) || !options.apply) {
       return {
         command: 'setup',
@@ -403,9 +449,11 @@ export async function setup(options: RunOptions = {}): Promise<Result> {
     await applyEntries(markerEntries);
     const appliedMarker: Marker = {
       version: metadata.version, agents: [...agents], roles: [...ROLES], contract: contractDigest(),
+      ...(markerMemoryContract(agents, memoryContract) === false ? { claudeMemoryContract: false } : {}),
     };
     const appliedChecks = [...checks, ...pluginPreconditions, ...pluginChecks,
       pass('room.applied', `Room ready at ${layout.roomHome} with ${String(ids.length)} Paseo providers.`),
+      ...memoryContractDiagnostic(agents, memoryContract),
       ...contractProvenance(appliedMarker), ...thinkingDiagnostics(appliedProfiles, desired.profiles)];
     return {
       command: 'setup', outcome: hasFailure(appliedChecks) ? 'failed' : 'ok', changed: pending.length > 0,
@@ -428,7 +476,10 @@ export async function verify(options: RunOptions = {}): Promise<Result> {
   if (hasFailure(pathSafety)) return failed('verify', pathSafety);
   const daemon = await checkDaemon(layout, options.env, minimumPaseoVersion(marker.agents));
   if (!daemon.daemon) return failed('verify', daemon.checks);
-  const desired = await buildDesired(layout, marker.agents, marker.roles);
+  const desired = await buildDesired(layout, marker.agents, marker.roles, {
+    // The room's own recorded choice, so verify compares against what setup wrote.
+    memoryContract: marker.claudeMemoryContract ?? true,
+  });
   const checks = [...daemon.checks, ...desired.checks];
   if (hasFailure(checks)) return failed('verify', checks);
 
@@ -450,7 +501,7 @@ export async function verify(options: RunOptions = {}): Promise<Result> {
     const all: Check[] = [...checks,
       files === 0
         ? pass('room.files', 'Every managed role file matches the current definition.')
-        : fail('room.files', `${String(files)} managed role files are missing or outdated.${fileDriftDetail(driftedFiles.map(operation => operation.target))}`, 'Run: paseo-room setup --apply'),
+        : fail('room.files', `${fileDriftSummary(driftedFiles)}${fileDriftDetail(driftedFiles.map(operation => operation.target))}`, 'Run: paseo-room setup --apply'),
       providers === 0
         ? pass('room.providers', `All ${String(Object.keys(desired.providers).length)} Paseo providers are registered as expected.`)
         : fail('room.providers', `${String(providers)} Paseo providers are missing or differ.`, 'Run: paseo-room setup --apply'),
@@ -459,6 +510,7 @@ export async function verify(options: RunOptions = {}): Promise<Result> {
         : fail('room.profiles', `${String(profiles)} Paseo agent profiles are missing or differ.`, 'Run: paseo-room setup --apply'),
       ...pluginChecks,
       // Diagnostics last: a warning never precedes the failure it might be mistaken for.
+      ...memoryContractDiagnostic(marker.agents, marker.claudeMemoryContract ?? true),
       ...contractProvenance(marker),
       ...thinkingDiagnostics(liveProfiles, desired.profiles),
     ];

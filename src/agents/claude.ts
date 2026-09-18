@@ -14,7 +14,7 @@ import { renderInstructions } from '../room/instructions.js';
 import { which } from '../which.js';
 import { jsonServerTable, paseoMcpCheck, serverNameDivergence, type NameDivergence } from './mcp.js';
 import { roleResourceEntries } from './resources.js';
-import type { Agent, AgentPlan } from './types.js';
+import type { Agent, AgentPlan, BuildOptions } from './types.js';
 
 /** Operator-authored resources shared by reference; native agent definitions stay out. */
 const SHARED = [
@@ -78,9 +78,16 @@ export function renderRoleState(source: string | undefined): string {
   return JSON.stringify(state, null, 2) + '\n';
 }
 
-/** Preserve the operator's global memory, then add the stronger room role contract. */
-export function renderRoleMemory(source: string | undefined, role: Role): string {
+/**
+ * Preserve the operator's global memory, then add the stronger room role contract.
+ *
+ * With the contract suppressed, the file carries the operator's memory alone: the plugin is
+ * then the room's only Claude contract carrier. Returning `undefined` for an operator with no
+ * global memory keeps the room from writing a file whose whole content it just removed.
+ */
+export function renderRoleMemory(source: string | undefined, role: Role, contract = true): string | undefined {
   const operator = source?.trim();
+  if (!contract) return operator ? `${operator}\n` : undefined;
   return operator ? `${operator}\n\n${renderInstructions(role)}` : renderInstructions(role);
 }
 
@@ -163,7 +170,7 @@ export const claudeAgent: Agent = {
       'CronCreate', 'CronDelete', 'CronList',
     ],
   },
-  async build(layout: Layout, roles: readonly Role[]): Promise<AgentPlan> {
+  async build(layout: Layout, roles: readonly Role[], options: BuildOptions = {}): Promise<AgentPlan> {
     const home = layout.agentHome.claude;
     const binary = await which(layout.bin.claude, layout.searchPath);
     if (!binary) {
@@ -218,7 +225,13 @@ export const claudeAgent: Agent = {
         if (divergence) drift.push(mcpDriftCheck(role, target, statePath, divergence));
       }
       entries.push({ kind: 'dir', path: target });
-      entries.push({ kind: 'file', path: join(target, 'CLAUDE.md'), content: renderRoleMemory(memorySource, role) });
+      const memoryPath = join(target, 'CLAUDE.md');
+      const memory = renderRoleMemory(memorySource, role, options.memoryContract ?? true);
+      // Suppressed with no operator memory to carry: remove any file an earlier run wrote,
+      // so a stale contract generation cannot outlive the option that turned it off.
+      entries.push(memory === undefined
+        ? { kind: 'absent', path: memoryPath }
+        : { kind: 'file', path: memoryPath, content: memory });
       entries.push({ kind: 'file', path: join(target, 'settings.json'), content: renderRoleSettings(settingsSource, role, target) });
       entries.push({ kind: 'file', path: statePath, content: renderRoleState(stateSource), once: true });
       entries.push(...await roleResourceEntries({ role, target, home, names: SHARED, shared, executable: EXECUTABLE }));

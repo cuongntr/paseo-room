@@ -16,6 +16,12 @@ const markerSchema = z.object({
    * parse rather than look like a foreign file.
    */
   contract: z.string().min(1).optional(),
+  /**
+   * False when this room deliberately suppressed the role contract in Claude's `CLAUDE.md`,
+   * leaving the plugin as its only Claude carrier. Optional and defaulted to true so a room
+   * written before the option existed keeps parsing and keeps its current behaviour.
+   */
+  claudeMemoryContract: z.boolean().optional(),
 });
 export type Marker = z.infer<typeof markerSchema>;
 
@@ -25,10 +31,13 @@ export function renderMarker(
   agents: readonly AgentId[],
   roles: readonly Role[],
   contract?: string,
+  claudeMemoryContract?: boolean,
 ): string {
   return JSON.stringify({
     version, agents: [...agents], roles: [...roles],
     ...(contract === undefined ? {} : { contract }),
+    // Written only when it differs from the default, so an unchanged room's marker is unchanged.
+    ...(claudeMemoryContract === false ? { claudeMemoryContract: false } : {}),
   } satisfies Marker, null, 2) + '\n';
 }
 

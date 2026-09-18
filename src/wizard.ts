@@ -46,10 +46,24 @@ export async function runWizard(
     options: AGENT_IDS.map(value => ({ value, label: AGENTS[value].label })),
   });
   if (typeof agents === 'symbol' || agents.length === 0) return cancelled();
-  const preview = await setup({ ...options, agents });
+  // Only meaningful for Claude: the other adapters have no plugin carrier to fall back from.
+  let claudeMemoryContract = true;
+  if (agents.includes('claude')) {
+    const carrier = await prompts.select({
+      message: 'Claude role contract carrier: the room plugin is always used. Also write the contract into each role CLAUDE.md?',
+      options: [
+        { value: 'both', label: 'Yes — keep it as a fallback (recommended; resume behaviour is unproven)' },
+        { value: 'plugin', label: 'No — plugin only; CLAUDE.md keeps your global memory alone' },
+      ],
+    });
+    if (typeof carrier === 'symbol') return cancelled();
+    claudeMemoryContract = carrier === 'both';
+  }
+  const setupOptions = { ...options, agents, claudeMemoryContract };
+  const preview = await setup(setupOptions);
   const status = emit(preview);
   if (preview.outcome !== 'changes-planned') return status;
   const approved = await prompts.confirm({ message: 'Apply these changes? Authentication will not be validated or started.' });
   if (approved !== true) return cancelled();
-  return emit(await setup({ ...options, agents, apply: true }));
+  return emit(await setup({ ...setupOptions, apply: true }));
 }

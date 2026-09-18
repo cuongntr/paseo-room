@@ -62,6 +62,16 @@ describe('renderRoleMemory', () => {
     expect(renderRoleMemory(operator, 'peer')).toBe(`# Operator preferences\n\n${expected}`);
     expect(renderRoleMemory(undefined, 'peer')).toBe(expected);
   });
+
+  it('drops only the contract when suppressed, and writes nothing without operator memory', () => {
+    const operator = '# Operator preferences\n';
+    // The operator's own memory survives; the role contract is what the plugin then carries alone.
+    expect(renderRoleMemory(operator, 'peer', false)).toBe('# Operator preferences\n');
+    expect(renderRoleMemory(operator, 'peer', false)).not.toContain(renderInstructions('peer'));
+    // No operator memory and no contract leaves nothing worth writing.
+    expect(renderRoleMemory(undefined, 'peer', false)).toBeUndefined();
+    expect(renderRoleMemory('   \n', 'peer', false)).toBeUndefined();
+  });
 });
 
 describe('claudeAgent.build', () => {

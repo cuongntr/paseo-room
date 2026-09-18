@@ -216,6 +216,11 @@ marker, exactly as the current removal contract does.
 | Daemon outside `>=0.8.0 <0.9.0` | `CLAUDE.md` only | `verify` fails, naming the version bound |
 | Session resumed rather than created | Unproven whether the hook re-runs or an earlier prompt persists | Documented limitation; `CLAUDE.md` covers it |
 
+Every row above assumes the default, where `CLAUDE.md` still carries the contract. Under
+`setup --no-claude-memory-contract` the operator has declined that fallback, so each row
+degrades to no contract carrier at all rather than to `CLAUDE.md`. The conditions and their
+diagnostics are unchanged, and `setup`/`verify` warn for as long as the choice stands.
+
 ## 9. Testing Strategy
 
 Vitest, real temporary `$HOME` fixtures, fake executables and a fake daemon client — the existing
@@ -299,3 +304,4 @@ No blocking question remains for this carrier.
 |---|---|---|
 | 2026-09-18 | Bytes | Created Active for the accepted strong Claude carrier: required bundled server plugin, creation-time `config.systemPrompt` append, retained `CLAUDE.md` fallback, explicit `pluginsEnabled` opt-in, and fail-closed Claude verification. |
 | 2026-09-18 | Bytes | Implementation alignment: documented delayed marker replacement so a failed plugin deselection remains rerunnable. |
+| 2026-09-18 | Bytes | Recorded the `--no-claude-memory-contract` opt-out: the `CLAUDE.md` fallback is now declinable, which changes what §8.5 degrades to without changing any condition or diagnostic. Q-001 remains open and is the reason it stays an opt-out. |

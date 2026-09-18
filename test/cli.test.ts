@@ -47,6 +47,39 @@ describe('paseo-room CLI', () => {
     await expect(stat(fixture.roomHome)).rejects.toThrow();
   });
 
+  it('carries the Claude memory-contract choice only on setup', async () => {
+    const fixture = await makeFixture();
+    const operatorMemory = '# Operator Claude memory\n';
+    await writeFile(join(fixture.home, '.claude/CLAUDE.md'), operatorMemory);
+    const daemon = emptyDaemon();
+    const leadMemory = join(fixture.roomHome, 'roles/claude/lead/CLAUDE.md');
+
+    const applied = await run(['setup', '--agent', 'claude', '--no-claude-memory-contract', '--apply'], fixture.env, daemon);
+    expect(applied.code).toBe(0);
+    expect(await readFile(leadMemory, 'utf8')).toBe(operatorMemory);
+    expect(applied.out).toContain('global memory only');
+
+    // verify and remove read the choice from the marker, so repeating it is a usage error
+    // rather than a silently ignored flag.
+    for (const command of ['verify', 'remove'] as const) {
+      const rejected = await run([command, '--no-claude-memory-contract'], fixture.env, daemon);
+      expect(rejected.code).toBe(2);
+      expect(rejected.err).toContain('recorded in the room marker');
+    }
+    // auth reads no marker, so it must not claim to: its own rejection names what it does.
+    const authRejected = await run(
+      ['auth', 'login', 'claude', 'lead', '--no-claude-memory-contract'], fixture.env, daemon,
+    );
+    expect(authRejected.code).toBe(2);
+    expect(authRejected.err).toContain('only authenticates a role');
+    expect(authRejected.err).not.toContain('room marker');
+    // Without the flag, verify still agrees with the room it recorded.
+    expect((await run(['verify'], fixture.env, daemon)).code).toBe(0);
+    // The default remains the fallback: no flag restores the contract.
+    expect((await run(['setup', '--agent', 'claude', '--apply'], fixture.env, daemon)).code).toBe(0);
+    expect(await readFile(leadMemory, 'utf8')).toBe(`${operatorMemory}\n${renderInstructions('lead')}`);
+  });
+
   it('applies both agents and registers six providers', async () => {
     const fixture = await makeFixture();
     const daemon = emptyDaemon();
@@ -778,7 +811,7 @@ describe('Peer capability hygiene', () => {
     await mkdir(join(fixture.home, '.codex/skills/reviewing'), { recursive: true });
     const added = await run(['verify'], fixture.env, daemon);
     expect(added.code).toBe(1);
-    expect(added.out).toContain('managed role files are missing or outdated');
+    expect(added.out).toContain('1 managed role file is missing or outdated');
     await run(['setup', '--apply'], fixture.env, daemon);
     expect(await readdir(skills)).toEqual(['formatting', 'reviewing']);
 
@@ -988,7 +1021,7 @@ describe('contract provenance and bounded diagnostics', () => {
     await rm(join(fixture.roomHome, 'roles/codex/peer/model-catalog.json'));
     const verified = await run(['verify'], fixture.env, daemon);
     expect(verified.code).toBe(1);
-    expect(verified.out).toContain('managed role files are missing or outdated');
+    expect(verified.out).toContain('1 managed role file is missing or outdated');
     expect(verified.out).toContain('One of them is a generated Codex model catalog');
     expect(verified.out).toContain('lack the scrubbed catalog closure');
 

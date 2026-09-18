@@ -40,6 +40,30 @@ describe('room marker agent set', () => {
     expect(await readMarker(layout)).toBeUndefined();
   });
 
+  it('records a suppressed Claude memory contract only when it differs from the default', async () => {
+    const digest = contractDigest();
+    // The default is not written, so an unchanged room's marker stays byte-identical.
+    expect(JSON.parse(renderMarker('1.0.0', ['claude'], ['lead'], digest, true))).toEqual({
+      version: '1.0.0', agents: ['claude'], roles: ['lead'], contract: digest,
+    });
+    expect(JSON.parse(renderMarker('1.0.0', ['claude'], ['lead'], digest, undefined))).toEqual({
+      version: '1.0.0', agents: ['claude'], roles: ['lead'], contract: digest,
+    });
+    expect(JSON.parse(renderMarker('1.0.0', ['claude'], ['lead'], digest, false))).toEqual({
+      version: '1.0.0', agents: ['claude'], roles: ['lead'], contract: digest, claudeMemoryContract: false,
+    });
+
+    const fixture = await makeFixture();
+    const layout = resolveLayout({}, fixture.env);
+    await mkdir(layout.roomHome);
+    const path = join(layout.roomHome, 'room.json');
+    await writeFile(path, renderMarker('0.0.1', ['claude'], ['lead'], digest, false));
+    expect((await readMarker(layout))?.claudeMemoryContract).toBe(false);
+    // A room written before the option existed still parses, and defaults to the fallback.
+    await writeFile(path, renderMarker('0.0.1', ['claude'], ['lead'], digest));
+    expect((await readMarker(layout))?.claudeMemoryContract).toBeUndefined();
+  });
+
   it('derives the digest from the rendered documents, deterministically and not from the package version', () => {
     expect(contractDigest()).toMatch(/^sha256:[0-9a-f]{16}$/);
     expect(contractDigest()).toBe(contractDigest());

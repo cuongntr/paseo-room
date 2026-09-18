@@ -153,3 +153,126 @@ describe('Claude contract carrier lifecycle', () => {
     expect(conflict.checks.some(check => check.id === 'claude.plugin.path')).toBe(true);
   });
 });
+
+describe('Claude memory carrier selection', () => {
+  it('suppresses only the contract, removes stale text, and keeps the room verifiable', async () => {
+    const fixture = await makeFixture();
+    const operatorMemory = '# Operator Claude memory\n';
+    await writeFile(join(fixture.home, '.claude/CLAUDE.md'), operatorMemory);
+    const daemon = emptyDaemon();
+    const options = { env: fixture.env, factory: fakeClient(daemon), agents: ['claude'] as const, apply: true };
+    const leadMemory = join(fixture.roomHome, 'roles/claude/lead/CLAUDE.md');
+
+    // Default: both carriers, so the file holds operator memory plus the contract.
+    expect((await setup(options)).outcome).toBe('ok');
+    expect(await readFile(leadMemory, 'utf8')).toBe(`${operatorMemory}\n${renderInstructions('lead')}`);
+
+    // Suppressed: the stale contract must be gone rather than left behind.
+    const suppressed = await setup({ ...options, claudeMemoryContract: false });
+    expect(suppressed.outcome).toBe('ok');
+    expect(await readFile(leadMemory, 'utf8')).toBe(operatorMemory);
+    expect(await readFile(leadMemory, 'utf8')).not.toContain(renderInstructions('lead'));
+    expect(suppressed.checks.some(check => check.id === 'claude.memory-contract' && check.status === 'warn')).toBe(true);
+    // The plugin is still the strong carrier and still carries the full contract.
+    await expect(readFile(join(fixture.roomHome, 'plugin/server/contract.ts'), 'utf8'))
+      .resolves.toContain(JSON.stringify(renderInstructions('lead')));
+
+    // The choice is recorded, so verify compares against it without being told again.
+    const marker = JSON.parse(await readFile(join(fixture.roomHome, 'room.json'), 'utf8')) as {
+      claudeMemoryContract?: boolean;
+    };
+    expect(marker.claudeMemoryContract).toBe(false);
+    const verified = await verify({ env: fixture.env, factory: fakeClient(daemon) });
+    expect(verified.outcome).toBe('ok');
+    expect(verified.checks.some(check => check.id === 'claude.memory-contract')).toBe(true);
+
+    // Restoring the fallback rewrites the contract and clears the marker field.
+    const restored = await setup(options);
+    expect(restored.outcome).toBe('ok');
+    expect(await readFile(leadMemory, 'utf8')).toBe(`${operatorMemory}\n${renderInstructions('lead')}`);
+    const restoredMarker = JSON.parse(await readFile(join(fixture.roomHome, 'room.json'), 'utf8')) as {
+      claudeMemoryContract?: boolean;
+    };
+    expect(restoredMarker.claudeMemoryContract).toBeUndefined();
+    expect(restored.checks.some(check => check.id === 'claude.memory-contract')).toBe(false);
+  });
+
+  it('writes no memory file at all when the operator has no global memory to carry', async () => {
+    const fixture = await makeFixture();
+    const daemon = emptyDaemon();
+    const options = {
+      env: fixture.env, factory: fakeClient(daemon), agents: ['claude'] as const,
+      apply: true, claudeMemoryContract: false,
+    };
+    expect((await setup(options)).outcome).toBe('ok');
+    await expect(readFile(join(fixture.roomHome, 'roles/claude/lead/CLAUDE.md'), 'utf8')).rejects.toThrow();
+    // A room with nothing to write is still consistent with its own marker.
+    expect((await verify({ env: fixture.env, factory: fakeClient(daemon) })).outcome).toBe('ok');
+  });
+
+  it('leaves a Codex-only room untouched by the Claude carrier choice', async () => {
+    const fixture = await makeFixture();
+    const daemon = emptyDaemon();
+    const suppressed = await setup({
+      env: fixture.env, factory: fakeClient(daemon), agents: ['codex'], apply: true, claudeMemoryContract: false,
+    });
+    expect(suppressed.outcome).toBe('ok');
+    // Nothing about Codex changes, and no Claude-specific warning is shown.
+    expect(suppressed.checks.some(check => check.id === 'claude.memory-contract')).toBe(false);
+    // Codex carries its contract in config developer_instructions, untouched by a Claude-only flag.
+    await expect(readFile(join(fixture.roomHome, 'roles/codex/lead/config.toml'), 'utf8'))
+      .resolves.toContain('developer_instructions');
+  });
+  it('reports a reappeared suppressed file as suppressed rather than outdated', async () => {
+    const fixture = await makeFixture();
+    const daemon = emptyDaemon();
+    const options = {
+      env: fixture.env, factory: fakeClient(daemon), agents: ['claude'] as const,
+      apply: true, claudeMemoryContract: false,
+    };
+    expect((await setup(options)).outcome).toBe('ok');
+
+    // Something put the file back: the fix is deletion, so the drift must not read "outdated".
+    const leadMemory = join(fixture.roomHome, 'roles/claude/lead/CLAUDE.md');
+    await writeFile(leadMemory, '# resurrected contract\n');
+    const drifted = await verify({ env: fixture.env, factory: fakeClient(daemon) });
+    expect(drifted.outcome).toBe('failed');
+    const files = drifted.checks.find(check => check.id === 'room.files');
+    expect(files?.message).toContain('present but suppressed by this room');
+    expect(files?.message).not.toContain('missing or outdated');
+    // And setup reconciles it by removing the file again.
+    expect((await setup(options)).outcome).toBe('ok');
+    await expect(readFile(leadMemory, 'utf8')).rejects.toThrow();
+  });
+
+  it('records the choice only for a room that actually seats Claude', async () => {
+    const fixture = await makeFixture();
+    const daemon = emptyDaemon();
+    await setup({
+      env: fixture.env, factory: fakeClient(daemon), agents: ['codex'], apply: true, claudeMemoryContract: false,
+    });
+    // A Codex-only room has no CLAUDE.md to suppress, so the field would be meaningless state.
+    const marker = JSON.parse(await readFile(join(fixture.roomHome, 'room.json'), 'utf8')) as Record<string, unknown>;
+    expect(marker.claudeMemoryContract).toBeUndefined();
+  });
+
+  it('drops the recorded choice when Claude is deselected and restores the contract on reselect', async () => {
+    const fixture = await makeFixture();
+    await writeFile(join(fixture.home, '.claude/CLAUDE.md'), '# Operator Claude memory\n');
+    const daemon = emptyDaemon();
+    const base = { env: fixture.env, factory: fakeClient(daemon), apply: true };
+    const markerFields = async (): Promise<Record<string, unknown>> =>
+      JSON.parse(await readFile(join(fixture.roomHome, 'room.json'), 'utf8')) as Record<string, unknown>;
+
+    await setup({ ...base, agents: ['claude'], claudeMemoryContract: false });
+    expect((await markerFields()).claudeMemoryContract).toBe(false);
+    await setup({ ...base, agents: ['codex'] });
+    expect((await markerFields()).claudeMemoryContract).toBeUndefined();
+
+    // Reselecting without the flag is the default again, so the fallback comes back.
+    expect((await setup({ ...base, agents: ['claude'] })).outcome).toBe('ok');
+    await expect(readFile(join(fixture.roomHome, 'roles/claude/lead/CLAUDE.md'), 'utf8'))
+      .resolves.toContain(renderInstructions('lead'));
+    expect((await verify({ env: fixture.env, factory: fakeClient(daemon) })).outcome).toBe('ok');
+  });
+});

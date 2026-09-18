@@ -45,6 +45,7 @@ interactive stdin/stdout/stderr, and targets exactly one selected agent and role
 | `--agent <codex\|claude\|pi>` | `codex` | Which coding agent to seat. Repeat the flag to combine agents. |
 | `--apply` | off | Actually write setup/remove changes; `auth login` does not use it. |
 | `--json` | off | One machine-readable document instead of text. |
+| `--no-claude-memory-contract` | off | Omit the role contract from Claude role `CLAUDE.md` files, leaving the room plugin as the only Claude carrier. Your global memory is still carried. `setup` only. |
 | `--room-home <path>` | `~/.paseo-room` | Where role homes are written. |
 | `--codex-home <path>` | `~/.codex` | Source Codex configuration. |
 | `--claude-home <path>` | `~/.claude` | Source Claude Code configuration. |
@@ -99,7 +100,7 @@ starts, its exit code is preserved; a signal is returned using the conventional
     auth.json                       # created and owned by Codex after role login, if file-backed
     AGENTS.md, skills, plugins, hooks.json              → symlinks into ~/.codex when present (Peer: see below)
   roles/claude/<role>/
-    CLAUDE.md                     # your global memory + role instructions
+    CLAUDE.md                     # your global memory + role instructions (contract omitted with --no-claude-memory-contract)
     settings.json                 # your settings.json + PASEO_ROOM_ROLE
     .claude.json                  # seeded once from yours, then owned by Claude
     .credentials.json                # created and owned by Claude after role login, if file-backed
@@ -257,6 +258,14 @@ preserved. `CLAUDE.md` remains unchanged as a degraded and resume fallback. `ver
 the plugin is absent, disabled, failed, registered from another path, or drifted, because a
 silently missing carrier is not a guarantee. The hook runs for newly created sessions;
 recreate an existing Claude session after setup or an update.
+
+`setup --no-claude-memory-contract` leaves the plugin as the only Claude carrier: each role
+`CLAUDE.md` then holds your global memory alone, and the file is not written at all when you
+have none. Only the contract is dropped, never your own memory, and an earlier generation of it
+is removed rather than left behind. The choice is recorded in `room.json`, so `verify` compares
+against it and rejects the flag itself; `setup` without the flag restores the fallback. Keep the
+fallback unless you have a reason not to: the plugin hook is verified, but whether a *resumed*
+session re-enters it is unproven, and `CLAUDE.md` is what covers that case.
 
 Pi providers use a strict command tail:
 

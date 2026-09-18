@@ -571,6 +571,16 @@ writes `AgentSessionConfig.systemPrompt` for Claude, and the generated Pi append
 `--append-system-prompt`. Claude's generated `CLAUDE.md` remains as a degraded and resume
 fallback.
 
+That fallback is on by default and can be declined. `setup --no-claude-memory-contract` omits
+the contract from the role `CLAUDE.md` files, leaving the plugin as the only Claude carrier. It
+is an opt-out rather than the default precisely because resume behaviour is unproven: the
+operator chooses to give up that coverage, and the run says so. Only the contract is dropped —
+the operator's own global memory is still folded in, and a file with nothing left to carry is
+removed rather than written empty, so an older contract generation cannot outlive the choice.
+The decision is recorded in `room.json` as `claudeMemoryContract`, which is how `verify`
+reconstructs the same desired state without being passed the flag again; absent means the
+default, so a room written before the option existed keeps its behaviour.
+
 Pinning the base prompt for stability is a legitimate thing to want, but it is the
 operator's decision about their own installation, not the room's. If you set
 `model_instructions_file` yourself, the room copies it through untouched.
@@ -588,7 +598,7 @@ lifecycle and trust rationale is in
 This stronger carrier is still bounded evidence: the room proves generated content, live
 plugin registration/status, and deterministic composition, not model obedience. Only newly
 created sessions pass through the hook; resume behavior is unproven, which is why
-`CLAUDE.md` remains. Missing or failed plugin state makes Claude setup/verify fail rather than
+`CLAUDE.md` remains by default. Missing or failed plugin state makes Claude setup/verify fail rather than
 silently claiming the stronger guarantee.
 
 ## 7. Deliberate non-goals

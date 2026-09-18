@@ -10,6 +10,13 @@ export interface DirEntry { readonly kind: 'dir'; readonly path: string }
 export interface FileEntry { readonly kind: 'file'; readonly path: string; readonly content: string; readonly once?: true }
 export interface LinkEntry { readonly kind: 'link'; readonly path: string; readonly target: string }
 /**
+ * A managed path this room declares must not exist, so suppressing generated content
+ * removes the stale file instead of leaving an older generation behind. Like every other
+ * managed entry it only ever replaces the shape it writes: a regular file. Anything else
+ * is refused rather than deleted.
+ */
+export interface AbsentEntry { readonly kind: 'absent'; readonly path: string }
+/**
  * A directory whose whole child inventory the room owns: names outside `children`
  * are removed so a generated projection cannot go stale. Ownership is declared here
  * and never inferred from an ordinary `dir`, so it stays limited to generated
@@ -22,7 +29,7 @@ export interface ManagedDirEntry {
   /** The single legacy shape this path may be migrated from: a symlink to this target. */
   readonly legacyLink?: string;
 }
-export type Entry = DirEntry | FileEntry | LinkEntry | ManagedDirEntry;
+export type Entry = DirEntry | FileEntry | LinkEntry | ManagedDirEntry | AbsentEntry;
 
 const DIR_MODE = 0o700;
 const FILE_MODE = 0o600;
@@ -79,6 +86,8 @@ async function staleChildren(entry: ManagedDirEntry): Promise<string[]> {
 
 async function current(entry: Entry): Promise<'absent' | 'same' | 'different'> {
   const stat = await lstatOrAbsent(entry.path);
+  // A declared-absent path is already correct when nothing is there.
+  if (entry.kind === 'absent') return stat ? 'different' : 'same';
   if (!stat) return 'absent';
   if (entry.kind === 'dir') return stat.isDirectory() ? 'same' : 'different';
   if (entry.kind === 'managed-dir') {
@@ -100,9 +109,9 @@ export async function planEntries(entries: readonly Entry[]): Promise<Operation[
   for (const entry of entries) {
     const state = await current(entry);
     operations.push({
-      action: state === 'same' ? 'noop' : state === 'absent' ? 'create' : 'update',
+      action: state === 'same' ? 'noop' : entry.kind === 'absent' ? 'remove' : state === 'absent' ? 'create' : 'update',
       // A managed directory is still a directory to everything that reports operations.
-      kind: entry.kind === 'managed-dir' ? 'dir' : entry.kind,
+      kind: entry.kind === 'managed-dir' ? 'dir' : entry.kind === 'absent' ? 'file' : entry.kind,
       target: entry.path,
     });
   }
@@ -183,6 +192,17 @@ async function applyManagedDirectory(entry: ManagedDirEntry): Promise<void> {
   }
 }
 
+/**
+ * Removes a suppressed managed file. Only a regular file is ever deleted: a directory,
+ * link or special file at that path belongs to something this room does not own.
+ */
+async function removeManagedFile(path: string): Promise<void> {
+  const stat = await lstatOrAbsent(path);
+  if (!stat) return;
+  if (!stat.isFile()) refuse(path, 'a regular file this room generated', stat);
+  await rm(path, { force: true });
+}
+
 /** Rewrites only what differs, so a repeat run costs stats rather than writes. */
 export async function applyEntries(entries: readonly Entry[]): Promise<void> {
   for (const entry of entries) {
@@ -193,6 +213,10 @@ export async function applyEntries(entries: readonly Entry[]): Promise<void> {
     }
     if (entry.kind === 'managed-dir') {
       await applyManagedDirectory(entry);
+      continue;
+    }
+    if (entry.kind === 'absent') {
+      await removeManagedFile(entry.path);
       continue;
     }
     await mkdir(dirname(entry.path), { recursive: true, mode: DIR_MODE });

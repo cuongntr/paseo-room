@@ -48,6 +48,18 @@ export interface AgentPlan {
   /** Role-specific provider environment pins whose values depend on generated paths. */
   readonly providerEnv?: Readonly<Partial<Record<Role, Readonly<Record<string, string>>>>>;
 }
+/**
+ * Per-run choices that change what an adapter generates. Kept as one object so adding a
+ * future agent option does not change the seam again.
+ */
+export interface BuildOptions {
+  /**
+   * Write the role contract into the agent's own memory file. Claude's `CLAUDE.md` is the
+   * degraded fallback for the plugin carrier, so suppressing it leaves the plugin as the only
+   * Claude carrier and keeps the operator's global memory.
+   */
+  readonly memoryContract?: boolean;
+}
 export interface Agent {
   readonly id: AgentId;
   readonly label: string;
@@ -59,5 +71,5 @@ export interface Agent {
   readonly defaultModeId?: string;
   readonly pins: ProviderPins;
   /** Reads the operator's own config; never writes outside the room home. */
-  build(layout: Layout, roles: readonly Role[]): Promise<AgentPlan>;
+  build(layout: Layout, roles: readonly Role[], options?: BuildOptions): Promise<AgentPlan>;
 }

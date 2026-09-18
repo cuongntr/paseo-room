@@ -1,13 +1,19 @@
-import { stat } from 'node:fs/promises';
+import { readFile, stat, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { runCli } from '../src/cli.js';
+import { renderInstructions } from '../src/room/instructions.js';
 import type { Prompts } from '../src/wizard.js';
 import { emptyDaemon, fakeClient, makeFixture, type FakeDaemon } from './helpers.js';
 
 /** Scripted answers for the no-argument path; a symbol means the user cancelled. */
-function scripted(answers: { action: string; agents?: string[]; confirm?: boolean | symbol }): Prompts {
+function scripted(answers: {
+  action: string; agents?: string[]; confirm?: boolean | symbol; carrier?: string;
+}): Prompts {
+  let selects = 0;
   return {
-    select: () => Promise.resolve(answers.action),
+    // The action is asked first; a Claude selection then asks for the contract carrier.
+    select: () => Promise.resolve(selects++ === 0 ? answers.action : answers.carrier ?? 'both'),
     multiselect: () => Promise.resolve((answers.agents ?? ['codex']) as never),
     confirm: () => Promise.resolve(answers.confirm ?? false),
   };
@@ -28,6 +34,32 @@ describe('the no-argument wizard', () => {
     expect(result.code).toBe(0);
     expect(Object.keys(daemon.providers)).toHaveLength(3);
     await expect(stat(fixture.roomHome)).resolves.toBeDefined();
+  });
+
+  it('asks a Claude selection which contract carriers to use', async () => {
+    const fixture = await makeFixture();
+    const operatorMemory = '# Operator Claude memory\n';
+    await writeFile(join(fixture.home, '.claude/CLAUDE.md'), operatorMemory);
+    const daemon: FakeDaemon = emptyDaemon();
+    const answers = { action: 'setup', agents: ['claude'], confirm: true, carrier: 'plugin' };
+    const result = await wizard(scripted(answers), fixture.env, daemon);
+    expect(result.code).toBe(0);
+    // Plugin-only: the file keeps the operator's memory and drops the role contract.
+    const leadMemory = join(fixture.roomHome, 'roles/claude/lead/CLAUDE.md');
+    expect(await readFile(leadMemory, 'utf8')).toBe(operatorMemory);
+    expect(result.out).toContain('global memory only');
+  });
+
+  it('keeps both carriers when the Claude prompt is answered with the default', async () => {
+    const fixture = await makeFixture();
+    const daemon: FakeDaemon = emptyDaemon();
+    const result = await wizard(
+      scripted({ action: 'setup', agents: ['claude'], confirm: true, carrier: 'both' }), fixture.env, daemon,
+    );
+    expect(result.code).toBe(0);
+    await expect(readFile(join(fixture.roomHome, 'roles/claude/lead/CLAUDE.md'), 'utf8'))
+      .resolves.toContain(renderInstructions('lead'));
+    expect(result.out).not.toContain('global memory only');
   });
 
   it('changes nothing when the confirmation is declined', async () => {

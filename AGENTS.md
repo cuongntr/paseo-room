@@ -35,6 +35,8 @@ That design is in git history before the `v2` rewrite. Do not reintroduce it.
 - **Claude's strong carrier is a required trusted plugin.** It is bounded to Paseo
   `>=0.8.0 <0.9.0`, appends only for exact room Claude provider ids at agent creation, and
   retains `CLAUDE.md` as degraded/resume fallback. Require `pluginsEnabled`; never set or infer it.
+  `--no-claude-memory-contract` drops only the contract half of `CLAUDE.md`, never the operator's
+  own memory, and is recorded in the marker so `verify` compares against the room's own choice.
 - **Pin at the provider level whatever the agent's own config cannot guarantee.** A Paseo
   provider entry outranks the agent config: `params` for Codex sandbox/approval,
   `disallowedTools` and environment pins for Claude's native agent surfaces.
@@ -57,9 +59,10 @@ That design is in git history before the `v2` rewrite. Do not reintroduce it.
   and no-unrequested-additions restraint in `bounded-outcome.md`, faithful reporting and the
   unrun-gate bar in `reproducible-handoff.md`.
 - **Own a managed path by shape, and only the shape you write.** A managed file or link may
-  replace only an absent path or the same shape, and is renamed in from a temporary sibling.
-  Exact directory ownership is declared per entry and must never be extended to role homes or
-  credential-bearing paths.
+  replace only an absent path or the same shape, and is renamed in from a temporary sibling. A
+  path declared absent is deleted only when it is a regular file the room would otherwise have
+  written. Exact directory ownership is declared per entry and must never be extended to role
+  homes or credential-bearing paths.
 
 ## Layout
 

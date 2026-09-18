@@ -36,7 +36,11 @@ function optionsFrom(raw: Record<string, unknown>, base: RunOptions): RunOptions
     if (typeof value === 'string' && value.trim()) paths[flag] = value.trim();
   }
   const agents = Array.isArray(raw.agent) && raw.agent.length > 0 ? (raw.agent as AgentId[]) : undefined;
-  return { ...base, ...paths, ...(agents ? { agents } : {}), ...(raw.apply === true ? { apply: true } : {}) };
+  return {
+    ...base, ...paths, ...(agents ? { agents } : {}), ...(raw.apply === true ? { apply: true } : {}),
+    // Commander defaults a --no- flag to true, so only an explicit opt-out is carried.
+    ...(raw.claudeMemoryContract === false ? { claudeMemoryContract: false } : {}),
+  };
 }
 
 function failedFromThrown(command: string, error: unknown): Result {
@@ -97,6 +101,7 @@ export async function runCli(argv: readonly string[], output: Output, context: C
     .option('--agent <agent>', 'codex, claude, or pi; repeat to combine (default: codex)', collectAgent)
     .option('--apply', 'actually make the changes (default: dry run)')
     .option('--json', 'machine-readable output')
+    .option('--no-claude-memory-contract', 'omit the role contract from Claude role CLAUDE.md files, leaving the room plugin as the only Claude carrier')
     .option('--room-home <path>', 'where role homes are written (default: ~/.paseo-room)')
     .option('--codex-home <path>', 'source Codex config (default: ~/.codex)')
     .option('--claude-home <path>', 'source Claude Code config (default: ~/.claude)')
@@ -125,7 +130,17 @@ export async function runCli(argv: readonly string[], output: Output, context: C
   }
 
   try {
+    // Only setup chooses this: verify and remove read the room's recorded choice instead, and
+    // auth does not carry it at all. Silently ignoring it would misreport what the run did.
+    if (raw.claudeMemoryContract === false && (command === 'verify' || command === 'remove')) {
+      output.stderr(`paseo-room ${command}: --no-claude-memory-contract is a setup choice recorded in the room marker; ${command} reads it from there.\n`);
+      return 2;
+    }
     if (command === 'auth') {
+      if (raw.claudeMemoryContract === false) {
+        output.stderr('paseo-room auth login only authenticates a role and does not use --no-claude-memory-contract.\n');
+        return 2;
+      }
       if (raw.apply === true) {
         output.stderr('paseo-room auth login is already explicit and does not use --apply.\n');
         return 2;

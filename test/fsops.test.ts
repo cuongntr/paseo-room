@@ -316,3 +316,41 @@ describe('managed directory containment', () => {
     await rm(root, { recursive: true, force: true });
   });
 });
+
+describe('suppressed managed files', () => {
+  it('plans a removal, deletes only a regular file, and stays idempotent', async () => {
+    const root = await makeRoot();
+    const path = join(root, 'CLAUDE.md');
+    const entry: Entry = { kind: 'absent', path };
+
+    // Nothing there yet: already correct, so no operation is reported.
+    expect(await planEntries([entry])).toEqual([{ action: 'noop', kind: 'file', target: path }]);
+
+    await writeFile(path, '# stale contract\n');
+    expect(await planEntries([entry])).toEqual([{ action: 'remove', kind: 'file', target: path }]);
+    await applyEntries([entry]);
+    await expect(lstat(path)).rejects.toThrow();
+    // A second apply is a no-op rather than an error.
+    await applyEntries([entry]);
+    expect(await temporaries(root)).toEqual([]);
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it('refuses to delete a directory or a symbolic link at that path', async () => {
+    const root = await makeRoot();
+    const asDirectory = join(root, 'as-directory');
+    await mkdir(asDirectory, { recursive: true });
+    await writeFile(join(asDirectory, 'inside.txt'), 'role-owned');
+    await expect(applyEntries([{ kind: 'absent', path: asDirectory }])).rejects.toThrow(ManagedPathError);
+    expect(await readFile(join(asDirectory, 'inside.txt'), 'utf8')).toBe('role-owned');
+
+    const target = join(root, 'target.md');
+    const asLink = join(root, 'as-link');
+    await writeFile(target, 'operator file');
+    await symlink(target, asLink);
+    await expect(applyEntries([{ kind: 'absent', path: asLink }])).rejects.toThrow(ManagedPathError);
+    expect(await readlink(asLink)).toBe(target);
+    expect(await readFile(target, 'utf8')).toBe('operator file');
+    await rm(root, { recursive: true, force: true });
+  });
+});
