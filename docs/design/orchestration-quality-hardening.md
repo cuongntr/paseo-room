@@ -74,6 +74,14 @@ A custom catalog replaces Codex's built-in catalog. The room must preserve its i
 - The existing project-wide one writable Peer limit remains in force and is documented as a conservative local divergence from the reference model. Worktree-enabled concurrency is deferred to a separate owner decision.
 - The room Peer profile's model and thinking values are defaults. Lead may vary them only when repository protocol explicitly supplies a task-risk policy; provider, mode, workspace, parent, and feature constraints remain eligibility evidence. No claim is made that a particular thinking tier itself enables delegation.
 
+#### D5.1 — Subsequent contract refinement (2026-09-18, supersedes the last D5 bullet)
+
+The combined model/effort default above was later split asymmetrically, and the Peer brief gained an explicit disposition mandate. The rest of D5 stands as decided.
+
+- The model stays the exact current Peer profile default unless the root `WORKSPACE_PROTOCOL.md` explicitly supplies model routing. Thinking effort is Lead's per-brief choice on task risk, uncertainty, context size/complexity, and verification burden: the lowest effort that can reliably answer the task, raised for architecture-sensitive, high-consequence, or weakly observable work, and restricted to an option the live Paseo/provider context establishes as supported so no identifier is invented. Disposition is one signal and never a fixed tier per disposition. Tiers advertising automatic delegation remain excluded, material-cost decisions remain Human's, and the eligibility evidence above is unchanged.
+- Every Peer brief names exactly one disposition — Engineer, Architect, Reviewer, or Scout — with its mode and return contract. One Peer profile remains; the disposition is an assignment mandate, not seat identity. Reviewer returns approval evidence or findings and never a technical acceptance.
+- Package behavior is unchanged: `thinkingOptionId` is still seeded once and profile configuration stays operator-owned. This governs Lead's per-created-Peer launch configuration only.
+
 ### D6 — Runtime-owned Claude state is inspected narrowly
 
 Claude `.claude.json` remains seed-once and runtime-owned. Setup/verify may parse only the `mcpServers` object and compare server names for diagnostics and Paseo-conflict detection; it does not synchronize, replace, or inspect authentication/history fields. New operator MCP names missing from a role produce a warning after the conflict check, not mutation.
@@ -150,3 +158,4 @@ No open question blocks the bounded implementation selected above.
 | Date | Author | Change |
 |---|---|---|
 | 2026-09-18 | Bytes | Created and activated after repository review, independent Oracle challenge, vendor-source spikes, and design-ready self-review. |
+| 2026-09-18 | Bytes | Added D5.1: explicit Peer disposition mandate in the brief, and asymmetric model-vs-thinking-effort policy superseding the last D5 bullet. |

@@ -49,6 +49,13 @@ That design is in git history before the `v2` rewrite. Do not reintroduce it.
   of that rule, and it must stay a single call site. Peer's narrower resource set follows from
   the same principle and lives in `src/agents/resources.ts`; it is capability hygiene, not
   containment, and must never be documented as a sandbox.
+- **Peer reads one brief, not the organisation manual.** Peer receives no workspace protocol
+  sections and is never told to read a repository's `WORKSPACE_PROTOCOL.md`; Lead quotes the
+  constraints that bear on an assignment into the brief. Keep the contract invariant that a
+  repository cannot enlarge or weaken Peer authority, and route conflicts to Lead. What a Peer
+  needs unconditionally lives in a Peer contract section, not in the workspace layer: house-style
+  and no-unrequested-additions restraint in `bounded-outcome.md`, faithful reporting and the
+  unrun-gate bar in `reproducible-handoff.md`.
 - **Own a managed path by shape, and only the shape you write.** A managed file or link may
   replace only an absent path or the same shape, and is renamed in from a temporary sibling.
   Exact directory ownership is declared per entry and must never be extended to role homes or
@@ -109,13 +116,17 @@ in the commit message. `instructionKeys()` in `src/room/instructions.ts` defines
 and role-specific semantic section sequence.
 
 The Markdown files under `prompts/workspace/` are the default *workspace* layer, appended to
-every role document and written out whole as `room/WORKSPACE_PROTOCOL.md`. `protocolKeys()`
-in `src/room/instructions.ts` decides which semantic sections each seat receives.
+the Lead and Supervisor documents and written out whole as `room/WORKSPACE_PROTOCOL.md`.
+`protocolKeys()` in `src/room/instructions.ts` decides which semantic sections each seat
+receives, and Peer receives none of them: Lead quotes what bears on an assignment into the
+brief instead. Adding a workspace section therefore adds nothing to Peer's document, and
+anything Peer must know belongs in a contract section or in the brief.
 
 Every workspace statement must be workflow and must be new. Authority belongs in the
 contract sections: restating it in the workspace layer teaches the seat nothing and blurs the
 boundary the two layers depend on. Anything true of only one project belongs in that
-project's own `docs/WORKSPACE_PROTOCOL.md`, which wins over the default wherever it speaks.
+project's own root `WORKSPACE_PROTOCOL.md`, which wins over the default wherever it speaks.
+The room never writes that file: only `~/.paseo-room` is written.
 
 ## Before committing
 

@@ -31,9 +31,9 @@
 4. **Role contract được cộng thêm, không thay base prompt.** Contract đi qua `developer_instructions`, `CLAUDE.md` hoặc `--append-system-prompt`; `model_instructions_file` không bị động tới. (Ngoại lệ ngầm: xem mục C3.)
 5. **Tách đúng ba lớp instruction.**
    - Contract nằm trong `prompts/contract/`.
-   - Workspace protocol mặc định (WP) áp dụng theo từng điểm: `docs/WORKSPACE_PROTOCOL.md` của repo thắng ở điểm nào nó có nói tới.
+   - Workspace protocol mặc định (WP) áp dụng theo từng điểm: `WORKSPACE_PROTOCOL.md` ở gốc repo thắng ở điểm nào nó có nói tới.
    - Brief là việc của Lead.
-   - Peer không nhận phần Topology, nhất quán với luật No Orchestration.
+   - Peer không nhận lớp workspace (kể cả Topology), nhất quán với luật No Orchestration; Lead trích các ràng buộc liên quan vào brief.
 6. **Contract kiểm chứng được.**
    - Markdown là nguồn duy nhất; loader kiểm tra cấu trúc heading.
    - Test khẳng định thứ tự section, output giống hệt từng byte giữa các lần render, và file khớp một-một với manifest.

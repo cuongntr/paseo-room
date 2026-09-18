@@ -4,13 +4,11 @@ import { instructionKeys, protocolKeys, renderInstructions } from '../src/room/i
 import { PROMPT_ASSETS, loadPromptAsset } from '../src/room/prompts.js';
 import { ROLES } from '../src/roles.js';
 
-const SHARED_HEADINGS = [
-  'Human Authority',
-  'Workspace Protocol Precedence',
-  'Evidence and Event-Driven Waiting',
-  'Scope and Unrelated Work',
-] as const;
+const SHARED_HEADINGS = ['Human Authority', 'Evidence and Event-Driven Waiting', 'Scope and Unrelated Work'] as const;
+const PROTOCOL_PRECEDENCE_HEADING = 'Workspace Protocol Precedence';
 const PROTOCOL_HEADINGS = ['Topology', 'Verification', 'Review', 'Repository Conventions'] as const;
+const WORKSPACE_PROTOCOL_PATH = 'WORKSPACE_PROTOCOL.md';
+const WORKSPACE_PREFACE_MARKER = '# Workspace protocol';
 
 function headings(document: string): string[] {
   return [...document.matchAll(/^## (.+)$/gm)].map(match => match[1] ?? '');
@@ -26,7 +24,10 @@ describe('role instructions', () => {
 
   it('renders the exact semantic heading sequence for every document', () => {
     expect(headings(renderInstructions('supervisor'))).toEqual([
-      ...SHARED_HEADINGS,
+      'Human Authority',
+      PROTOCOL_PRECEDENCE_HEADING,
+      'Evidence and Event-Driven Waiting',
+      'Scope and Unrelated Work',
       'Directive Integrity',
       'Technical Non-Interference',
       'Lead Discovery and Recovery',
@@ -35,7 +36,10 @@ describe('role instructions', () => {
       ...PROTOCOL_HEADINGS,
     ]);
     expect(headings(renderInstructions('lead'))).toEqual([
-      ...SHARED_HEADINGS,
+      'Human Authority',
+      PROTOCOL_PRECEDENCE_HEADING,
+      'Evidence and Event-Driven Waiting',
+      'Scope and Unrelated Work',
       'Project Technical Ownership',
       'Moving Write Ownership',
       'Complete Peer Brief',
@@ -50,11 +54,10 @@ describe('role instructions', () => {
       'Challenge Signals',
       'Bounded Outcome',
       'Independent Judgment',
-      'Writing and Review Scope',
+      'Assignment Scope',
       'No Orchestration',
       'Reproducible Handoff',
       'No Self-Acceptance',
-      ...PROTOCOL_HEADINGS.slice(1),
     ]);
     expect(headings(renderInstructions('workspace'))).toEqual(PROTOCOL_HEADINGS);
   });
@@ -118,8 +121,10 @@ describe('role instructions', () => {
     expect(lead).toContain('read list_profiles and select the exact current room Peer profile');
     expect(lead).toContain('materialize its launch configuration field by field');
     expect(lead).toContain('copy provider, modeId and featureValues exactly');
-    expect(lead).toContain('use model and thinkingOptionId as the defaults governed below');
-    expect(lead).toContain('omit absent fields');
+    expect(lead).toContain("use the profile's model as the model default and its");
+    expect(lead).toContain('thinkingOptionId as the effort default');
+    expect(lead).toContain('apply the policy below only when it establishes a');
+    expect(lead).toContain('supported alternative, and omit every field left absent');
     expect(lead).toContain('daemon-added paseo.parent-agent-id matching this Lead');
     expect(lead).toContain('A cwd, title or provider label is not room membership');
     expect(lead).toContain('proves profile-equivalent configuration, not literal profile-click provenance');
@@ -190,15 +195,54 @@ describe('role instructions', () => {
     expect(lead).toContain('concurrent writable Peers in isolated worktrees are not available here');
   });
 
-  // Eligibility evidence and tuning are different claims: copying a profile exactly must not
-  // read as forbidding the task-risk policy the workspace protocol owns.
-  it('keeps Peer eligibility exact while model and thinking stay protocol-governed defaults', () => {
+  // One Peer profile stays, so the disposition has to arrive as an explicit mandate in the
+  // brief; an implied one silently drops the mode and the return contract with it.
+  it('requires one explicit Peer disposition and maps all four mandates', () => {
+    const lead = renderInstructions('lead');
+    expect(lead).toContain('Every brief names exactly one disposition');
+    expect(lead).toContain('Engineer, Architect, Reviewer or Scout');
+    expect(lead).toContain('from the question or outcome at hand rather than from job-title prestige');
+    expect(lead).toContain('alongside the mode and every field above');
+    expect(lead).toContain('Engineer is writable: implement one bounded');
+    expect(lead).toContain('outcome and return a stable candidate, its verification and the residual risk');
+    expect(lead).toContain('read-only: answer an ownership, lifecycle or design question and return the alternatives,');
+    expect(lead).toContain('the strongest counterargument and the conditions that reverse the choice');
+    expect(lead).toContain('read-only: falsify an exact stable candidate against named risks');
+    expect(lead).toContain('Scout is read-only: establish what is true in a named unfamiliar area before');
+    expect(lead).toContain('and return the evidence, the remaining unknowns and the confidence level');
+    expect(lead).toContain('A disposition is the mandate of one assignment, not a seat identity or a second profile');
+  });
+
+  // Reviewer produces the evidence for acceptance and never the acceptance: technical
+  // acceptance stays with Lead, so a read-only falsification brief must not read as a verdict.
+  it('keeps Reviewer short of technical acceptance', () => {
+    const lead = renderInstructions('lead');
+    expect(lead).toContain(
+      'supports the candidate or findings that block it; Lead alone decides technical acceptance.',
+    );
+  });
+
+  // Eligibility evidence and tuning are different claims, and the two tuning knobs are not
+  // symmetric: the model follows the profile unless routed, while effort is Lead's per-brief call.
+  it('keeps Peer eligibility exact while restricting model more than thinking effort', () => {
     const lead = renderInstructions('lead');
     expect(lead).toContain('Provider, mode, workspace, parent and feature values are eligibility evidence');
-    expect(lead).toContain("The profile's model and thinking values are defaults for the seat");
-    expect(lead).toContain('only where the workspace protocol explicitly supplies a task-risk model and effort policy');
-    expect(lead).toContain('Never select a thinking tier that advertises automatic task delegation');
-    expect(lead).toContain('no thinking tier grants Peer delegation');
+    expect(lead).toContain('Model and thinking effort are task-level choices, and the model is the more');
+    expect(lead).toContain('restricted of the two. The model stays the exact current Peer profile default unless the');
+    expect(lead).toContain('root workspace protocol explicitly supplies model routing');
+    expect(lead).toContain('Thinking effort is Lead\'s choice');
+    expect(lead).toContain('per brief, weighed on the task\'s risk, the uncertainty in it, the size and complexity of');
+    expect(lead).toContain('the context it carries and the verification burden it leaves behind');
+    expect(lead).toContain('signal among those and never a fixed tier per disposition');
+    expect(lead).toContain('Use the lowest effort that can');
+    expect(lead).toContain('reliably answer the task, and raise it for architecture-sensitive, high-consequence or');
+    expect(lead).toContain('Choose only an option the live Paseo and provider context');
+    expect(lead).toContain('establishes as supported; where the available choices cannot be established, keep the');
+    expect(lead).toContain('profile default and never invent an identifier');
+    expect(lead).toContain('Never select a thinking tier that');
+    expect(lead).toContain(
+      'advertises automatic task delegation; no thinking tier grants Peer delegation. A decision with material cost belongs to Human',
+    );
   });
 
   it('gives Lead acceptance authority and Supervisor routing only', () => {
@@ -216,11 +260,98 @@ describe('role instructions', () => {
   });
 
   // No Orchestration forbids Peer to infer room topology; handing it the topology
-  // rules would contradict that in the same document.
-  it('keeps topology out of the Peer document', () => {
-    expect(renderInstructions('peer')).not.toContain('## Topology');
-    expect(renderInstructions('lead')).toContain('## Topology');
-    expect(renderInstructions('supervisor')).toContain('## Topology');
+  // rules would contradict that in the same document. The rest of the workspace layer is
+  // withheld for the same reason the model gives: Lead quotes what bears on the brief.
+  it('keeps the whole workspace layer out of the Peer document', () => {
+    const peer = renderInstructions('peer');
+    expect(protocolKeys('peer')).toEqual([]);
+    expect(peer).not.toContain(WORKSPACE_PREFACE_MARKER);
+    for (const heading of PROTOCOL_HEADINGS) expect(peer).not.toContain(`## ${heading}`);
+    expect(peer).not.toContain(`## ${PROTOCOL_PRECEDENCE_HEADING}`);
+    for (const role of ['lead', 'supervisor'] as const) {
+      const document = renderInstructions(role);
+      expect(document).toContain(WORKSPACE_PREFACE_MARKER);
+      for (const heading of PROTOCOL_HEADINGS) expect(document).toContain(`## ${heading}`);
+    }
+  });
+
+  // Peer keeps the invariant without the file: a repository cannot enlarge its authority,
+  // and a conflict is Lead's to resolve rather than Peer's to choose between.
+  it('gives Peer the precedence invariant without the repository protocol path', () => {
+    const peer = renderInstructions('peer');
+    expect(peer).not.toContain(WORKSPACE_PROTOCOL_PATH);
+    expect(peer).toContain('Repository instructions describe how work is done here');
+    expect(peer).toContain('cannot enlarge or weaken the authority this contract gives Peer');
+    expect(peer).toContain('report the conflict to Lead instead of choosing between them');
+  });
+
+  // The brief is the only channel that reaches Peer, so what the repository requires has to
+  // arrive quoted inside it — including the command that produces the acceptance evidence.
+  it('makes Lead quote repository constraints into the brief instead of broadcasting them', () => {
+    const lead = renderInstructions('lead');
+    expect(lead).toContain('what is excluded from the assignment');
+    expect(lead).toContain('the handoff Lead expects back');
+    expect(lead).toContain('Name the exclusions rather than leaving them implied');
+    expect(lead).toContain('Peer does not read the repository workspace protocol');
+    // The quoting duty must reach the room default too, not only a repository's own file.
+    expect(lead).toContain('Where the workspace protocol in force — the room default or the repository\'s own —');
+    expect(lead).toContain('quote the constraint into the brief as a brief term');
+    expect(lead).toContain('including the exact verification command Peer is to run');
+    expect(lead).toContain('This is the reader\'s own layer, not a document to broadcast');
+    // Lead and Supervisor now carry every workspace section, so the precedence section must
+    // not still promise a role-filtered excerpt.
+    expect(lead).toContain('reproduced in full at the end of this document');
+    expect(lead).not.toContain('the part of it that bears on this role');
+  });
+
+  // One thin Peer profile has to carry Engineer, Architect, Reviewer and Scout briefs, so
+  // scope and handoff speak about writable versus read-only rather than about a job title.
+  it('supports writable and read-only Peer dispositions from one profile', () => {
+    const peer = renderInstructions('peer');
+    expect(peer).toContain('A brief is either writable or read-only');
+    expect(peer).toContain('A writable assignment owns only its assigned moving write scope');
+    expect(peer).toContain('A read-only assignment changes no project file and no candidate');
+    expect(peer).toContain('an exact candidate or snapshot when the question is whether that candidate holds');
+    expect(peer).toContain('a named question, area or unfamiliar territory');
+    expect(peer).toContain('widening the target is a new brief for Lead to decide');
+    expect(peer).toContain('A read-only assignment hands back the same kind of evidence');
+    expect(peer).toContain('the exact commit or snapshot inspected');
+    expect(peer).toContain('State alternatives considered and the conditions that would reverse a conclusion');
+    expect(peer).toContain('repeat the inspection without asking a follow-up question');
+  });
+
+  // Peer no longer carries the workspace Verification or Repository Conventions sections, so
+  // faithful reporting, the unrun-gate bar and executor restraint live in its own contract.
+  it('keeps faithful verification reporting in the Peer contract itself', () => {
+    const peer = renderInstructions('peer');
+    expect(peer).toContain('Report what verification produced as it came back, failures included');
+    expect(peer).toContain('never present part of a gate as the whole of it');
+    expect(peer).toContain('A candidate whose named verification was not run is not a candidate');
+    expect(peer).toContain('hand it back as unrun rather than as done');
+  });
+
+  it('keeps house-style and unrequested-addition restraint in the Peer contract', () => {
+    const peer = renderInstructions('peer');
+    expect(peer).toContain('Work the way the files in scope already work');
+    expect(peer).toContain('add no top-level file, directory, dependency or tooling the brief did not ask for');
+    expect(peer).toContain('Raise DEPENDENCY_REQUEST when the outcome appears to need one');
+  });
+
+  it('bounds BLOCKED to in-scope progress and states the tool boundary without config detail', () => {
+    const peer = renderInstructions('peer');
+    expect(peer).toContain('BLOCKED reports that no safe in-scope progress is possible');
+    expect(peer).toContain('Peer receives no Paseo room tools');
+    expect(peer).not.toContain('enabled is false');
+    expect(renderInstructions('lead')).toContain('no safe in-scope progress is possible');
+  });
+
+  // A direct-writing Lead is the topology the protocol recommends for small work, so the
+  // gate cannot be written as something only a briefed Peer ever runs.
+  it('lets a direct-writing Lead run the gate and keeps review conditional', () => {
+    const lead = renderInstructions('lead');
+    expect(lead).toContain('Whoever performs the work runs it: Lead when Lead writes the change itself');
+    expect(lead).toContain('otherwise the Peer whose brief names the exact command');
+    expect(lead).toContain('When independent review is required, it runs in a fresh session');
   });
 
   it('writes the whole protocol to the room copy, without the role contract', () => {
@@ -229,18 +360,24 @@ describe('role instructions', () => {
     expect(workspace).not.toContain('## Human Authority');
   });
 
-  // The default is worthless if a repository cannot displace it point by point.
+  // The default is worthless if a repository cannot displace it point by point. The preface
+  // is a head asset, so its hard line breaks survive rendering: compare on collapsed space.
   it('states that a repository rule wins where it speaks', () => {
-    for (const document of [...ROLES.map(renderInstructions), renderInstructions('workspace')]) {
-      expect(document).toContain('wherever it speaks to a point');
+    const documents = [renderInstructions('supervisor'), renderInstructions('lead'), renderInstructions('workspace')];
+    for (const document of documents) {
+      expect(document.replace(/\s+/g, ' ')).toContain('wherever it speaks to a point');
     }
   });
 
-  // A default nobody can override, or an override path nobody is told, is useless.
-  it('tells every seat the path that replaces the default', () => {
-    const path = 'docs/WORKSPACE_PROTOCOL.md';
-    expect(renderInstructions('workspace')).toContain(path);
-    for (const role of ROLES) expect(renderInstructions(role)).toContain(path);
+  // A default nobody can override, or an override path nobody is told, is useless. The path
+  // is the repository root because it is agent guidance, not project documentation.
+  it('tells every protocol-reading seat the root path that replaces the default', () => {
+    expect(renderInstructions('workspace')).toContain('`WORKSPACE_PROTOCOL.md` at its root');
+    expect(renderInstructions('supervisor')).toContain('WORKSPACE_PROTOCOL.md at its root');
+    expect(renderInstructions('lead')).toContain('WORKSPACE_PROTOCOL.md at its root');
+    for (const document of [...ROLES.map(renderInstructions), renderInstructions('workspace')]) {
+      expect(document).not.toContain('docs/WORKSPACE_PROTOCOL.md');
+    }
   });
 
   it('renders repeatedly with byte-identical output and no retired heading patterns', () => {
@@ -287,13 +424,16 @@ describe('prompt assets', () => {
       '## Verification\n- The repository\'s own gate is the evidence.',
     );
     expect(loadPromptAsset('documents', 'workspace')).toContain(
-      'different rules\nprovides `docs/WORKSPACE_PROTOCOL.md`',
+      'different rules\nprovides `WORKSPACE_PROTOCOL.md` at its root',
+    );
+    expect(loadPromptAsset('documents', 'workspace')).toContain(
+      'Quote what bears on a brief into the brief\nrather than handing this layer to a Peer.',
     );
     expect(loadPromptAsset('pi', 'communicationStyle')).toContain(
       'Prefer plain language\nand minimal formatting.',
     );
     expect(loadPromptAsset('pi', 'runtime')).toContain(
-      'through Pi, shell\ncommands, or extensions.',
+      'extension-provided mechanisms other than the Paseo room tools\nare not lifecycle channels here.',
     );
   });
 });

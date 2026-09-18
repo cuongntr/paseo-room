@@ -22,7 +22,7 @@ This design owns Phase 1 of the accepted PRD:
 This design does not own:
 
 - any wording, statement-order, authority, role-distribution, provider/profile, credential, or carrier change;
-- `ROLE_NOTES`, general operator-facing CLI/authentication/diagnostic prose, or project-specific `docs/WORKSPACE_PROTOCOL.md` files; the only CLI diagnostic change is the actionable prompt-asset failure required by REQ-005;
+- `ROLE_NOTES`, general operator-facing CLI/authentication/diagnostic prose, or project-specific root `WORKSPACE_PROTOCOL.md` files; the only CLI diagnostic change is the actionable prompt-asset failure required by REQ-005;
 - a public prompt-rendering API or a new CLI command;
 - Paseo plugin feasibility or implementation; or
 - Phase 2 through Phase 4 of the PRD.
@@ -74,6 +74,8 @@ This invariant depends on the current single root-level tsup entry with `splitti
 ### 2.2 Prompt asset layout and granularity
 
 Each independently distributed semantic section is one Markdown file. This is the smallest granularity that preserves the existing composition rules: shared sections go to all seats, Challenge Signals goes to both Lead and Peer at different positions, and Peer omits Workspace Topology.
+
+The layout and distribution below record the state at this migration. Both have since changed — see the note under the traceability table in §7 — and `src/room/instructions.ts` with `src/room/prompts.ts` are current.
 
 ```text
 src/room/prompts/
@@ -332,6 +334,12 @@ This table is the sole retained use of the retired numeric identifiers. Every ex
 | WP-02 | `verification` | Verification | All roles and workspace copy |
 | WP-03 | `review` | Review | All roles and workspace copy |
 | WP-04 | `repositoryConventions` | Repository Conventions | All roles and workspace copy |
+
+The table records the state at this package's migration. Distribution, one key and two
+directory names have since changed: the workspace layer and Workspace Protocol Precedence
+now reach Supervisor and Lead only, `writingAndReviewScope` became `assignmentScope`, and
+the shared contract directory split into `shared/` and `shared-supervisor-lead/`.
+`src/room/instructions.ts` and `src/room/prompts.ts` are current.
 
 The non-numbered inventory also migrates one-to-one:
 

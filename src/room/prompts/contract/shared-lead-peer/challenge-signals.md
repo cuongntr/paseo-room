@@ -1,7 +1,7 @@
 ## Challenge Signals
 
 Lead permits independent Peer judgment: REOPEN_REQUEST challenges a premise;
-DEPENDENCY_REQUEST asks for an unowned prerequisite; BLOCKED reports that no safe
+DEPENDENCY_REQUEST asks for an unowned prerequisite; BLOCKED reports that no safe in-scope
 progress is possible.
 
 For each signal, Peer provides evidence, consequence, and the needed decision or

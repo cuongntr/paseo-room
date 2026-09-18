@@ -8,12 +8,29 @@ import {
 
 export type InstructionKind = Role | 'workspace';
 
-const SHARED_KEYS = [
+// Every role carries the same authority contract; Workspace Protocol Precedence is not part
+// of it. That layer reaches only the seats that read a repository's protocol: the model gives
+// it to Lead, and to Supervisor when auditing, while Peer receives the constraints that bear
+// on its brief quoted into the brief. Telling Peer about the file is the broadcast the model
+// exists to avoid.
+const AUTHORITY_KEYS = [
+  'humanAuthority',
+  'evidenceAndEventWaiting',
+  'scopeAndUnrelatedWork',
+] as const satisfies readonly ContractKey[];
+
+const PROTOCOL_READER_KEYS = [
   'humanAuthority',
   'workspaceProtocolPrecedence',
   'evidenceAndEventWaiting',
   'scopeAndUnrelatedWork',
 ] as const satisfies readonly ContractKey[];
+
+const SHARED_KEYS = {
+  supervisor: PROTOCOL_READER_KEYS,
+  lead: PROTOCOL_READER_KEYS,
+  peer: AUTHORITY_KEYS,
+} as const satisfies Record<Role, readonly ContractKey[]>;
 
 const ROLE_KEYS = {
   supervisor: [
@@ -37,7 +54,7 @@ const ROLE_KEYS = {
     'challengeSignals',
     'boundedOutcome',
     'independentJudgment',
-    'writingAndReviewScope',
+    'assignmentScope',
     'noOrchestration',
     'reproducibleHandoff',
     'noSelfAcceptance',
@@ -51,17 +68,18 @@ const ALL_PROTOCOL_KEYS = [
   'repositoryConventions',
 ] as const satisfies readonly WorkspaceKey[];
 
-// Topology is Lead's decision and Supervisor's to audit. No Orchestration forbids Peer to
-// infer room topology, so handing Peer the topology rules would contradict its own contract.
+// The workspace layer belongs to the seats that own workflow: Lead decides it and
+// Supervisor audits it. Peer receives none of it, so its attention stays on one brief and
+// the brief remains the only channel for repository-local constraints.
 const PROTOCOL_KEYS = {
   supervisor: ALL_PROTOCOL_KEYS,
   lead: ALL_PROTOCOL_KEYS,
-  peer: ['verification', 'review', 'repositoryConventions'],
+  peer: [],
 } as const satisfies Record<Role, readonly WorkspaceKey[]>;
 
 export function instructionKeys(role: Role): readonly ContractKey[] {
   // Every role carries the shared authority contract plus its own obligations.
-  return [...SHARED_KEYS, ...ROLE_KEYS[role]];
+  return [...SHARED_KEYS[role], ...ROLE_KEYS[role]];
 }
 
 export function protocolKeys(role: Role): readonly WorkspaceKey[] {
@@ -69,6 +87,8 @@ export function protocolKeys(role: Role): readonly WorkspaceKey[] {
 }
 
 function protocol(keys: readonly WorkspaceKey[]): string[] {
+  // A preface introducing sections that follow is noise when none of them do.
+  if (keys.length === 0) return [];
   return [
     loadPromptAsset('documents', 'workspace'),
     ...keys.map(key => loadPromptAsset('workspace', key)),

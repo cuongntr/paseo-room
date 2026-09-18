@@ -9,7 +9,7 @@ export const PROMPT_ASSETS = {
   },
   contract: {
     humanAuthority: { path: 'contract/shared/human-authority.md', kind: 'section' },
-    workspaceProtocolPrecedence: { path: 'contract/shared/workspace-protocol-precedence.md', kind: 'section' },
+    workspaceProtocolPrecedence: { path: 'contract/shared-supervisor-lead/workspace-protocol-precedence.md', kind: 'section' },
     evidenceAndEventWaiting: { path: 'contract/shared/evidence-and-event-waiting.md', kind: 'section' },
     scopeAndUnrelatedWork: { path: 'contract/shared/scope-and-unrelated-work.md', kind: 'section' },
     directiveIntegrity: { path: 'contract/supervisor/directive-integrity.md', kind: 'section' },
@@ -26,7 +26,7 @@ export const PROMPT_ASSETS = {
     peerSeatLifecycle: { path: 'contract/lead/peer-seat-lifecycle.md', kind: 'section' },
     boundedOutcome: { path: 'contract/peer/bounded-outcome.md', kind: 'section' },
     independentJudgment: { path: 'contract/peer/independent-judgment.md', kind: 'section' },
-    writingAndReviewScope: { path: 'contract/peer/writing-and-review-scope.md', kind: 'section' },
+    assignmentScope: { path: 'contract/peer/assignment-scope.md', kind: 'section' },
     noOrchestration: { path: 'contract/peer/no-orchestration.md', kind: 'section' },
     reproducibleHandoff: { path: 'contract/peer/reproducible-handoff.md', kind: 'section' },
     noSelfAcceptance: { path: 'contract/peer/no-self-acceptance.md', kind: 'section' },

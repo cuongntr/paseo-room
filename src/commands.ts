@@ -68,7 +68,7 @@ interface Desired {
   readonly pluginPath?: string;
 }
 async function buildDesired(layout: Layout, agents: readonly AgentId[], roles: readonly Role[]): Promise<Desired> {
-  // Template, not linked into any seat: each repo owns its own docs/WORKSPACE_PROTOCOL.md.
+  // Template, not linked into any seat: each repo owns its own root WORKSPACE_PROTOCOL.md.
   // Named exactly as Workspace Protocol Precedence names it, so a copy needs no rename.
   const entries: Entry[] = [
     { kind: 'dir', path: layout.roomHome },

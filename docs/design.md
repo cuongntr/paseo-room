@@ -111,23 +111,35 @@ canonical Markdown under `src/room/prompts/contract/`, delivered as
 second prose source.
 
 It also ships a **default** for the second layer under `src/room/prompts/workspace/`,
-appended to every role document. The layer is therefore never simply absent: a repository
-that says nothing still gets rules for topology, verification, review and conventions. A
-repository that needs different ones writes `docs/WORKSPACE_PROTOCOL.md`, and **Workspace
-Protocol Precedence** gives that file precedence point by point — it wins wherever it
-speaks, the default holds wherever it is silent. Whole-file replacement was considered and
-rejected: it would mean a repository that states one rule loses every other rule, which is
-worse than the gap this default was added to close.
+appended to the Lead and Supervisor documents. The layer is therefore never simply absent: a
+repository that says nothing still gets rules for topology, verification, review and
+conventions. A repository that needs different ones writes `WORKSPACE_PROTOCOL.md` at its
+root, and **Workspace Protocol Precedence** gives that file precedence point by point — it
+wins wherever it speaks, the default holds wherever it is silent. Whole-file replacement was
+considered and rejected: it would mean a repository that states one rule loses every other
+rule, which is worse than the gap this default was added to close. The path is the repository
+root rather than `docs/` because the file is agent guidance, not project documentation.
 
-Each seat gets the part of the protocol that bears on its own work. Topology goes to Lead
-and Supervisor only, because **No Orchestration** forbids Peer to infer room topology and a
+The workspace layer reaches Lead and Supervisor and stops there, which is what
+[orchestration-model.md](orchestration-model.md) §3 asks for: Lead reads the protocol,
+Supervisor reads it when auditing, and Lead quotes the constraints that bear on an assignment
+into the brief instead of handing an implementer the whole file. Peer therefore receives no
+workspace sections and no workspace preface at all — **Complete Peer Brief** carries the
+quoting obligation, including naming the exact verification command, and Peer's own contract
+keeps what the withdrawn sections were carrying for it: **Bounded Outcome** states that
+repository instructions cannot enlarge or weaken its authority, that a conflict goes to Lead,
+and that an implementer matches the house style in scope and adds no unrequested top-level
+file, dependency or tooling; **Reproducible Handoff** keeps faithful reporting and the bar
+that an unrun gate is not a candidate. Withholding topology in particular is also a
+coherence requirement, since **No Orchestration** forbids Peer to infer room topology and a
 document that both forbids and teaches it is incoherent.
 
 `room/WORKSPACE_PROTOCOL.md` is that default written out as one file: not linked into any
-seat, since the seats already carry the text, but readable by the operator and usable as a
-starting point. It carries the name used by **Workspace Protocol Precedence**, so a copy
-needs no rename. Nothing is ever written into `AGENTS.md`, and task briefs are Lead's job
-at dispatch time rather than this tool's concern.
+seat, since the seats that read it already carry the text, but readable by the operator and
+usable as a starting point. It carries the name used by **Workspace Protocol Precedence**, so
+a copy into a repository root needs no rename. Nothing is ever written into a repository,
+`AGENTS.md` included, and task briefs are Lead's job at dispatch time rather than this tool's
+concern.
 
 ## 4. Why a separate home per seat
 
@@ -477,11 +489,14 @@ review is routed to that Lead, which opens a fresh read-only Peer under **Indepe
 Review**; freshness never creates a second Lead or gives Supervisor a channel to Peer.
 
 **Peer Seat Lifecycle** applies the same live-config rule to a Lead-created Peer: Lead reads
-the exact current room Peer profile, copies provider, mode and feature values exactly, uses
-model and thinking as the task-policy-governed defaults described in §7, and requires the live
+the exact current room Peer profile, copies provider, mode and feature values exactly, keeps
+the profile's model unless the root workspace protocol routes models and chooses the thinking
+effort per brief as described in §7, and requires the live
 seat's daemon-added `paseo.parent-agent-id` to equal the current Lead. A wrong provider,
 workspace, mode or parent is not eligible for a brief. The Peer remains one fresh session for
-one brief and has no room tools or orchestration path.
+one brief and has no room tools or orchestration path. The brief also names exactly one
+disposition — Engineer, Architect, Reviewer or Scout — which is an assignment mandate, not a
+second profile or a seat identity.
 
 Paseo currently does not retain `profileId` on an agent session; compact `list_agents`
 results also omit `workspaceId` and `currentModeId`, which is why status inspection is a
@@ -600,10 +615,15 @@ silently claiming the stronger guarantee.
 - **No per-seat model or task routing.** Model tier belongs to task risk, and that is a
   Workspace Protocol and Lead decision, not a room decision. The room preserves whatever
   model and reasoning effort you configured. **Peer Seat Lifecycle** says the same thing to
-  Lead: provider, mode, workspace, parent and feature values are copied exactly as
-  eligibility evidence, while the profile's model and thinking are seat defaults Lead may
-  vary only under an explicit repository task-risk policy — and never up to a tier
-  advertising automatic delegation. This is about *task* routing, and it is not a claim of
+  Lead, and splits the two knobs asymmetrically: provider, mode, workspace, parent and feature
+  values are copied exactly as eligibility evidence; the profile's model stays the seat default
+  unless the root `WORKSPACE_PROTOCOL.md` explicitly supplies model routing; and the thinking
+  effort is Lead's per-brief choice on task risk, uncertainty, context size and verification
+  burden — lowest that reliably answers the task, raised for architecture-sensitive,
+  high-consequence or weakly observable work, restricted to an option the live Paseo and
+  provider context establishes as supported so no identifier is ever invented, and never up to
+  a tier advertising automatic delegation. Disposition informs that judgment and never fixes a
+  tier. This is about *task* routing, and it is not a claim of
   capability parity between seats: which capabilities a seat carries is decided by role (§2b),
   because a seat with no room tools has no use for an orchestration surface.
 - **No rewriting of operator control-plane configuration.** A recognizably Paseo-related MCP
@@ -647,18 +667,18 @@ implementation's role overlays.
 3. It generates once at `setup` instead of on every launch (see §7).
 
 Where the written model and the reference implementation disagree, this tool follows the
-implementation, because it is what actually ran. Three such disagreements are live:
+implementation, because it is what actually ran. One such disagreement is live:
 
-- The document reserves `WORKSPACE_PROTOCOL.md` for Lead and keeps it away from Peer; all
-  three reference overlays tell every seat to read it. The room follows the overlays.
 - The document's sample profiles put Supervisor and Lead in `read-only` sandboxes; every
   real config uses full access, and the Supervisor profile explicitly says to keep seats in
   full-access mode rather than accept a recurring permission ceremony. The room follows the
   real configs.
-- [orchestration-model.md](orchestration-model.md) §3 says the workspace protocol does not
-  belong in the file every agent already reads, because that is a broadcast. The room ships
-  a default in every role document anyway (§3 above). The alternative on offer was not a
-  narrower protocol but no protocol: a repository with no `docs/WORKSPACE_PROTOCOL.md` had
-  none of that layer at all. The broadcast is narrowed rather than accepted whole — each
-  seat receives only the sections that bear on its own work — and Lead can still quote
-  rather than broadcast from a repository's own file.
+
+Two earlier deviations about the workspace protocol are resolved rather than live. The
+reference overlays told every seat to read `WORKSPACE_PROTOCOL.md`, and the room reproduced
+the default in every role document; both broadcast the layer the model reserves for Lead and
+for Supervisor when auditing. The room now follows the document: Peer receives neither the
+protocol path nor any workspace section, and Lead quotes what bears on an assignment into the
+brief (§3). Shipping an in-force default to those two seats is not the broadcast the model
+warns about — the alternative on offer was not a narrower protocol but no protocol at all for
+a repository that has no file of its own.

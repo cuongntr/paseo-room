@@ -88,7 +88,7 @@ starts, its exit code is preserved; a signal is returned using the conventional
 ~/.paseo-room/
   room.json                       # what this CLI created; verify and remove read it
   AUTHENTICATION.md               # exact per-role login commands; contains no secrets
-  room/WORKSPACE_PROTOCOL.md      # the default protocol every seat carries, as one readable file
+  room/WORKSPACE_PROTOCOL.md      # the default protocol Lead and Supervisor carry, as one readable file
   plugin/                         # Claude only: trusted creation-time system-prompt append carrier
     paseo-plugin.json             # accepts Paseo >=0.8.0 <0.9.0
     index.server.ts, server/      # exact provider map + generated role contracts
@@ -348,7 +348,8 @@ Supervisor reads the exact current `room-<agent>-lead` profile from `list_profil
 materializes every field it defines (agent creation takes no profile id), uses `list_agents(cwd)`
 only to find candidates, then inspects each one's full status for the profile's provider, the
 intended workspace and its mode. For `room-<agent>-peer`, Lead copies provider, mode and
-features exactly, treats model and thinking as protocol-governed defaults, and additionally
+features exactly, keeps the profile's model unless the root workspace protocol routes models,
+chooses the thinking effort for the brief, and additionally
 requires the live seat's daemon-added `paseo.parent-agent-id` to name itself. Ownership must be
 corroborated by parentage or known Human-opened history; an ambiguous candidate goes to
 duplicate recovery and Human escalation instead of being adopted.
@@ -449,10 +450,12 @@ The exact model-facing wording every seat reads lives in the canonical Markdown 
   that settles it rather than pre-solving the work; any plan or file list in it is provisional.
   One moving write scope has exactly one owner, and at most one Peer is writable at a time.
   Room tools: on.
-- **Peer** owns one bounded outcome, forms its own technical position from the code and its own
-  verification, may challenge a failed premise with
-  `REOPEN_REQUEST` / `DEPENDENCY_REQUEST` / `BLOCKED`, hands back a reproducible candidate,
-  and never accepts its own difficult change. Room tools: off.
+- **Peer** owns one bounded assignment — writable inside an assigned scope, or read-only
+  against a named candidate, question or area — under exactly one disposition Lead names in the
+  brief (Engineer, Architect, Reviewer or Scout), forms its own technical position from the code
+  and its own verification, may challenge a failed premise with
+  `REOPEN_REQUEST` / `DEPENDENCY_REQUEST` / `BLOCKED`, hands back reproducible evidence either
+  way, and never accepts its own difficult change. Room tools: off.
 
 Human keeps product goals, priority, material cost, external effects and irreversible risk.
 
@@ -473,18 +476,24 @@ Two further limits are deliberately conservative. **One writable Peer per projec
 per moving scope: the room gives you no writer isolation, so separate scopes are not evidence
 of separate working trees, and no workspace protocol relaxes the limit. Concurrent writable
 Peers in isolated worktrees are a deferred decision, not an oversight. And a seat's **model and
-reasoning effort are defaults**: Lead varies them for a brief only where the repository's
-workspace protocol supplies an explicit task-risk policy, and never up to a tier advertising
-automatic delegation. Provider, mode, workspace, parent and feature values are eligibility
-evidence and copied exactly.
+reasoning effort are not one knob**: the model stays the profile's default unless the root
+`WORKSPACE_PROTOCOL.md` explicitly supplies model routing, while the thinking effort is Lead's
+per-brief choice on task risk, uncertainty, context size and verification burden — lowest that
+reliably answers the task, higher for architecture-sensitive or weakly observable work, only an
+option the live Paseo and provider context establishes as supported, and never up to a tier
+advertising automatic delegation. Provider, mode, workspace, parent and feature values are
+eligibility evidence and copied exactly.
 
-Every seat also carries a **default workspace protocol** — topology by difficulty,
-verification, review, repository conventions — so a project has that layer without doing
-anything. Each seat gets the sections that bear on its own work; topology goes to Lead and
-Supervisor, not to Peer. A repository that needs different rules writes
-`docs/WORKSPACE_PROTOCOL.md`, which wins wherever it speaks while the default holds
-wherever it is silent. `~/.paseo-room/room/WORKSPACE_PROTOCOL.md` is the whole default as
-one file, so you can read what is in force and start from it.
+Every seat that owns workflow also carries a **default workspace protocol** — topology by
+difficulty, verification, review, repository conventions — so a project has that layer without
+doing anything. It goes to Lead and Supervisor, not to Peer: Lead reads the protocol and quotes
+what bears on an assignment into the brief, including the exact verification command, so a Peer
+spends its attention on one brief rather than on deciding which repository rules apply. A
+repository that needs different rules writes `WORKSPACE_PROTOCOL.md` at its root, which wins
+wherever it speaks while the default holds wherever it is silent — the root, because it is
+agent guidance rather than project documentation. `~/.paseo-room/room/WORKSPACE_PROTOCOL.md` is
+the whole default as one file, so you can read what is in force and start from it. The CLI
+never writes into a repository.
 
 ## Working the room
 
