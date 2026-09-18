@@ -37,6 +37,22 @@ function protocolHeading(key: WorkspaceKey): string {
 }
 
 describe('paseo-room CLI', () => {
+  it('reports a refused path with its own remedy, not the daemon hint', async () => {
+    const fixture = await makeFixture();
+    const daemon = emptyDaemon();
+    await run(['setup', '--apply'], fixture.env, daemon);
+    // A directory where the room owns a link: reached the filesystem, so the daemon is fine.
+    const alias = join(fixture.roomHome, 'roles/codex/peer/skills/formatting');
+    await rm(alias, { recursive: true, force: true });
+    await mkdir(alias, { recursive: true });
+
+    const refused = await run(['setup', '--apply'], fixture.env, daemon);
+    expect(refused.code).toBe(1);
+    expect(refused.out).toContain('Refusing to remove');
+    expect(refused.out).toContain('move it aside manually');
+    expect(refused.out).not.toContain('Check that Paseo is running');
+  });
+
   it('is a dry run by default and writes nothing', async () => {
     const fixture = await makeFixture();
     const daemon = emptyDaemon();

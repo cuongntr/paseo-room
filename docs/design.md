@@ -97,6 +97,14 @@ owns by name — adding or deleting an operator skill is drift `verify` reports 
 `setup --apply` reconciles, instead of a projection that quietly ages. §4a covers what that
 ownership permits on disk, which is deliberately very little.
 
+One class of name inside that directory is reserved rather than projected: a name the agent's
+own runtime writes there. Claude downloads its skill bucket into `skills/synced` of whichever
+home it runs with, so the room both skips it when projecting — a link would alias the role's
+state onto the operator's — and excludes it from reconciliation, because an exactly owned
+directory would otherwise see the agent's own state as a stale child. The room refuses to
+delete a child directory it did not generate, so before this was reserved a seat that had run
+Claude once made every later `setup --apply` fail on that path.
+
 None of this filters or rewrites your configuration. Skills you keep are linked, `paseo*`
 skills stay in your own home untouched, and a withheld resource is simply absent from one
 role home.
@@ -328,6 +336,11 @@ is the operator skills directory it was going to link anyway — unlinks the ali
 rebuilds the projection. A symlink pointing anywhere else, or an unrecognized real directory
 at that path, fails and asks the operator to move it. The operator's skills are never
 recursively traversed, copied or deleted, including when the migrated link's target no longer exists.
+
+A declared entry may also reserve child names it neither writes nor reconciles, for state the
+agent's own runtime owns inside a projected directory (§2, Claude `skills/synced`). Reserving a
+name is narrower than owning it: the room will not create it, will not replace it, and will not
+count it stale.
 
 Recovery is unchanged: run `setup` again.
 

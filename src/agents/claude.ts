@@ -23,6 +23,12 @@ const SHARED = [
 ] as const;
 /** These carry executable prompts, plugin code, and hook programs: never shared with Peer. */
 const EXECUTABLE = ['plugins', 'commands', 'hooks'] as const;
+/**
+ * Claude's own runtime writes its downloaded skill bucket here, inside whichever home it runs
+ * with. It is agent state rather than an operator-authored skill, so the room leaves the name
+ * alone in both directions: it is never projected and never reconciled as stale.
+ */
+const RUNTIME_SKILLS = ['synced'] as const;
 /** Claude keeps personal MCP declarations under this one key of its runtime state. */
 const MCP_KEY = 'mcpServers';
 const AUTH_ENV = [
@@ -234,7 +240,7 @@ export const claudeAgent: Agent = {
         : { kind: 'file', path: memoryPath, content: memory });
       entries.push({ kind: 'file', path: join(target, 'settings.json'), content: renderRoleSettings(settingsSource, role, target) });
       entries.push({ kind: 'file', path: statePath, content: renderRoleState(stateSource), once: true });
-      entries.push(...await roleResourceEntries({ role, target, home, names: SHARED, shared, executable: EXECUTABLE }));
+      entries.push(...await roleResourceEntries({ role, target, home, names: SHARED, shared, executable: EXECUTABLE, reservedSkills: RUNTIME_SKILLS }));
       credentials.push(await claudeCredentialDiagnostic(layout, role, settingsSource, process.platform, binary));
       providerEnv[role] = { [SECURE_STORAGE_ENV]: target };
     }

@@ -28,6 +28,12 @@ export interface ManagedDirEntry {
   readonly children: readonly string[];
   /** The single legacy shape this path may be migrated from: a symlink to this target. */
   readonly legacyLink?: string;
+  /**
+   * Names inside this directory the room neither writes nor reconciles, because the agent's
+   * own runtime owns them. Without this, exact ownership would treat the agent's state as a
+   * stale child and try to delete what it did not generate.
+   */
+  readonly reserved?: readonly string[];
 }
 export type Entry = DirEntry | FileEntry | LinkEntry | ManagedDirEntry | AbsentEntry;
 
@@ -75,7 +81,7 @@ async function lstatOrAbsent(path: string): Promise<Stats | undefined> {
 
 /** Names present under a managed directory that its declaration does not claim. */
 async function staleChildren(entry: ManagedDirEntry): Promise<string[]> {
-  const declared = new Set(entry.children);
+  const declared = new Set([...entry.children, ...entry.reserved ?? []]);
   let names: string[];
   try { names = await readdir(entry.path); } catch (error) {
     if (isMissing(error)) return [];

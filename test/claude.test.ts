@@ -167,6 +167,28 @@ describe('claudeAgent.build resource distribution', () => {
     expect(await readdir(skills)).toEqual(['formatting']);
     expect((await readdir(join(layout.agentHome.claude, 'skills'))).sort()).toEqual(['formatting', 'paseo-handoff']);
   });
+
+  it('never projects or reconciles the runtime skill bucket Claude owns', async () => {
+    const fixture = await makeFixture();
+    await operatorResources(fixture.home);
+    // Claude's own runtime writes `synced` into whichever home it runs with, operator or role.
+    await mkdir(join(fixture.home, '.claude/skills/synced/bucket'), { recursive: true });
+    const layout = resolveLayout({}, fixture.env);
+    await applyEntries((await claudeAgent.build(layout, ['peer'])).entries);
+
+    const skills = join(layout.roomHome, 'roles/claude/peer/skills');
+    // Not aliased: a link here would point the role's runtime state at the operator's.
+    expect(await readdir(skills)).toEqual(['formatting']);
+
+    // Once Claude has written its own bucket in the role home, a rerun must leave it intact
+    // rather than treating it as a stale child of an exactly owned directory.
+    const runtime = join(skills, 'synced');
+    await mkdir(runtime, { recursive: true });
+    await writeFile(join(runtime, 'manifest.json'), '{"skills":[]}');
+    await applyEntries((await claudeAgent.build(layout, ['peer'])).entries);
+    expect(await readFile(join(runtime, 'manifest.json'), 'utf8')).toBe('{"skills":[]}');
+    expect((await readdir(skills)).sort()).toEqual(['formatting', 'synced']);
+  });
 });
 
 describe('claudeAgent.build MCP conflict detection', () => {

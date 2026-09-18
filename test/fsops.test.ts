@@ -280,8 +280,25 @@ describe('exact managed directory', () => {
     expect(await readFile(join(intruder, 'data'), 'utf8')).toBe('do not delete');
   });
 
-  it('refuses a regular file standing where the managed directory belongs', async () => {
+  it('leaves a reserved child alone instead of reconciling it as stale', async () => {
     const root = await makeRoot();
+    const skills = await operatorSkills(root);
+    const path = join(root, 'peer', 'skills');
+    await applyEntries(projection(path, ['alpha'], skills));
+    // The agent's own runtime writes its skill bucket here after setup ran.
+    const runtime = join(path, 'synced');
+    await mkdir(join(runtime, 'bucket'), { recursive: true });
+    await writeFile(join(runtime, 'manifest.json'), '{}');
+
+    const entry: Entry = { kind: 'managed-dir', path, children: ['alpha'], legacyLink: skills, reserved: ['synced'] };
+    // Reserved, so it is neither drift to report nor a child to delete.
+    expect(await planEntries([entry])).toEqual([{ action: 'noop', kind: 'dir', target: path }]);
+    await applyEntries([entry]);
+    expect(await readFile(join(runtime, 'manifest.json'), 'utf8')).toBe('{}');
+    expect((await readdir(path)).sort()).toEqual(['alpha', 'synced']);
+  });
+
+  it('refuses a regular file standing where the managed directory belongs', async () => {    const root = await makeRoot();
     const path = join(root, 'peer-skills');
     await writeFile(path, 'operator file');
 

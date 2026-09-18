@@ -2,6 +2,7 @@ import { Command, CommanderError, InvalidArgumentError } from 'commander';
 import metadata from '../package.json' with { type: 'json' };
 import { loginRole, type LoginSpawner } from './auth.js';
 import { remove, setup, verify, type RunOptions } from './commands.js';
+import { ManagedPathError } from './fsops.js';
 import { renderHuman, renderJson } from './render.js';
 import { exitCode, fail, failed, type Result } from './result.js';
 import { AGENT_IDS, type AgentId } from './roles.js';
@@ -50,6 +51,11 @@ function failedFromThrown(command: string, error: unknown): Result {
       error.message,
       'Reinstall paseo-room, then try again.',
     )]);
+  }
+  // A refused path knows its own remedy, and it is never "check the daemon": the room reached
+  // the filesystem and stopped there deliberately.
+  if (error instanceof ManagedPathError) {
+    return failed(command, [fail(`${command}.managed-path`, error.message, error.fix)]);
   }
   const detail = error instanceof Error ? error.message : 'unknown error';
   return failed(command, [fail(
