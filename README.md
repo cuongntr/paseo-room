@@ -7,7 +7,8 @@ It does three things:
 
 1. Reads your existing Codex / Claude Code / Pi configuration.
 2. Writes one isolated role home per seat under `~/.paseo-room`. Each role owns its mutable
-   credentials; read-only skills, plugins and other supported resources may be symlinked.
+   credentials; read-only skills and other supported resources may be symlinked, and Peer
+   receives a narrower set than Supervisor and Lead.
 3. Registers those role homes with your running Paseo daemon as providers — room tools on for Supervisor and Lead, off for Peer — and adds one agent profile per seat so opening one is a single pick.
 
 Everything it manages lives in `$HOME`, under `~/.paseo-room`. Agent runtimes may later
@@ -67,6 +68,8 @@ starts, its exit code is preserved; a signal is returned using the conventional
   **0.8.0-beta.1 or newer**; any selection containing Pi requires **0.8.0 or newer**.
   `paseo-room` checks this before touching anything, and never installs or upgrades Paseo.
 - An initialised Codex home (`~/.codex/config.toml`) and/or Claude Code home (`~/.claude`).
+  Codex must be new enough for `codex debug models` to print its JSON model catalog: the room
+  seats Codex only if it can generate the scrubbed catalog copy.
   Setup never copies mutable credential stores or runs login. Use supported environment/static
   auth, or log in once in each role after setup. For current Claude runtimes, paseo-room
   pins both `CLAUDE_CONFIG_DIR` and `CLAUDE_SECURESTORAGE_CONFIG_DIR` per role. It does not
@@ -86,28 +89,64 @@ starts, its exit code is preserved; a signal is returned using the conventional
   roles/codex/<role>/
     config.toml                   # your config.toml + the room's overrides
     role-instructions.md          # readable copy of what this seat was told
-    model-catalog.json            # your catalog with native multi-agent metadata removed
+    model-catalog.json            # generated copy of your catalog, native multi-agent metadata removed
     auth.json                       # created and owned by Codex after role login, if file-backed
-    AGENTS.md, skills, plugins, hooks.json              → symlinks into ~/.codex when present
+    AGENTS.md, skills, plugins, hooks.json              → symlinks into ~/.codex when present (Peer: see below)
   roles/claude/<role>/
     CLAUDE.md                     # your global memory + role instructions
     settings.json                 # your settings.json + PASEO_ROOM_ROLE
     .claude.json                  # seeded once from yours, then owned by Claude
     .credentials.json                # created and owned by Claude after role login, if file-backed
     skills, plugins, commands, hooks, rules, output-styles,
-    keybindings.json, themes                          → symlinks into ~/.claude when present
+    keybindings.json, themes                          → symlinks into ~/.claude when present (Peer: see below)
   roles/pi/<role>/
     settings.json                 # your settings minus package/extension declarations
     APPEND_SYSTEM.md              # your append + style/runtime capsules + role instructions
     auth.json                         # created and owned by Pi after role login, if used
     models.json, AGENTS.md, skills, prompts, themes,
-    keybindings.json, mcp.json                        → symlinks into ~/.pi/agent when present
+    keybindings.json, mcp.json                        → symlinks into ~/.pi/agent when present (Peer: see below)
 ```
 
 Each seat gets its own file-backed credential path, sessions, history and projects inside its
 role home. Current supported runtimes therefore do not share mutable file-backed authentication
 or conversation state; older-runtime Claude Keychain isolation remains unverifiable. Credential
 paths are never managed-entry symlinks: setup and update preserve whatever is already there.
+
+A managed file or symlink only ever replaces an absent path or the same shape, and it is
+written to a temporary sibling and renamed into place, so a seat never reads a half-written
+file. Anything else at a managed path — a directory where a file belongs, an unexpected
+symlink — makes setup stop and name the path for you to move aside. Nothing is deleted
+recursively on your behalf.
+
+### What Peer does not receive
+
+Peer has no room tools, so the room also stops handing it orchestration surfaces:
+
+- Resources whose contents execute are not shared with Peer at all — Codex `plugins` and
+  `hooks.json`, Claude `plugins`, `commands` and `hooks`, Pi `prompts`. Supervisor and Lead
+  still get them.
+- Peer's `skills` is not one symlink to your skills directory. It is a room-owned directory
+  of links to each of your skills whose name does not start with `paseo` (any capitalization),
+  so orchestration skills are not advertised to the seat that cannot orchestrate. Adding or
+  removing one of your skills is drift `verify` reports and `setup --apply` reconciles.
+
+Your own skills directory is never modified: `paseo*` skills stay exactly where they are.
+An existing room upgrades its one legacy Peer `skills` symlink to that projection on the next
+`setup --apply`; setup only unlinks the alias, never your skills, and stops with an actionable
+message if that path has become something it does not recognize.
+
+This is capability hygiene, not a sandbox. Peer still has shell access.
+
+### Paseo MCP servers are refused, never rewritten
+
+Paseo is the room's only control plane, so setup and verify read the MCP declarations in your
+Codex `config.toml`, your Claude state, Pi's `mcp.json`, and any already-seeded role
+`.claude.json`, and **fail before applying anything** if a declaration looks Paseo-related.
+Recognition is one bounded rule — `paseo` as a whole identifier or path token, in the server
+name, `command`, `args` or a URL field — and the message quotes the file and the field that
+matched. It is a heuristic, not a scanner: a renamed or obfuscated endpoint passes it. Remove
+or rename the server yourself; `paseo-room` never edits, filters or deletes your MCP
+configuration.
 
 Pi role homes deliberately do not link `extensions`, `npm`, `git`, `trust.json`, runtime
 caches or session state. Their copied `settings.json` removes `packages` and `extensions`,
@@ -176,13 +215,25 @@ For Codex, the generated `config.toml` is a copy of yours with only these keys o
 | `sandbox_mode` | `danger-full-access` | A seat that stops to ask for permission cannot be driven headless. |
 | `approval_policy` | `never` | Same. |
 | `developer_instructions` | the role contract | This is the room's whole instruction payload. |
-| `model_catalog_json` | generated catalog | Strips `multi_agent_version` so the seat is not offered native collaboration. Skipped, with a warning, if your Codex cannot produce a catalog. |
-| `[agents].enabled` | `false` | Paseo owns agent lifecycle. |
+| `model_catalog_json` | generated catalog | Strips `multi_agent_version` so the seat is not offered native collaboration. Setup **fails** if your Codex cannot produce a catalog. |
+| `[agents].enabled` | `false` | Paseo owns agent lifecycle. Top-level only: Codex profiles have no such key. |
 | `features.multi_agent`, `features.multi_agent_v2` | `false` | Same, at the feature-flag level. |
 
-If your config has an active `profile`, the same sandbox and approval overrides are written
-into that profile too, because a profile outranks the top-level keys. Your model, reasoning
-effort, MCP servers, trusted projects and every other key are copied through untouched.
+If your config has an active `profile`, every one of those keys a profile can also carry —
+sandbox, approval, the catalog path and both multi-agent features — is written into that
+profile too, because a profile outranks the top-level keys. Your model, reasoning effort, MCP
+servers, trusted projects and every other key are copied through untouched.
+
+The catalog is a closure, not a nicety, so it fails closed: if `codex debug models` cannot
+run, does not print JSON, or prints JSON that is not a catalog object, no Codex seat is
+planned and the message quotes the exact command it tried. A Codex too old to print that JSON
+catalog cannot be seated.
+
+What lands in each role home is a **generated copy** captured at that setup, and it replaces
+Codex's built-in catalog for that seat. New models from a later Codex release therefore do not
+reach a seat until you run `setup --apply` again. `verify` says so explicitly when a drifted
+file is a `model-catalog.json`, because that seat is missing the closure rather than only
+holding older contract text.
 
 **The room never replaces an agent's base prompt.** Codex's `model_instructions_file`,
 Claude's `--system-prompt` and Pi's `SYSTEM.md` / `--system-prompt` all *replace* the vendor
@@ -191,6 +242,13 @@ vendoring a full copy of that prompt and re-vendoring it on every agent release.
 contract is additive instead: `developer_instructions` for Codex, `CLAUDE.md` for Claude,
 and the generated Pi `APPEND_SYSTEM.md` passed with `--append-system-prompt` for Pi. Pi keeps
 normal project `AGENTS.md` / `CLAUDE.md` context loading.
+
+Claude's carrier is the weakest of the three, and knowingly so. `CLAUDE.md` is user memory,
+which a project-level `CLAUDE.md` can dilute, and Paseo runs Claude through the Claude Agent
+SDK rather than as a plain CLI process — so there is no provider-owned command line to append
+a stronger prompt through, and no CLI flag is proposed here. The real fix is a
+provider-owned SDK append field in Paseo itself. Until that exists, the room keeps the
+contract short and states the limit instead of implying parity with Codex.
 
 Pi providers use a strict command tail:
 
@@ -224,6 +282,11 @@ agent's own configuration:
 | strict argv + `PI_MCP_CONFIG_MODE=exclusive` + additive runtime capsule | Pi | Disables extension discovery and project trust, and restricts adapter config to the role-home `mcp.json`; forbids a second agent control plane without claiming sandboxing. |
 | `paseoTools: {enabled}` | all | Room tools for Supervisor and Lead, never for Peer. |
 
+`verify` compares each provider's `command`, `env`, `paseoTools` and pins against what the
+room would write, and fails if one has been dropped — a pin that can be silently removed is
+not a guarantee. The `env` map is compared whole rather than as a subset, because an added key
+can re-enable exactly what a pin closes. Unrelated top-level provider fields stay yours.
+
 It also saves one **agent profile** per seat, which is what the Paseo picker lists under
 Profiles. A profile is a preset, not a constraint: it decides where a seat *starts*.
 
@@ -242,7 +305,10 @@ Supervisor starts low because it routes rather than reasons. No seat starts on t
 option — Codex's `ultra` and Claude's `ultracode` advertise automatic task delegation, which
 is a second control plane. `setup` restores room-owned identity, appearance and mode fields,
 but leaves your model and reasoning choice alone; profiles you created yourself are never
-touched.
+touched. If you do put a room seat on `ultra` or `ultracode`, setup and verify warn and name
+the seats: the room has not verified whether its closed multi-agent paths actually prevent
+that option from delegating, so it reports the selection rather than rejecting or changing it.
+The warning does not fail the command.
 
 Pi exposes no selectable Paseo mode, so its profiles omit `modeId`; setup also removes a
 stale room-owned value from an existing Pi profile. Pi has no sandbox or approval boundary:
@@ -264,24 +330,20 @@ the operator.
 ### Recognizing a live room seat
 
 Names are not identity. A matching cwd, title, or provider label does not make an existing
-agent a room Lead or Peer. Before Supervisor reuses a Lead, it reads `list_profiles` and
-selects the exact current `room-<agent>-lead` profile for the intended agent implementation.
-Because agent creation has no profile parameter, it materializes every field that profile
-defines: provider/model, `modeId`, `thinkingOptionId`, and `featureValues`, omitting absent
-fields. It uses `list_agents(cwd)` only to discover candidates because that filter also returns
-descendant working directories, then rejects anything whose cwd is not the exact project
-root, is archived, or runs a bare, wrong-role, or other provider. For every remaining
-candidate it reads `get_agent_status`: the provider must equal the selected profile's current
-provider, `workspaceId` must equal the intended workspace when that id is available, and
-`currentModeId` must equal the profile's `modeId` when the profile defines one. Parentage or
-known Human-opened ownership history must corroborate the established owner. An unparented
-or ambiguous candidate is not adopted silently; it enters the duplicate-recovery and Human
-escalation path in the role contract.
-
-Lead applies the same rule when creating a Peer: read the exact current
-`room-<agent>-peer` profile, materialize every present launch field in the intended workspace,
-then require the live seat's daemon-added `paseo.parent-agent-id` to name the current Lead.
-A Peer is one fresh brief and receives no room tools or orchestration authority.
+agent a room Lead or Peer. The exact eligibility procedure is model-facing wording and lives
+in the contract itself —
+[Lead Discovery and Recovery](src/room/prompts/contract/supervisor/lead-discovery-and-recovery.md)
+for Supervisor and
+[Peer Seat Lifecycle](src/room/prompts/contract/lead/peer-seat-lifecycle.md) for Lead — rather
+than being restated here. In outline: the seat's evidence is the current live configuration.
+Supervisor reads the exact current `room-<agent>-lead` profile from `list_profiles` and
+materializes every field it defines (agent creation takes no profile id), uses `list_agents(cwd)`
+only to find candidates, then inspects each one's full status for the profile's provider, the
+intended workspace and its mode. For `room-<agent>-peer`, Lead copies provider, mode and
+features exactly, treats model and thinking as protocol-governed defaults, and additionally
+requires the live seat's daemon-added `paseo.parent-agent-id` to name itself. Ownership must be
+corroborated by parentage or known Human-opened history; an ambiguous candidate goes to
+duplicate recovery and Human escalation instead of being adopted.
 
 Current Paseo agent sessions do not retain `profileId`. A direct launch with the exact
 profile provider, mode and workspace is therefore **profile-equivalent**, but literal picker
@@ -304,12 +366,24 @@ npx paseo-room@<new-version> setup --agent codex --agent claude --agent pi --app
 npx paseo-room@<new-version> verify
 ```
 
-First inspect the dry run, then apply it. The apply regenerates managed prompt carriers and
-`AUTHENTICATION.md` from the newly resolved binaries, but preserves role credential paths
-and the operator agent homes. Stop and restart every affected seat after the apply; sending
-another turn to an already-running seat is not a restart. `setup` and `verify` prove the
-files and live Paseo configuration, not that an existing model context reloaded them. Only a
-newly launched seat context is expected to ingest the regenerated instructions.
+First inspect the dry run, then apply it. The apply regenerates managed prompt carriers,
+the Codex model catalogs and `AUTHENTICATION.md` from the newly resolved binaries, but
+preserves role credential paths and the operator agent homes. Stop and restart every affected
+seat after the apply; sending another turn to an already-running seat is not a restart.
+`setup` and `verify` prove the files and live Paseo configuration, not that an existing model
+context reloaded them. Only a newly launched seat context is expected to ingest the
+regenerated instructions.
+
+`room.json` records a short `contract` digest of the role documents and workspace protocol
+this room was installed from. When it differs from what the installed package renders — or is
+absent, because the room predates the field — setup and verify warn that the seats are holding
+older text and ask for `setup --apply` plus a restart. It is provenance you compare by eye, not
+a security claim. Rooms written before the field still parse.
+
+One migration happens on the first upgraded apply: an existing Peer `skills` symlink becomes
+the room-owned projection described above. Only the alias is unlinked, never your skills, and
+setup stops with an actionable message rather than guessing if that path has become something
+it does not recognize.
 
 To roll back, run the prior package version with the same agent selection and `setup --apply`,
 then restart the affected seats again:
@@ -319,9 +393,11 @@ npx paseo-room@<prior-version> setup --agent codex --agent claude --agent pi --a
 npx paseo-room@<prior-version> verify
 ```
 
-No reverse data migration is needed. Do not use `remove` for a version rollback: it deletes
-the room home, including role-owned credential files. Re-running setup is safe because it
-rewrites only managed configuration that differs and never replaces role credential paths.
+No reverse data migration is needed; a prior package regenerates its own marker, including
+dropping or restoring the contract digest as its own schema requires. Do not use `remove` for a
+version rollback: it deletes the room home, including role-owned credential files. Re-running
+setup is safe because it rewrites only managed configuration that differs and never replaces
+role credential paths.
 
 There are three separate evidence boundaries:
 
@@ -356,13 +432,17 @@ The exact model-facing wording every seat reads lives in the canonical Markdown 
 `instructionKeys()` and `protocolKeys()`; it does not duplicate their prose. In short:
 
 - **Supervisor** routes Human directives to Lead and observes. Before opening a seat it checks
-  for and reuses the project's existing Lead, including an idle or resumable Lead. It does
-  not edit project work, run validation, direct Peer, or decide technical acceptance. Room
-  tools: on.
+  for and reuses the project's existing Lead, including an idle or resumable Lead. It observes
+  the Lead–Peer process for named failures and advises with evidence, but advice carries no
+  technical authority: it does not edit project work, run validation, direct Peer, or decide
+  technical acceptance. Room tools: on.
 - **Lead** is the durable owner of one project across turns. It owns framing, decomposition,
-  routing, integration and technical acceptance. One moving write scope has exactly one
-  owner, and at most one Peer is writable at a time. Room tools: on.
-- **Peer** owns one bounded outcome, may challenge a failed premise with
+  routing, integration and technical acceptance. A brief states the outcome and the evidence
+  that settles it rather than pre-solving the work; any plan or file list in it is provisional.
+  One moving write scope has exactly one owner, and at most one Peer is writable at a time.
+  Room tools: on.
+- **Peer** owns one bounded outcome, forms its own technical position from the code and its own
+  verification, may challenge a failed premise with
   `REOPEN_REQUEST` / `DEPENDENCY_REQUEST` / `BLOCKED`, hands back a reproducible candidate,
   and never accepts its own difficult change. Room tools: off.
 
@@ -370,8 +450,9 @@ Human keeps product goals, priority, material cost, external effects and irrever
 
 One rule has no runtime enforcement behind it and so is procedural and regression-tested in
 the contract instead: **one Lead owns one project; Supervisor discovers, verifies and reuses
-it, while Lead alone opens verified Peer seats.** The exact eligibility procedure is described
-above. A completed turn, idle state, pending permission, or resumable closed session is not an
+it, while Lead alone opens verified Peer seats.** The eligibility evidence is summarized
+above and stated exactly in the contract sections linked there. A completed turn, idle state,
+pending permission, or resumable closed session is not an
 absent Lead. Fresh independent review means that existing Lead opens a fresh read-only Peer;
 it never means Supervisor opens another Lead.
 
@@ -379,6 +460,15 @@ Paseo takes the seat to open as a plain provider id, so if two Leads nevertheles
 Supervisor stops parallel routing, preserves both histories, keeps the previously established
 healthy owner, and closes the duplicate only after a stable handoff. Ambiguous ownership,
 health, or concurrent writes go back to Human rather than being guessed or merged.
+
+Two further limits are deliberately conservative. **One writable Peer per project**, not one
+per moving scope: the room gives you no writer isolation, so separate scopes are not evidence
+of separate working trees, and no workspace protocol relaxes the limit. Concurrent writable
+Peers in isolated worktrees are a deferred decision, not an oversight. And a seat's **model and
+reasoning effort are defaults**: Lead varies them for a brief only where the repository's
+workspace protocol supplies an explicit task-risk policy, and never up to a tier advertising
+automatic delegation. Provider, mode, workspace, parent and feature values are eligibility
+evidence and copied exactly.
 
 Every seat also carries a **default workspace protocol** — topology by difficulty,
 verification, review, repository conventions — so a project has that layer without doing

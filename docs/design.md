@@ -26,7 +26,7 @@ a task, a workspace or a correction. Every native path is therefore closed, per 
 
 | Agent | Mechanism |
 |---|---|
-| Codex | `[agents].enabled = false`, `features.multi_agent = false`, `features.multi_agent_v2 = false`, **and** a model catalog with `multi_agent_version` nulled |
+| Codex | `[agents].enabled = false`, `features.multi_agent = false`, `features.multi_agent_v2 = false` — in the top-level table **and** in an active profile, which outranks it — **and** a generated model catalog with `multi_agent_version` nulled |
 | Claude | provider-level `disallowedTools` blocks legacy `Task`, current `Agent`, `Workflow`, cross-session, shared task-list, cron and team tools; environment pins close background Agent View and dynamic workflows; `crossSessionInbound: "refuse"` rejects messages from other Claude sessions; the operator's `agents/` and `workflows/` directories are *not* linked into a seat |
 | Pi | `--no-extensions` disables extension discovery, `--extension` loads only the canonical operator-installed MCP adapter in addition to Paseo's own temporary integration extension, and `--no-approve` suppresses project-local executable resources; the appended runtime capsule forbids spawning or managing agents through Pi, shell or extensions |
 
@@ -34,9 +34,72 @@ The catalog scrub is not redundant with the feature flags: bundled model metadat
 advertise native collaboration v1 or v2 even when both flags are off. That was found the
 hard way in the reference implementation, and the same order is kept here.
 
+Because that scrub is a closure layer rather than a nicety, Codex **fails closed** on it. If
+`codex debug models` cannot run, does not print JSON, or prints JSON that is not a catalog
+object, no Codex plan is produced at all; the failure quotes the exact
+`CODEX_HOME=<home> codex debug models` command it ran. The earlier behaviour — warn and let
+the seats keep Codex's built-in catalog — silently dropped one of three closures, which is
+the opposite of what a check is for. The consequence is deliberate: a Codex too old to print
+the JSON catalog cannot be seated. What the room writes into each role home is a *generated
+copy* of the catalog captured at that setup, and it replaces Codex's built-in catalog for
+that seat. A new Codex release that ships new models therefore does not reach a seat until
+`setup --apply` recaptures it, and `verify` names a drifted `model-catalog.json`
+specifically, because that seat is missing the closure rather than only older contract text.
+
 Room tools are the mirror image of the same rule: `paseoTools.enabled` is on for Supervisor
 and Lead, off for Peer. `ROLE_PASEO_TOOLS` in `src/roles.ts` is the single source of that
 policy, applied at exactly one call site.
+
+### 2a. Three kinds of guarantee, not one
+
+The room's controls are not equally strong, and reading them as one class is how a reader
+ends up believing the room contains a seat. They are:
+
+**Enforced pins.** Generated configuration keys, provider `params`, `env`, `disallowedTools`
+and `paseoTools`. Each one is part of the desired state that `setup` writes and `verify`
+recomputes: `planEntries` compares the files and `providerMatches` compares the provider
+entry field by field, including the whole `env` map, so an added or removed key is drift and
+`verify` fails. These are the room's actual guarantees, and they are only guarantees because
+their removal is detectable.
+
+**A bounded heuristic guardrail.** Paseo is the room's only control plane, so an MCP server
+the seats can see that reaches Paseo would be a second one. Setup and verify therefore read
+the MCP declarations in your Codex `config.toml`, your Claude state, an already-seeded role
+`.claude.json`, and Pi's `mcp.json`, and fail *before* anything is applied if a declaration
+is recognizably Paseo-related. Recognition is one rule — the token `paseo` at an identifier
+or path boundary, in the server name, `command`, `args`, or a URL field — and the diagnostic
+quotes which field matched, because a heuristic that cannot show its evidence cannot be
+argued with. It is not a scanner: an obfuscated or renamed endpoint passes, so a clean result
+proves nothing. The room never deletes, filters or rewrites your MCP configuration; the fix
+names your file and leaves the decision with you.
+
+**Capability hygiene.** What §2b withholds from Peer. This closes known configuration paths
+by which a seat is handed an orchestration surface. It is not containment, and it is not
+related to sandboxing: Peer keeps a shell.
+
+### 2b. Peer capability hygiene
+
+Supervisor and Lead keep exactly the operator resources they always received, one symlink
+each. Peer is narrowed twice.
+
+Resources whose contents *execute* are not shared with Peer at all: Codex `plugins` and
+`hooks.json`, Claude `plugins`, `commands` and `hooks`, and Pi `prompts` (Pi's slash
+commands). A plugin does not only add a command — it can contribute subagents, MCP servers
+and hooks — and whether every plugin-contributed subagent path is stopped by Claude's
+`disallowedTools` is unproven. The resource is withheld rather than the question answered,
+because Peer has no room tools and no use for any of it.
+
+`skills` is the one resource Peer receives as a projection instead of an alias: a room-owned
+directory whose children are symlinks to each operator skill whose name does not start with
+`paseo`, case-insensitively. Those are orchestration skills; advertising them to the one seat
+that has no room tools would only teach it to try. Exactness is the point of making it a directory the room
+owns by name — adding or deleting an operator skill is drift `verify` reports and
+`setup --apply` reconciles, instead of a projection that quietly ages. §4a covers what that
+ownership permits on disk, which is deliberately very little.
+
+None of this filters or rewrites your configuration. Skills you keep are linked, `paseo*`
+skills stay in your own home untouched, and a withheld resource is simply absent from one
+role home.
 
 ## 3. Where the instruction layers live
 
@@ -78,14 +141,15 @@ Runtime-mutable credential stores are not copied or linked:
 
 - generated: `config.toml` / `settings.json`, the role contract or additive prompt, the model catalog
 - linked where applicable: `AGENTS.md`, skills, plugins, hooks, commands,
-  rules, output styles, keybindings and themes
+  rules, output styles, keybindings and themes — minus what §2b withholds from Peer, whose
+  `skills` is a room-owned projection rather than one link
 - private per seat: credentials, sessions, history, projects — the runtime state each seat accumulates
 
 Credentials are a separate diagnostic plan, never an `Entry`. That distinction is load-bearing:
-generic managed-entry apply repairs files and links by removing the old path first, while a
-credential path is preserve-only under every setup/update state. `lstat` classifies the path
-and `readlink` records a legacy link target; no credential content is opened, hashed, parsed,
-copied or followed. Environment alternatives are detected from names/presence booleans only.
+generic managed-entry apply repairs files and links only after confirming the existing path has
+the expected shape, while a credential path is preserve-only under every setup/update state.
+`lstat` classifies the path and `readlink` records a legacy link target; no credential content
+is opened, hashed, parsed, copied or followed. Environment alternatives are detected from names/presence booleans only.
 Keyrings and providers are never queried, and setup never runs login or network token
 validation.
 
@@ -177,6 +241,17 @@ history are excluded and subsequent role state remains private. The legacy defau
 `~/.claude.json`; when `--claude-home` / `CLAUDE_CONFIG_DIR` is set, the source is
 `<CLAUDE_CONFIG_DIR>/.claude.json`.
 
+That file is written **once** and owned by Claude afterwards, which has a consequence worth
+stating plainly: MCP servers you add to your own Claude later never reach an existing role
+home. Setup and verify report that divergence as a warning rather than repairing it. Only the
+declared server *names* are compared — no command, URL, argument, credential or history value
+is read — and the fix offers the two real options with their cost: add the server to the role
+with `CLAUDE_CONFIG_DIR=<role-home> claude mcp add …`, or delete the role's `.claude.json`
+and let the next `setup --apply` reseed it from current state, which discards that role's
+other accumulated runtime state. Rewriting the file for you would make that second choice
+silently and unavoidably, so the room does not. The Paseo-conflict check of §2a runs first and
+fails; advice never precedes a hard failure.
+
 Environment names seen only by the setup process are reported as ambient and unverifiable,
 because the room neither copies their values into provider configuration nor proves that the
 Paseo daemon inherited them. Login guidance uses the resolved executable, including an
@@ -214,6 +289,35 @@ workspace protocol. Passing this file through `--append-system-prompt` suppresse
 global append discovery rather than duplicating it. `--no-approve` does not disable normal
 project `AGENTS.md` / `CLAUDE.md` context loading, so repository instructions still arrive.
 No room-owned `SYSTEM.md` is created or copied.
+
+### 4a. What a managed write is allowed to replace
+
+There is still no transaction machinery (§7), but a single write is now type-safe and atomic,
+which is a different and much smaller claim.
+
+Every managed write first classifies the existing path with `lstat` and refuses a shape it
+does not own: a managed regular file may replace only an absent path or a regular file, and a
+managed symlink only an absent path or a symlink. The earlier code removed the old path
+recursively first, which would have deleted a directory — possibly one holding role-owned
+credentials — that happened to sit at a managed name. A refusal names the path and the shape
+found, and tells the operator to move it aside; nothing is deleted on their behalf.
+
+The replacement itself is built at a unique sibling temporary path and `rename`d into place,
+so a seat reading a role document never sees a half-written file, and a failure leaves the
+previous content intact and removes the temporary sibling.
+
+Exact directory ownership — the primitive behind Peer `skills` — is declared per entry and
+never inferred, so it can never apply to a role home or a credential-bearing path. Within a
+declared directory the room removes only *undeclared children that are links or files*. A
+stale child that is a real directory fails instead of being removed recursively. Migration is
+equally narrow: an existing room has `roles/<agent>/peer/skills` as one whole-directory
+symlink, and the first upgraded setup accepts exactly that one shape — a symlink whose target
+is the operator skills directory it was going to link anyway — unlinks the alias alone, and
+rebuilds the projection. A symlink pointing anywhere else, or an unrecognized real directory
+at that path, fails and asks the operator to move it. The operator's skills are never
+recursively traversed, copied or deleted, including when the migrated link's target no longer exists.
+
+Recovery is unchanged: run `setup` again.
 
 ## 5. Provider entries outrank agent configuration
 
@@ -324,7 +428,12 @@ The starting efforts (`low` for Supervisor, `high` for Lead and Peer) stop short
 automatic task delegation* — a second control plane arriving through the model picker,
 after §2 closed the three obvious doors. A profile cannot prevent someone choosing it
 per session; it only decides where a seat starts. Whether `features.multi_agent = false`
-also neuters that option is **unverified**.
+also neuters that option is **unverified**, and the room does not pretend otherwise: since
+`thinkingOptionId` is seeded once and yours afterwards, a room seat found on `ultra` or
+`ultracode` in the live configuration produces a warning that names the seats, says the
+delegation behaviour under those closures was not verified, and leaves the selection alone.
+It does not change exit status, provider selection or what setup writes. Rejecting the option
+outright would be enforcing a vendor claim nobody here has evidence for.
 
 `notes` is not decoration: Paseo surfaces it to orchestrating agents through
 `list_profiles`, so it is where each seat says who may open it — the same rule §5b
@@ -350,22 +459,16 @@ under the same agent id. A pending creation or permission is unresolved state, n
 that the seat is absent.
 
 **Lead Discovery and Recovery** therefore gives Supervisor an explicit discovery-and-reuse
-procedure whose evidence comes from the current live configuration rather than display
-names:
-
-1. Read `list_profiles` and select the exact current room Lead profile for the intended agent
-   implementation. Agent creation accepts no profile id, so combine its provider/model and
-   copy every present `modeId`, `thinkingOptionId`, and `featureValues`, omitting absent
-   fields. A profile name, agent title, cwd, or provider label is not membership.
-2. Call `list_agents(cwd)` only for candidate discovery. In Paseo 0.8.0 that filter includes
-   agents in descendant directories, so post-filter exact cwd and reject archived sessions,
-   ordinary bare `codex` / `claude` / `pi`, wrong-role providers, and providers other than
-   the selected profile's current exact provider.
-3. Inspect each survivor with `get_agent_status`. Require the intended `workspaceId` when
-   available and require `currentModeId` to equal the profile's `modeId` when one exists.
-4. Corroborate the established owner from parentage or known Human-opened ownership history.
-   An unparented or ambiguous candidate is not adopted silently; it enters duplicate recovery
-   and, where ownership cannot be resolved technically, Human escalation.
+procedure. Its authoritative wording is the canonical contract section
+[`contract/supervisor/lead-discovery-and-recovery.md`](../src/room/prompts/contract/supervisor/lead-discovery-and-recovery.md)
+and is not restated here. What matters for this file is the shape of its evidence: eligibility
+comes from the *current live configuration* rather than display names — the exact current room
+Lead profile read from `list_profiles` and materialized field by field, a cwd-filtered agent
+list treated only as candidate discovery, then full status inspection for provider, workspace
+and mode — and ownership must be corroborated by parentage or known Human-opened history
+rather than assumed. A profile name, agent title, cwd or provider label is not membership, and
+an unparented or ambiguous candidate enters duplicate recovery and Human escalation instead of
+being adopted.
 
 An eligible established Lead may be initializing, running, idle, waiting for permission, or
 closed but unarchived and resumable; those are lifecycle states of one owner. Supervisor
@@ -373,12 +476,12 @@ opens exactly one child Lead only when no eligible, corroborated owner exists. F
 review is routed to that Lead, which opens a fresh read-only Peer under **Independent
 Review**; freshness never creates a second Lead or gives Supervisor a channel to Peer.
 
-**Peer Seat Lifecycle** applies the same live-config rule to a Lead-created Peer. Lead first
-reads the exact current room Peer profile, materializes every launch field it defines in the intended
-workspace, then inspects the live seat and requires the daemon-added
-`paseo.parent-agent-id` to equal the current Lead. A wrong provider, workspace, mode or
-parent is not eligible for a brief. The Peer remains one fresh session for one brief and has
-no room tools or orchestration path.
+**Peer Seat Lifecycle** applies the same live-config rule to a Lead-created Peer: Lead reads
+the exact current room Peer profile, copies provider, mode and feature values exactly, uses
+model and thinking as the task-policy-governed defaults described in §7, and requires the live
+seat's daemon-added `paseo.parent-agent-id` to equal the current Lead. A wrong provider,
+workspace, mode or parent is not eligible for a brief. The Peer remains one fresh session for
+one brief and has no room tools or orchestration path.
 
 Paseo currently does not retain `profileId` on an agent session; compact `list_agents`
 results also omit `workspaceId` and `currentModeId`, which is why status inspection is a
@@ -402,10 +505,12 @@ enforcement; a contradictory or non-compliant caller can still supply any provid
 
 Setup and verify share one desired-state plan. It covers managed role files, exact provider
 commands and role-home environment pins, profile provider/mode identity, and the shared room
-protocol copy. Regression tests traverse that whole chain for Codex, Claude and Pi and apply
-negative drift to each prompt carrier, each role-home environment family, Pi's append path,
-and a profile provider. This proves generated content and the live daemon configuration
-observed by the commands.
+protocol copy. Provider environments are compared **whole**, not as a subset: an extra live
+key can enable exactly what a pin closes, so an added, removed or changed key is drift.
+Unrelated *top-level* provider fields remain the operator's. Regression tests traverse that
+whole chain for Codex, Claude and Pi and apply negative drift to each prompt carrier, each
+role-home environment family, Pi's append path, and a profile provider. This proves generated
+content and the live daemon configuration observed by the commands.
 
 The next link is a vendor contract, not something `paseo-room` can observe from outside the
 process: Codex ingests `developer_instructions` from its role `config.toml`, Claude ingests
@@ -415,6 +520,25 @@ that a process already running when setup changed the files reloaded them, and n
 nor verify can prove that a model obeyed instructions in a particular turn. Generated/live
 configuration evidence, vendor-runtime ingestion contracts, and model behavior are three
 different claims.
+
+### 5d. Contract provenance
+
+`room.json` records a `contract` digest: `sha256:` plus the first 16 hex characters of a hash
+over every document the room composes — the three role documents and the workspace protocol —
+in one fixed order. It is derived from the rendered text rather than the package version on
+purpose. Two package versions that render an identical contract are the same generation, and
+editing one prompt asset without cutting a release still changes the digest, which is what
+makes it useful while developing. It is truncated because it is provenance an operator
+compares by eye, not a security claim; it authenticates nothing.
+
+What it buys is a specific question that could not be answered before: *do the seats in this
+room hold the text this package renders?* A matching digest passes. A different digest, or a
+marker written before provenance existed and therefore carrying none, warns — stating that
+setup rewrites the managed documents but a running seat keeps the text it started with, and
+asking for `setup --apply` followed by a restart of the affected seats. The field is optional
+in the marker schema so an older room still parses as a room rather than a foreign file. A
+rollback to a package that predates the field regenerates its own marker through its own
+setup; nothing migrates.
 
 ## 6. Add to a base prompt, never replace it
 
@@ -434,9 +558,16 @@ operator's decision about their own installation, not the room's. If you set
 
 The Claude side is weaker than the Codex side, and it is worth knowing why:
 `developer_instructions` is an instruction field, while `CLAUDE.md` is user memory that a
-project-level `CLAUDE.md` can dilute. Paseo's `AgentSessionConfig.systemPrompt` would be
-the strong equivalent, but it is set per agent at creation time and cannot be pinned from
-a provider entry.
+project-level `CLAUDE.md` can dilute. That is a carrier limitation, not an oversight. Paseo
+launches Claude through the Claude Agent SDK rather than as a plain CLI process, so there is
+no provider-owned argv into which a stronger append could be inserted; `--system-prompt`
+would be the replace path this section exists to refuse, and inventing a command-line prompt
+hack around the SDK is deliberately not attempted. Paseo's
+`AgentSessionConfig.systemPrompt` would be the strong equivalent, but it is set per agent at
+creation time and cannot be pinned from a provider entry. A provider-owned SDK
+`systemPrompt.append` field is the real fix and it belongs upstream in Paseo. Until it exists,
+the room keeps the contract short enough to survive dilution and states the limit here rather
+than claiming parity with Codex.
 
 ## 7. Deliberate non-goals
 
@@ -444,7 +575,9 @@ a provider entry.
   ownership manifest, lock files and inode-level identity guards — about 10k lines to
   protect a directory the tool creates itself. A half-finished `setup` is fixed by running
   `setup` again. Explicit `remove --apply` deletes the lot after warning that role-owned
-  credential files are included.
+  credential files are included. The type-safe atomic single write of §4a is not a step back
+  toward that machinery: it makes one replacement safe, and rerunning setup is still the whole
+  recovery model.
 - **No installing or upgrading Paseo, Codex, Claude, Pi or `pi-mcp-adapter`.** The room checks
   compatibility and explains a mismatch; it never repairs someone else's installation.
 - **No setup-time login or authentication validation.** Setup and verify report structural
@@ -457,11 +590,32 @@ a provider entry.
   changes, and costs a wrapper process whose stdout can corrupt the app-server's JSONL
   stream. Generating at `setup` time avoids the wrapper; the price is that changing your
   own config needs `setup --apply` again, which `verify` reports.
-- **No per-seat model or skill routing.** Model tier belongs to task risk, and that is a
+- **No per-seat model or task routing.** Model tier belongs to task risk, and that is a
   Workspace Protocol and Lead decision, not a room decision. The room preserves whatever
-  model and reasoning effort you configured.
+  model and reasoning effort you configured. **Peer Seat Lifecycle** says the same thing to
+  Lead: provider, mode, workspace, parent and feature values are copied exactly as
+  eligibility evidence, while the profile's model and thinking are seat defaults Lead may
+  vary only under an explicit repository task-risk policy — and never up to a tier
+  advertising automatic delegation. This is about *task* routing, and it is not a claim of
+  capability parity between seats: which capabilities a seat carries is decided by role (§2b),
+  because a seat with no room tools has no use for an orchestration surface.
+- **No rewriting of operator control-plane configuration.** A recognizably Paseo-related MCP
+  server makes setup fail before it applies anything (§2a); it never makes the room edit,
+  filter or delete your MCP declarations, hooks, plugins or models. Detecting and refusing is
+  the whole of it.
+- **No concurrent writable Peers.** The model asks for one writer per moving scope with
+  separate working trees; **Moving Write Ownership** holds the room to one writable Peer per
+  project, which is stricter. The room provides no writer isolation, so separate scopes are
+  not evidence of separate trees, and a workspace protocol cannot relax the limit.
+  Worktree-isolated concurrency is a deferred owner decision, not a gap to be closed by a
+  repository file.
 - **No security sandbox.** The room delivers tool policy and role authority. A Peer with
-  shell access is not contained by it.
+  shell access is not contained by it. Withholding executable resources and `paseo*` skills
+  (§2b) is capability hygiene, and the MCP check is a bounded heuristic (§2a); neither is
+  containment of a process that can run arbitrary code.
+- **No Claude command-line prompt workaround.** The weaker `CLAUDE.md` carrier (§6) is a
+  consequence of Paseo launching Claude through the Agent SDK. The fix is a provider-owned SDK
+  append field upstream in Paseo, not an argv hack invented here.
 
 `remove` is intentionally stronger than setup/update: after its dry-run warning and explicit
 `--apply`, it recursively deletes the room home, including role-owned credential files. It

@@ -43,7 +43,13 @@ That design is in git history before the `v2` rewrite. Do not reintroduce it.
   `pi-mcp-adapter`, require canonical package containment, and prove `/mcp` attribution with
   the bounded offline RPC probe. Never install or upgrade Pi or the adapter.
 - **Peer never gets room tools.** `ROLE_PASEO_TOOLS` in `src/roles.ts` is the single source
-  of that rule, and it must stay a single call site.
+  of that rule, and it must stay a single call site. Peer's narrower resource set follows from
+  the same principle and lives in `src/agents/resources.ts`; it is capability hygiene, not
+  containment, and must never be documented as a sandbox.
+- **Own a managed path by shape, and only the shape you write.** A managed file or link may
+  replace only an absent path or the same shape, and is renamed in from a temporary sibling.
+  Exact directory ownership is declared per entry and must never be extended to role homes or
+  credential-bearing paths.
 
 ## Layout
 
@@ -57,6 +63,8 @@ src/
   room.ts                                   # room.json marker
   agents/types.ts                           # the Agent seam: entries, checks, binary, pins
   agents/codex.ts  agents/claude.ts  agents/pi.ts   # per-agent role homes
+  agents/resources.ts                       # per-role operator resource sharing and Peer projection
+  agents/mcp.ts                             # bounded Paseo MCP recognition, shared by the adapters
   room/instructions.ts                      # semantic role/protocol composition
   room/prompts.ts  room/prompts/             # typed registry + canonical Markdown assets
 test/                                       # one file per area, real temp $HOME fixtures
@@ -72,10 +80,16 @@ docs/design.md                              # this tool's rationale; keep curren
    not build providers there — `commands.ts`
    does that from `homeEnv` and `pins`, so the tool policy stays in one place.
 3. Close the agent's native multi-agent path in `pins` or in the generated config, and say
-   how in `docs/design.md` §3.
+   how in `docs/design.md` §2.
 4. Keep mutable credentials role-owned and preserve-only: never copy, link, inspect, replace,
-   or validate them. Share supported read-only resources such as skills by symlink.
-5. Register it in `AGENTS` in `src/commands.ts`.
+   or validate them. Share supported read-only resources through `roleResourceEntries` in
+   `src/agents/resources.ts` rather than linking them directly: it is the single place that
+   decides what Peer does not receive, and declaring an executable resource name there is part
+   of closing a new agent's capability surface.
+5. Run the operator's MCP declarations through `paseoMcpCheck` in `src/agents/mcp.ts` before
+   planning any write, so a Paseo-looking server fails the build instead of reaching a seat.
+   Never edit, filter or rewrite the operator's declarations.
+6. Register it in `AGENTS` in `src/commands.ts`.
 
 ## Working on the role contract
 
