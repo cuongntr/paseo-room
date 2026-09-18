@@ -10,6 +10,9 @@ bd.sock.startlock
 sync-state.json
 last-touched
 .exclusive-lock
+.br_history/
+.br_recovery/
+dolt.fsqlite-migration-state
 
 # Daemon runtime (lock, log, pid)
 daemon.*
