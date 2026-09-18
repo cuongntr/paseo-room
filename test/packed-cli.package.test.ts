@@ -142,8 +142,10 @@ describe('packed CLI prompt rendering', { concurrent: false }, () => {
 
     const complete = await runCli(installedEntry, installedRoot, env);
     expect(complete.code).not.toBe(0);
-    expect(complete.stdout).toContain('Transport closed (code 1006)');
+    // The WebSocket library can report either a failed HTTP upgrade or an abnormal close,
+    // depending on runner timing. The CLI contract is the actionable daemon diagnostic.
     expect(complete.stdout).toContain('Check that Paseo is running and reachable, then try again.');
+    expect(complete.stdout).toContain('setup: failed');
     expect(complete.stdout).not.toContain('prompt-asset');
     expect(complete.stdout).not.toContain('Reinstall paseo-room');
     expect(complete.stderr).toBe('');
