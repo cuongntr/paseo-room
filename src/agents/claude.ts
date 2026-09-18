@@ -1,4 +1,5 @@
-import { basename, join } from 'node:path';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import {
   ambientNamesCheck, configuredByNamesCheck, inspectCredentialPath, presentNames, preservedCredentialCheck,
   roleCommand, type CredentialDiagnostic,
@@ -7,10 +8,12 @@ import type { Layout } from '../layout.js';
 import { roleHome } from '../layout.js';
 import type { Entry } from '../fsops.js';
 import { existingPaths, exists, readIfPresent } from '../fsops.js';
-import { fail, pass, type Check } from '../result.js';
+import { fail, pass, warn, type Check } from '../result.js';
 import type { Role } from '../roles.js';
 import { renderInstructions } from '../room/instructions.js';
 import { which } from '../which.js';
+import { jsonServerTable, paseoMcpCheck, serverNameDivergence, type NameDivergence } from './mcp.js';
+import { roleResourceEntries } from './resources.js';
 import type { Agent, AgentPlan } from './types.js';
 
 /** Operator-authored resources shared by reference; native agent definitions stay out. */
@@ -18,6 +21,10 @@ const SHARED = [
   'skills', 'plugins', 'commands', 'hooks', 'rules',
   'output-styles', 'keybindings.json', 'themes',
 ] as const;
+/** These carry executable prompts, plugin code, and hook programs: never shared with Peer. */
+const EXECUTABLE = ['plugins', 'commands', 'hooks'] as const;
+/** Claude keeps personal MCP declarations under this one key of its runtime state. */
+const MCP_KEY = 'mcpServers';
 const AUTH_ENV = [
   'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN',
   'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY',
@@ -28,7 +35,7 @@ const CONTROL_PLANE_ENV = {
 } as const;
 const SECURE_STORAGE_ENV = 'CLAUDE_SECURESTORAGE_CONFIG_DIR';
 /** Copied once so a fresh role home does not re-run interactive onboarding. */
-const SEEDED_KEYS = ['hasCompletedOnboarding', 'theme', 'installMethod', 'userID', 'mcpServers'] as const;
+const SEEDED_KEYS = ['hasCompletedOnboarding', 'theme', 'installMethod', 'userID', MCP_KEY] as const;
 
 function asObject(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? { ...value } : {};
@@ -36,6 +43,14 @@ function asObject(value: unknown): Record<string, unknown> {
 /** Any unreadable or non-object source is simply an empty starting point. */
 function readObject(source: string | undefined): Record<string, unknown> {
   try { return asObject(source === undefined ? {} : JSON.parse(source)); } catch { return {}; }
+}
+
+/** Read optional runtime state, but do not turn an inspection failure into "no servers". */
+async function readStateIfPresent(path: string): Promise<string | undefined> {
+  try { return await readFile(path, 'utf8'); } catch (error) {
+    if (error !== null && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return undefined;
+    throw error;
+  }
 }
 
 /** Keep operator configuration while closing non-Paseo inbound coordination. */
@@ -114,6 +129,23 @@ export async function claudeCredentialDiagnostic(
   }] };
 }
 
+/**
+ * `.claude.json` is seeded once and runtime-owned afterwards, so a later change to the
+ * operator's own MCP inventory never reaches a role home. That is reported rather than
+ * repaired: rewriting the file would discard whatever the runtime has since stored in it.
+ * Only declared names are compared — no command, URL, argument, credential or history value
+ * is read for this check.
+ */
+function mcpDriftCheck(role: Role, home: string, path: string, divergence: NameDivergence): Check {
+  const parts = [
+    ...(divergence.missing.length === 0 ? [] : [`not declared for this role: ${divergence.missing.join(', ')}`]),
+    ...(divergence.extra.length === 0 ? [] : [`declared only for this role: ${divergence.extra.join(', ')}`]),
+  ];
+  return warn(`claude.mcp.drift.${role}`,
+    `Claude ${role} MCP server names differ from your own Claude MCP servers (${parts.join('; ')}). ${path} is seeded once and owned by Claude afterwards, so paseo-room did not change it; only server names were compared.`,
+    `If this role should have the same servers, add them with: CLAUDE_CONFIG_DIR=${home} claude mcp add ... — or delete ${path} and run setup --apply to reseed it from your current Claude state, which discards that role's other runtime state.`);
+}
+
 export const claudeAgent: Agent = {
   id: 'claude',
   label: 'Claude Code',
@@ -143,22 +175,56 @@ export const claudeAgent: Agent = {
     const checks: Check[] = [pass('claude.home', `Claude Code found at ${binary} using ${home}.`)];
 
     const settingsSource = await readIfPresent(join(home, 'settings.json'));
-    const stateSource = await readIfPresent(layout.claudeState);
     const memorySource = await readIfPresent(join(home, 'CLAUDE.md'));
+    let stateSource: string | undefined;
+    let operatorServers: Record<string, unknown>;
+    try {
+      stateSource = await readStateIfPresent(layout.claudeState);
+      // `.claude.json` is runtime-owned after the seed write, so only this one key is interpreted.
+      operatorServers = jsonServerTable(stateSource, [MCP_KEY]);
+    } catch {
+      return { entries: [], checks: [...checks, fail('claude.mcp',
+        `Could not read ${layout.claudeState} as a JSON object, so its MCP declarations could not be inspected.`,
+        'Make your Claude state file readable and fix its JSON structure, then run setup again.')] };
+    }
+    const stateConflict = paseoMcpCheck('claude.mcp', layout.claudeState, operatorServers);
+    if (stateConflict) return { entries: [], checks: [...checks, stateConflict] };
     const shared = await existingPaths(home, SHARED);
     const entries: Entry[] = [];
     const credentials: CredentialDiagnostic[] = [];
     const providerEnv: Partial<Record<Role, Readonly<Record<string, string>>>> = {};
+    // Held back so a hard conflict found in a later role is never preceded by advice.
+    const drift: Check[] = [];
     for (const role of roles) {
       const target = roleHome(layout, 'claude', role);
+      const statePath = join(target, '.claude.json');
+      // A seeded role home keeps its own copy, so its declarations are checked as well.
+      let roleStateSource: string | undefined;
+      let roleServers: Record<string, unknown>;
+      try {
+        roleStateSource = await readStateIfPresent(statePath);
+        roleServers = jsonServerTable(roleStateSource, [MCP_KEY]);
+      } catch {
+        return { entries: [], checks: [...checks, fail(`claude.mcp.${role}`,
+          `Could not read ${statePath} as a JSON object, so its MCP declarations could not be inspected.`,
+          'Make that role-owned Claude state file readable and fix its JSON structure, then run setup again.')] };
+      }
+      const roleConflict = paseoMcpCheck(`claude.mcp.${role}`, statePath, roleServers);
+      if (roleConflict) return { entries: [], checks: [...checks, roleConflict] };
+      // Only an already-seeded role home can have drifted: an absent one is about to be
+      // seeded from the same operator state this run just read.
+      if (roleStateSource !== undefined) {
+        const divergence = serverNameDivergence(operatorServers, roleServers);
+        if (divergence) drift.push(mcpDriftCheck(role, target, statePath, divergence));
+      }
       entries.push({ kind: 'dir', path: target });
       entries.push({ kind: 'file', path: join(target, 'CLAUDE.md'), content: renderRoleMemory(memorySource, role) });
       entries.push({ kind: 'file', path: join(target, 'settings.json'), content: renderRoleSettings(settingsSource, role, target) });
-      entries.push({ kind: 'file', path: join(target, '.claude.json'), content: renderRoleState(stateSource), once: true });
-      for (const path of shared) entries.push({ kind: 'link', path: join(target, basename(path)), target: path });
+      entries.push({ kind: 'file', path: statePath, content: renderRoleState(stateSource), once: true });
+      entries.push(...await roleResourceEntries({ role, target, home, names: SHARED, shared, executable: EXECUTABLE }));
       credentials.push(await claudeCredentialDiagnostic(layout, role, settingsSource, process.platform, binary));
       providerEnv[role] = { [SECURE_STORAGE_ENV]: target };
     }
-    return { entries, credentials, checks, binary, providerEnv };
+    return { entries, credentials, checks: [...checks, ...drift], binary, providerEnv };
   },
 };

@@ -64,4 +64,24 @@ describe('providerMatches', () => {
     expect(providerMatches(desired, { ...desired, env: { CODEX_HOME: '/elsewhere' } })).toBe(false);
     expect(providerMatches(desired, undefined)).toBe(false);
   });
+
+  // The room writes the whole env object, so an added key is drift: it can re-enable
+  // exactly what the room's environment pins close.
+  it('rejects added and missing environment keys', () => {
+    expect(providerMatches(desired, { ...desired, env: { ...desired.env, CODEX_UNSAFE: '1' } })).toBe(false);
+    expect(providerMatches(desired, { ...desired, env: {} })).toBe(false);
+    expect(providerMatches(desired, { ...desired, env: null })).toBe(false);
+  });
+
+  it('accepts the exact environment while unrelated top-level fields differ', () => {
+    const pinned: Provider = {
+      ...desired,
+      env: { CLAUDE_CODE_MAX_OUTPUT_TOKENS: '1', CLAUDE_HOME: '/room/claude/peer' },
+      params: { sandbox_mode: 'danger-full-access' },
+      disallowedTools: ['Task'],
+    };
+    expect(providerMatches(pinned, { ...pinned, env: { CLAUDE_HOME: '/room/claude/peer', CLAUDE_CODE_MAX_OUTPUT_TOKENS: '1' }, notes: 'operator note' })).toBe(true);
+    expect(providerMatches(pinned, { ...pinned, params: {} })).toBe(false);
+    expect(providerMatches(pinned, { ...pinned, disallowedTools: [] })).toBe(false);
+  });
 });

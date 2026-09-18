@@ -148,17 +148,27 @@ export async function withSession<T>(
   }
 }
 
+/**
+ * The provider environment is written whole by the room, so it is compared whole: an
+ * added key can enable exactly what the pins close, and a subset test would call that a
+ * match. Unrelated *top-level* provider fields remain the operator's.
+ */
+function envMatches(live: unknown, desired: Readonly<Record<string, string>>): boolean {
+  if (live === null || typeof live !== 'object' || Array.isArray(live)) return false;
+  const entries = Object.entries(live as Record<string, unknown>);
+  return entries.length === Object.keys(desired).length &&
+    entries.every(([key, value]) => Object.hasOwn(desired, key) && value === desired[key]);
+}
+
 /** Compare only the keys the room owns; unrelated fields stay the operator's. */
 export function providerMatches(desired: Provider, live: unknown): boolean {
   if (live === null || typeof live !== 'object') return false;
   const entry = live as Record<string, unknown>;
-  const env = entry.env;
   const tools = entry.paseoTools;
   const same = (left: unknown, right: unknown): boolean => JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
   return entry.extends === desired.extends &&
     same(entry.command, desired.command) &&
-    env !== null && typeof env === 'object' &&
-    Object.entries(desired.env).every(([key, value]) => (env as Record<string, unknown>)[key] === value) &&
+    envMatches(entry.env, desired.env) &&
     tools !== null && typeof tools === 'object' &&
     (tools as { enabled?: unknown }).enabled === desired.paseoTools.enabled &&
     // Pins are the room's guarantee: drifting them silently re-enables what they block.

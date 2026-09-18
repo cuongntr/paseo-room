@@ -1,9 +1,9 @@
-import { mkdir, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { piAgent, probePiMcp, renderPiAppend, renderPiSettings } from '../src/agents/pi.js';
 import { loadPromptAsset } from '../src/room/prompts.js';
-import { applyEntries } from '../src/fsops.js';
+import { applyEntries, planEntries } from '../src/fsops.js';
 import { resolveLayout } from '../src/layout.js';
 import { renderInstructions } from '../src/room/instructions.js';
 import { makeFixture, nodeScript, script } from './helpers.js';
@@ -159,6 +159,111 @@ console.log(JSON.stringify({ id: '${probeId}', type: 'response', command: 'get_c
     const appendPlan = await piAgent.build(resolveLayout({}, appendFixture.env), ['lead']);
     expect(appendPlan.checks.at(-1)).toMatchObject({ id: 'pi.append', status: 'fail' });
     expect(appendPlan.checks.at(-1)?.fix).toContain('readable');
+  });
+});
+
+describe('piAgent.build resource distribution', () => {
+  async function operatorResources(home: string): Promise<void> {
+    const pi = join(home, '.pi/agent');
+    await mkdir(join(pi, 'skills', 'formatting'), { recursive: true });
+    await mkdir(join(pi, 'skills', 'paseo-advisor'), { recursive: true });
+    await mkdir(join(pi, 'prompts'), { recursive: true });
+    await writeFile(join(pi, 'keybindings.json'), '{}');
+  }
+
+  it('keeps Supervisor and Lead sharing while Peer omits executable prompts', async () => {
+    const fixture = await makeFixture();
+    await operatorResources(fixture.home);
+    const layout = resolveLayout({}, fixture.env);
+    await applyEntries((await piAgent.build(layout, ['supervisor', 'lead', 'peer'])).entries);
+
+    const operator = layout.agentHome.pi;
+    for (const role of ['supervisor', 'lead'] as const) {
+      const home = join(layout.roomHome, 'roles/pi', role);
+      expect(await realpath(join(home, 'skills'))).toBe(await realpath(join(operator, 'skills')));
+      expect(await realpath(join(home, 'prompts'))).toBe(await realpath(join(operator, 'prompts')));
+    }
+    const peer = join(layout.roomHome, 'roles/pi/peer');
+    await expect(stat(join(peer, 'prompts'))).rejects.toThrow();
+    expect(await readFile(join(peer, 'keybindings.json'), 'utf8')).toBe('{}');
+  });
+
+  it('projects Peer skills exactly and repairs inventory drift', async () => {
+    const fixture = await makeFixture();
+    await operatorResources(fixture.home);
+    const layout = resolveLayout({}, fixture.env);
+    await applyEntries((await piAgent.build(layout, ['peer'])).entries);
+    const skills = join(layout.roomHome, 'roles/pi/peer/skills');
+    expect(await readdir(skills)).toEqual(['formatting']);
+
+    await rm(join(layout.agentHome.pi, 'skills', 'formatting'), { recursive: true });
+    await mkdir(join(layout.agentHome.pi, 'skills', 'reviewing'), { recursive: true });
+    const drifted = await piAgent.build(layout, ['peer']);
+    expect((await planEntries(drifted.entries)).filter(operation => operation.action !== 'noop'))
+      .toEqual([
+        { action: 'update', kind: 'dir', target: skills },
+        { action: 'create', kind: 'link', target: join(skills, 'reviewing') },
+      ]);
+    await applyEntries(drifted.entries);
+    expect(await readdir(skills)).toEqual(['reviewing']);
+  });
+});
+
+describe('piAgent.build MCP conflict detection', () => {
+  it('fails before apply for a recognizable adapter config server', async () => {
+    const fixture = await makeFixture();
+    await writeFile(join(fixture.home, '.pi/agent/mcp.json'), JSON.stringify({
+      mcpServers: { room: { command: '/opt/paseo/bin/mcp' } },
+    }));
+    const plan = await piAgent.build(resolveLayout({}, fixture.env), ['supervisor', 'lead', 'peer']);
+    const check = plan.checks.find(entry => entry.id === 'pi.mcp');
+    expect(check?.status).toBe('fail');
+    expect(check?.message).toContain('mcp.json');
+    expect(check?.message).toContain('room (command: /opt/paseo/bin/mcp)');
+    expect(plan.entries).toHaveLength(0);
+    expect(plan.binary).toBeUndefined();
+  });
+
+  it('reads the alternative servers key and passes benign declarations', async () => {
+    const fixture = await makeFixture();
+    await writeFile(join(fixture.home, '.pi/agent/mcp.json'), JSON.stringify({
+      servers: { bridge: { url: 'http://127.0.0.1:6767/paseo/mcp' } },
+    }));
+    expect((await piAgent.build(resolveLayout({}, fixture.env), ['peer'])).checks.find(check => check.id === 'pi.mcp')?.status)
+      .toBe('fail');
+
+    const benign = await makeFixture();
+    await writeFile(join(benign.home, '.pi/agent/mcp.json'), JSON.stringify({
+      mcpServers: { docs: { command: 'uvx', args: ['mcp-server-docs'] } },
+    }));
+    const plan = await piAgent.build(resolveLayout({}, benign.env), ['peer']);
+    expect(plan.checks.some(check => check.status === 'fail')).toBe(false);
+  });
+
+  // Pi loads both keys, so a benign first table must not shadow a conflict in the second.
+  it('fails when a benign mcpServers table precedes a Paseo servers table', async () => {
+    const fixture = await makeFixture();
+    await writeFile(join(fixture.home, '.pi/agent/mcp.json'), JSON.stringify({
+      mcpServers: { docs: { command: 'uvx', args: ['mcp-server-docs'] } },
+      servers: { bridge: { url: 'http://127.0.0.1:6767/paseo/mcp' } },
+    }));
+    const check = (await piAgent.build(resolveLayout({}, fixture.env), ['peer'])).checks.find(entry => entry.id === 'pi.mcp');
+    expect(check?.status).toBe('fail');
+    expect(check?.message).toContain('bridge (url: http://127.0.0.1:6767/paseo/mcp)');
+  });
+
+  it('fails when mcp.json cannot be read or parsed', async () => {
+    const fixture = await makeFixture();
+    await mkdir(join(fixture.home, '.pi/agent/mcp.json'));
+    const plan = await piAgent.build(resolveLayout({}, fixture.env), ['peer']);
+    expect(plan.checks.at(-1)).toMatchObject({ id: 'pi.mcp', status: 'fail' });
+    expect(plan.checks.at(-1)?.fix).toContain('readable');
+
+    const malformed = await makeFixture();
+    await writeFile(join(malformed.home, '.pi/agent/mcp.json'), '{not json');
+    const malformedPlan = await piAgent.build(resolveLayout({}, malformed.env), ['peer']);
+    expect(malformedPlan.checks.at(-1)).toMatchObject({ id: 'pi.mcp', status: 'fail' });
+    expect(malformedPlan.entries).toHaveLength(0);
   });
 });
 

@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { mkdtemp, readFile, realpath, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { basename, isAbsolute, join, resolve } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 import {
   ambientNamesCheck, inspectCredentialPath, presentNames, preservedCredentialCheck,
   type CredentialDiagnostic,
@@ -16,6 +16,8 @@ import type { Role } from '../roles.js';
 import { renderInstructions } from '../room/instructions.js';
 import { loadPromptAsset } from '../room/prompts.js';
 import { which } from '../which.js';
+import { jsonServerTable, paseoMcpCheck } from './mcp.js';
+import { roleResourceEntries } from './resources.js';
 import type { Agent, AgentPlan } from './types.js';
 
 const PACKAGE_NAME = 'pi-mcp-adapter';
@@ -23,6 +25,11 @@ const PROBE_ID = 'paseo-room-pi-mcp-probe';
 const PROBE_TIMEOUT_MS = 10_000;
 const PROBE_OUTPUT_LIMIT = 1024 * 1024;
 const SHARED = ['models.json', 'AGENTS.md', 'skills', 'prompts', 'themes', 'keybindings.json', 'mcp.json'] as const;
+/** Pi prompts are its slash commands, so they execute; Peer receives no such resource. */
+const EXECUTABLE = ['prompts'] as const;
+const MCP_FILE = 'mcp.json';
+/** Pi accepts either key for its declaration map, so both are read and neither is rewritten. */
+const MCP_KEYS = ['mcpServers', 'servers'] as const;
 /** Built-in provider key names only; ambient cloud credential files are deliberately not probed. */
 const AUTH_ENV = [
   'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_OAUTH_TOKEN', 'ANTHROPIC_API_KEY',
@@ -332,6 +339,21 @@ export const piAgent: Agent = {
       };
     }
     const shared = await existingPaths(home, SHARED);
+    // The adapter reads this file as its only config source, so a Paseo-looking server here
+    // would be a second control plane. Fail before apply; never edit the operator's file.
+    const mcpPath = join(home, MCP_FILE);
+    let servers: Record<string, unknown>;
+    try {
+      servers = jsonServerTable(await readPiOptional(mcpPath), MCP_KEYS);
+    } catch {
+      return {
+        entries: [], checks: [resolved.check, capability,
+          fail('pi.mcp', `Could not read ${mcpPath} as a JSON object, so its MCP declarations could not be inspected.`,
+            'Make your Pi mcp.json readable and fix its JSON structure, then run setup again.')],
+      };
+    }
+    const conflict = paseoMcpCheck('pi.mcp', mcpPath, servers);
+    if (conflict) return { entries: [], checks: [resolved.check, capability, conflict] };
     const entries: Entry[] = [];
     const credentials: CredentialDiagnostic[] = [];
     const argv: Partial<Record<Role, readonly string[]>> = {};
@@ -341,7 +363,7 @@ export const piAgent: Agent = {
       entries.push({ kind: 'dir', path: target });
       entries.push({ kind: 'file', path: join(target, 'settings.json'), content: settings });
       entries.push({ kind: 'file', path: appendPath, content: renderPiAppend(operatorAppend, role) });
-      for (const path of shared) entries.push({ kind: 'link', path: join(target, basename(path)), target: path });
+      entries.push(...await roleResourceEntries({ role, target, home, names: SHARED, shared, executable: EXECUTABLE }));
       credentials.push(await piCredentialDiagnostic(layout, role, binary));
       argv[role] = ['--no-extensions', '--extension', resolved.adapter.entry, '--no-approve', '--append-system-prompt', appendPath];
     }

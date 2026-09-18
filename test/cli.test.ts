@@ -1,11 +1,13 @@
-import { lstat, mkdir, readFile, readlink, realpath, stat, symlink, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readdir, readFile, readlink, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { parse } from 'smol-toml';
 import { describe, expect, it } from 'vitest';
 import { renderRoleMemory } from '../src/agents/claude.js';
 import { renderPiAppend } from '../src/agents/pi.js';
 import { runCli } from '../src/cli.js';
-import { protocolKeys, renderInstructions } from '../src/room/instructions.js';
+import metadata from '../package.json' with { type: 'json' };
+import { renderMarker } from '../src/room.js';
+import { contractDigest, protocolKeys, renderInstructions } from '../src/room/instructions.js';
 import { loadPromptAsset, type WorkspaceKey } from '../src/room/prompts.js';
 import type { AgentId, Role } from '../src/roles.js';
 import { emptyDaemon, fakeClient, makeFixture, RUNNING_STATUS, script, type FakeDaemon } from './helpers.js';
@@ -19,6 +21,8 @@ async function run(argv: readonly string[], env: NodeJS.ProcessEnv, daemon: Fake
   });
   return { code, out, err };
 }
+
+const version = metadata.version;
 
 const PROTOCOL_HEADINGS = ['Topology', 'Verification', 'Review', 'Repository Conventions'] as const;
 
@@ -716,5 +720,286 @@ describe('agent profiles', () => {
     const written = daemon.agentProfiles;
     await run(['setup', '--apply'], fixture.env, daemon);
     expect(daemon.agentProfiles).toBe(written);
+  });
+});
+
+describe('Peer capability hygiene', () => {
+  async function operatorResources(home: string): Promise<void> {
+    for (const [agent, executable] of [
+      ['.codex', ['plugins']],
+      ['.claude', ['plugins', 'commands', 'hooks']],
+      ['.pi/agent', ['prompts']],
+    ] as const) {
+      const root = join(home, agent);
+      await mkdir(join(root, 'skills', 'formatting'), { recursive: true });
+      await mkdir(join(root, 'skills', 'paseo-committee'), { recursive: true });
+      for (const name of executable) await mkdir(join(root, name), { recursive: true });
+    }
+    await writeFile(join(home, '.codex', 'hooks.json'), '{}');
+  }
+
+  it('gives Supervisor and Lead every shared resource and Peer an exact non-paseo skill projection', async () => {
+    const fixture = await makeFixture();
+    await operatorResources(fixture.home);
+    const daemon = emptyDaemon();
+    const applied = await run(['setup', '--agent', 'codex', '--agent', 'claude', '--agent', 'pi', '--apply'], fixture.env, daemon);
+    expect(applied.code).toBe(0);
+
+    const executable: Record<AgentId, readonly string[]> = {
+      codex: ['plugins', 'hooks.json'],
+      claude: ['plugins', 'commands', 'hooks'],
+      pi: ['prompts'],
+    };
+    for (const agent of ['codex', 'claude', 'pi'] as const) {
+      for (const role of ['supervisor', 'lead'] as const) {
+        const home = join(fixture.roomHome, 'roles', agent, role);
+        expect((await lstat(join(home, 'skills'))).isSymbolicLink()).toBe(true);
+        for (const name of executable[agent]) expect((await lstat(join(home, name))).isSymbolicLink()).toBe(true);
+      }
+      const peer = join(fixture.roomHome, 'roles', agent, 'peer');
+      for (const name of executable[agent]) await expect(lstat(join(peer, name))).rejects.toThrow();
+      const skills = join(peer, 'skills');
+      expect((await lstat(skills)).isSymbolicLink()).toBe(false);
+      expect(await readdir(skills)).toEqual(['formatting']);
+    }
+    // Room tools stay the single policy source, and Peer never receives them.
+    const tools = (id: string): unknown => (daemon.providers[id] as { paseoTools: { enabled: boolean } }).paseoTools.enabled;
+    expect(['codex', 'claude', 'pi'].map(agent => tools(`${agent}-peer`))).toEqual([false, false, false]);
+    expect((await run(['verify', '--json'], fixture.env, daemon)).code).toBe(0);
+  });
+
+  it('reports and repairs Peer skill inventory drift through verify and setup', async () => {
+    const fixture = await makeFixture();
+    await operatorResources(fixture.home);
+    const daemon = emptyDaemon();
+    await run(['setup', '--apply'], fixture.env, daemon);
+    const skills = join(fixture.roomHome, 'roles/codex/peer/skills');
+
+    await mkdir(join(fixture.home, '.codex/skills/reviewing'), { recursive: true });
+    const added = await run(['verify'], fixture.env, daemon);
+    expect(added.code).toBe(1);
+    expect(added.out).toContain('managed role files are missing or outdated');
+    await run(['setup', '--apply'], fixture.env, daemon);
+    expect(await readdir(skills)).toEqual(['formatting', 'reviewing']);
+
+    await rm(join(fixture.home, '.codex/skills/reviewing'), { recursive: true });
+    expect((await run(['verify'], fixture.env, daemon)).code).toBe(1);
+    await run(['setup', '--apply'], fixture.env, daemon);
+    expect(await readdir(skills)).toEqual(['formatting']);
+    expect((await run(['verify', '--json'], fixture.env, daemon)).code).toBe(0);
+    // Reconciliation only ever removed the room's own aliases.
+    expect((await readdir(join(fixture.home, '.codex/skills'))).sort()).toEqual(['formatting', 'paseo-committee']);
+  });
+
+  it('migrates a legacy whole-directory Peer skills symlink on the next setup', async () => {
+    const fixture = await makeFixture();
+    await operatorResources(fixture.home);
+    const daemon = emptyDaemon();
+    const peer = join(fixture.roomHome, 'roles/codex/peer');
+    await mkdir(peer, { recursive: true });
+    await symlink(join(fixture.home, '.codex/skills'), join(peer, 'skills'));
+
+    expect((await run(['setup', '--apply'], fixture.env, daemon)).code).toBe(0);
+    expect((await lstat(join(peer, 'skills'))).isSymbolicLink()).toBe(false);
+    expect(await readdir(join(peer, 'skills'))).toEqual(['formatting']);
+    expect((await readdir(join(fixture.home, '.codex/skills'))).sort()).toEqual(['formatting', 'paseo-committee']);
+  });
+
+  // Deleting the source directory is inventory drift like any other: Peer's projection must
+  // still be declared so verify reports it and setup empties it, and no seat keeps a broken link.
+  it('empties the Peer projection when the operator deletes the whole skills directory', async () => {
+    const fixture = await makeFixture();
+    await operatorResources(fixture.home);
+    const daemon = emptyDaemon();
+    const agents = ['--agent', 'codex', '--agent', 'claude', '--agent', 'pi'] as const;
+    await run(['setup', ...agents, '--apply'], fixture.env, daemon);
+    for (const agent of ['codex', 'claude', 'pi'] as const) {
+      await rm(join(fixture.home, agent === 'pi' ? '.pi/agent/skills' : `.${agent}/skills`), { recursive: true });
+    }
+
+    const drifted = await run(['verify'], fixture.env, daemon);
+    expect(drifted.code).toBe(1);
+    expect(drifted.out).toContain('managed role files are missing or outdated');
+    expect((await run(['setup', ...agents, '--apply'], fixture.env, daemon)).code).toBe(0);
+
+    for (const agent of ['codex', 'claude', 'pi'] as const) {
+      const skills = join(fixture.roomHome, 'roles', agent, 'peer', 'skills');
+      expect((await lstat(skills)).isSymbolicLink()).toBe(false);
+      expect(await readdir(skills)).toEqual([]);
+      // Supervisor and Lead are never given a fresh alias to the deleted directory; the one
+      // left from the previous run simply resolves nowhere, since a role home's child
+      // inventory is not room-owned and may hold role credentials.
+      for (const role of ['supervisor', 'lead'] as const) {
+        const alias = join(fixture.roomHome, 'roles', agent, role, 'skills');
+        expect((await lstat(alias)).isSymbolicLink()).toBe(true);
+        await expect(stat(alias)).rejects.toThrow();
+      }
+    }
+    expect((await run(['verify', '--json'], fixture.env, daemon)).code).toBe(0);
+  });
+
+  // The same deletion must also retire the legacy whole-directory alias.
+  it('removes a legacy Peer skills symlink whose target the operator deleted', async () => {
+    const fixture = await makeFixture();
+    await operatorResources(fixture.home);
+    const daemon = emptyDaemon();
+    const peer = join(fixture.roomHome, 'roles/codex/peer');
+    const source = join(fixture.home, '.codex/skills');
+    await mkdir(peer, { recursive: true });
+    await symlink(source, join(peer, 'skills'));
+    await rm(source, { recursive: true });
+
+    expect((await run(['setup', '--agent', 'codex', '--apply'], fixture.env, daemon)).code).toBe(0);
+    expect((await lstat(join(peer, 'skills'))).isSymbolicLink()).toBe(false);
+    expect(await readdir(join(peer, 'skills'))).toEqual([]);
+    await expect(stat(source)).rejects.toThrow();
+  });
+
+  it('fails setup and verify before apply for a recognizable Paseo MCP server in any source', async () => {
+    for (const [agent, write] of [
+      ['codex', async (home: string): Promise<void> => {
+        await writeFile(join(home, '.codex/config.toml'), 'model = "m"\n[mcp_servers.paseo-bridge]\ncommand = "serve"\n');
+      }],
+      ['claude', async (home: string): Promise<void> => {
+        await writeFile(join(home, '.claude.json'), JSON.stringify({ mcpServers: { bridge: { command: 'paseo' } } }));
+      }],
+      ['pi', async (home: string): Promise<void> => {
+        await writeFile(join(home, '.pi/agent/mcp.json'), JSON.stringify({ mcpServers: { room: { url: 'http://x/paseo' } } }));
+      }],
+    ] as const) {
+      const fixture = await makeFixture();
+      const daemon = emptyDaemon();
+      await run(['setup', '--agent', agent, '--apply'], fixture.env, daemon);
+      await write(fixture.home);
+
+      const blocked = await run(['setup', '--agent', agent, '--apply'], fixture.env, daemon);
+      expect(blocked.code).toBe(1);
+      expect(blocked.out).toContain('recognizably Paseo-related');
+      expect(blocked.out).toContain('Remove or rename');
+      const verified = await run(['verify'], fixture.env, daemon);
+      expect(verified.code).toBe(1);
+      expect(verified.out).toContain('recognizably Paseo-related');
+    }
+  });
+
+  it('accepts benign operator MCP declarations in every source', async () => {
+    const fixture = await makeFixture();
+    const daemon = emptyDaemon();
+    await writeFile(join(fixture.home, '.codex/config.toml'), 'model = "m"\n[mcp_servers.docs]\ncommand = "uvx"\nargs = ["mcp-server-docs"]\n');
+    await writeFile(join(fixture.home, '.claude.json'), JSON.stringify({ mcpServers: { notes: { command: 'notes-mcp' } } }));
+    await writeFile(join(fixture.home, '.pi/agent/mcp.json'), JSON.stringify({ servers: { grapaseo: { command: 'paseonaut' } } }));
+
+    const applied = await run(['setup', '--agent', 'codex', '--agent', 'claude', '--agent', 'pi', '--apply'], fixture.env, daemon);
+    expect(applied.code).toBe(0);
+    expect(applied.out).not.toContain('recognizably Paseo-related');
+    expect((await run(['verify', '--json'], fixture.env, daemon)).code).toBe(0);
+  });
+});
+
+interface JsonCheck { readonly id: string; readonly status: string; readonly message: string; readonly fix?: string }
+
+/** The checks of one --json run, by id, so a diagnostic is asserted on rather than searched for. */
+function checks(result: { out: string }): Record<string, JsonCheck | undefined> {
+  const parsed = JSON.parse(result.out) as { checks: JsonCheck[] };
+  return Object.fromEntries(parsed.checks.map(check => [check.id, check]));
+}
+
+describe('contract provenance and bounded diagnostics', () => {
+  it('records the rendered contract generation in the marker without inventing drift on rerun', async () => {
+    const fixture = await makeFixture();
+    const daemon = emptyDaemon();
+    await run(['setup', '--apply'], fixture.env, daemon);
+    const markerPath = join(fixture.roomHome, 'room.json');
+    const marker = JSON.parse(await readFile(markerPath, 'utf8')) as { contract?: string };
+    expect(marker.contract).toBe(contractDigest());
+
+    const rerun = await run(['setup', '--apply'], fixture.env, daemon);
+    expect(rerun.code).toBe(0);
+    expect(rerun.out).toContain(`Role contract generation ${contractDigest()} matches this package`);
+    expect(await readFile(markerPath, 'utf8')).toBe(renderMarker(version, ['codex'], ['supervisor', 'lead', 'peer'], contractDigest()));
+    expect((await run(['verify'], fixture.env, daemon)).code).toBe(0);
+  });
+
+  it('warns without failing when the installed room holds an older or missing contract generation', async () => {
+    const fixture = await makeFixture();
+    const daemon = emptyDaemon();
+    await run(['setup', '--apply'], fixture.env, daemon);
+    const markerPath = join(fixture.roomHome, 'room.json');
+    const roles = ['supervisor', 'lead', 'peer'] as const;
+
+    // A room installed by an older package, before provenance existed. The marker itself is
+    // managed, so it also reports as outdated; the provenance check is the warning beside it.
+    await writeFile(markerPath, renderMarker('0.0.1', ['codex'], roles));
+    const legacy = checks(await run(['verify', '--json'], fixture.env, daemon));
+    expect(legacy['room.contract']?.status).toBe('warn');
+    expect(legacy['room.contract']?.message).toContain('installed before the room recorded its contract generation (package 0.0.1)');
+    expect(String(legacy['room.contract']?.fix)).toContain('restart the affected seats');
+
+    // A room installed from a different rendered contract.
+    await writeFile(markerPath, renderMarker(version, ['codex'], roles, 'sha256:0000000000000000'));
+    const stale = checks(await run(['verify', '--json'], fixture.env, daemon));
+    expect(stale['room.contract']?.status).toBe('warn');
+    expect(stale['room.contract']?.message).toContain('holds contract generation sha256:0000000000000000');
+    expect(stale['room.contract']?.message).toContain(contractDigest());
+
+    // Provenance alone never fails a command, and a successful apply reports the generation
+    // that is now installed rather than repeating an already-resolved warning.
+    const repaired = checks(await run(['setup', '--apply', '--json'], fixture.env, daemon));
+    expect(repaired['room.contract']?.status).toBe('pass');
+    expect(repaired['room.contract']?.message).toContain('matches this package');
+    const verified = await run(['verify'], fixture.env, daemon);
+    expect(verified.code).toBe(0);
+    expect(verified.out).toContain('matches this package');
+  });
+
+  it('warns that delegation is unverified for a top reasoning option without changing the seat', async () => {
+    const fixture = await makeFixture();
+    const daemon = emptyDaemon();
+    await run(['setup', '--apply'], fixture.env, daemon);
+    const lead = daemon.agentProfiles.find(entry => entry.id === 'room-codex-lead');
+    if (!lead) throw new Error('expected the Lead profile');
+    lead.thinkingOptionId = 'ultra';
+
+    const verified = await run(['verify'], fixture.env, daemon);
+    expect(verified.code).toBe(0);
+    expect(verified.out).toContain('room-codex-lead (ultra)');
+    expect(verified.out).toContain('automatic task delegation');
+    expect(verified.out).toContain('is unverified');
+    expect(verified.out).toContain('has not verified whether those closures prevent that option from delegating');
+    // Warning only: the operator's selection and the provider set are untouched.
+    const applied = await run(['setup', '--apply', '--json'], fixture.env, daemon);
+    expect(applied.code).toBe(0);
+    expect(applied.out).toContain('room-codex-lead (ultra)');
+    const appliedChecks = (JSON.parse(applied.out) as { checks: JsonCheck[] }).checks;
+    expect(appliedChecks.findIndex(check => check.id === 'room.applied'))
+      .toBeLessThan(appliedChecks.findIndex(check => check.id === 'room.thinking'));
+    expect(daemon.agentProfiles.find(entry => entry.id === 'room-codex-lead')?.thinkingOptionId).toBe('ultra');
+    expect(Object.keys(daemon.providers).sort()).toEqual(['codex-lead', 'codex-peer', 'codex-supervisor']);
+    // A profile the room does not own is not diagnosed, whatever it is set to.
+    daemon.agentProfiles.push({ id: 'mine', provider: 'codex', thinkingOptionId: 'ultracode' });
+    const others = await run(['verify'], fixture.env, daemon);
+    expect(others.out).not.toContain('mine (ultracode)');
+  });
+
+  it('names a missing scrubbed catalog as its own closure gap in the file drift failure', async () => {
+    const fixture = await makeFixture();
+    const daemon = emptyDaemon();
+    await run(['setup', '--apply'], fixture.env, daemon);
+    await rm(join(fixture.roomHome, 'roles/codex/peer/model-catalog.json'));
+    const verified = await run(['verify'], fixture.env, daemon);
+    expect(verified.code).toBe(1);
+    expect(verified.out).toContain('managed role files are missing or outdated');
+    expect(verified.out).toContain('One of them is a generated Codex model catalog');
+    expect(verified.out).toContain('lack the scrubbed catalog closure');
+
+    await rm(join(fixture.roomHome, 'roles/codex/lead/model-catalog.json'));
+    expect((await run(['verify'], fixture.env, daemon)).out).toContain('2 of them are generated Codex model catalogs');
+
+    // Ordinary contract drift says nothing about catalogs.
+    await run(['setup', '--apply'], fixture.env, daemon);
+    await writeFile(join(fixture.roomHome, 'roles/codex/peer/role-instructions.md'), 'stale\n');
+    const prompt = await run(['verify'], fixture.env, daemon);
+    expect(prompt.code).toBe(1);
+    expect(prompt.out).not.toContain('scrubbed catalog closure');
   });
 });

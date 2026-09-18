@@ -10,12 +10,26 @@ const markerSchema = z.object({
   version: z.string(),
   agents: z.array(z.enum(AGENT_IDS)).min(1),
   roles: z.array(z.enum(ROLES)).min(1),
+  /**
+   * The rendered contract generation this room was installed from. Optional because a room
+   * written before contract provenance existed has no digest, and such a marker must still
+   * parse rather than look like a foreign file.
+   */
+  contract: z.string().min(1).optional(),
 });
 export type Marker = z.infer<typeof markerSchema>;
 
 /** Deterministic on purpose: re-running setup must not show a phantom change. */
-export function renderMarker(version: string, agents: readonly AgentId[], roles: readonly Role[]): string {
-  return JSON.stringify({ version, agents: [...agents], roles: [...roles] } satisfies Marker, null, 2) + '\n';
+export function renderMarker(
+  version: string,
+  agents: readonly AgentId[],
+  roles: readonly Role[],
+  contract?: string,
+): string {
+  return JSON.stringify({
+    version, agents: [...agents], roles: [...roles],
+    ...(contract === undefined ? {} : { contract }),
+  } satisfies Marker, null, 2) + '\n';
 }
 
 /** Records what setup created, so verify and remove touch nothing else. */

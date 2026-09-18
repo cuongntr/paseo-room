@@ -1,4 +1,5 @@
-import type { Role } from '../roles.js';
+import { createHash } from 'node:crypto';
+import { ROLES, type Role } from '../roles.js';
 import {
   loadPromptAsset,
   type ContractKey,
@@ -19,6 +20,7 @@ const ROLE_KEYS = {
     'directiveIntegrity',
     'technicalNonInterference',
     'leadDiscoveryAndRecovery',
+    'observationAndAdvice',
     'escalationBoundaries',
   ],
   lead: [
@@ -34,6 +36,7 @@ const ROLE_KEYS = {
   peer: [
     'challengeSignals',
     'boundedOutcome',
+    'independentJudgment',
     'writingAndReviewScope',
     'noOrchestration',
     'reproducibleHandoff',
@@ -79,4 +82,21 @@ export function renderInstructions(kind: InstructionKind): string {
     ...instructionKeys(kind).map(key => loadPromptAsset('contract', key)),
     ...protocol(protocolKeys(kind)),
   ].join('\n\n') + '\n';
+}
+
+/** Every document the room composes, in one fixed order, so a digest over them is stable. */
+export const INSTRUCTION_KINDS = [...ROLES, 'workspace'] as const satisfies readonly InstructionKind[];
+
+/**
+ * Identifies the rendered contract generation a room was installed from.
+ *
+ * Derived from the composed documents rather than the package version: two packages that
+ * render identical contracts are the same generation, and editing one prompt asset without a
+ * release still changes the digest. Truncated because this is provenance an operator compares
+ * by eye, not a security claim.
+ */
+export function contractDigest(): string {
+  const hash = createHash('sha256');
+  for (const kind of INSTRUCTION_KINDS) hash.update(`${kind}\u0000${renderInstructions(kind)}\u0000`);
+  return `sha256:${hash.digest('hex').slice(0, 16)}`;
 }

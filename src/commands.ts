@@ -1,4 +1,4 @@
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { lstat, rm } from 'node:fs/promises';
 import metadata from '../package.json' with { type: 'json' };
 import { claudeAgent } from './agents/claude.js';
@@ -10,9 +10,9 @@ import { applyEntries, exists, planEntries, type Entry } from './fsops.js';
 import { layoutChecks, resolveLayout, roleHome, sharedRoom, type Layout, type Options } from './layout.js';
 import { checkDaemon, mergeProfiles, minimumPaseoVersion, profileMatches, providerMatches, withSession, type ClientFactory, type LiveProfile, type Session } from './paseo.js';
 import { fail, failed, hasFailure, pass, warn, type Check, type Operation, type Result } from './result.js';
-import { renderInstructions } from './room/instructions.js';
+import { contractDigest, renderInstructions } from './room/instructions.js';
 import { MARKER, readMarker, renderMarker, type Marker } from './room.js';
-import { profileId, providerId, providerLabel, ROLES, ROLE_COLOR, ROLE_ICON, ROLE_NOTES, ROLE_PASEO_TOOLS, ROLE_THINKING, type AgentId, type Role } from './roles.js';
+import { DELEGATING_THINKING, profileId, providerId, providerLabel, ROLES, ROLE_COLOR, ROLE_ICON, ROLE_NOTES, ROLE_PASEO_TOOLS, ROLE_THINKING, type AgentId, type Role } from './roles.js';
 
 export const AGENTS: Record<AgentId, Agent> = { codex: codexAgent, claude: claudeAgent, pi: piAgent };
 
@@ -110,8 +110,54 @@ async function buildDesired(layout: Layout, agents: readonly AgentId[], roles: r
       `Role authentication was not validated. Login instructions are managed at ${join(layout.roomHome, AUTHENTICATION_GUIDE)}.`,
       'After setup --apply, follow that guide or run: paseo-room auth login <agent> <role>'));
   }
-  entries.push({ kind: 'file', path: join(layout.roomHome, MARKER), content: renderMarker(metadata.version, agents, roles) });
+  entries.push({ kind: 'file', path: join(layout.roomHome, MARKER), content: renderMarker(metadata.version, agents, roles, contractDigest()) });
   return { entries, providers, profiles, checks };
+}
+
+/**
+ * The marker records which rendered contract generation installed this room, so an operator
+ * who upgrades the package can see that the seats now hold older text. A room installed
+ * before provenance existed has no digest, which is reported the same way rather than
+ * treated as a broken marker.
+ */
+function contractProvenance(previous: Marker | undefined): Check[] {
+  const digest = contractDigest();
+  if (!previous) return [];
+  if (previous.contract === digest) {
+    return [pass('room.contract', `Role contract generation ${digest} matches this package.`)];
+  }
+  const held = previous.contract === undefined
+    ? `was installed before the room recorded its contract generation (package ${previous.version})`
+    : `holds contract generation ${previous.contract}`;
+  return [warn('room.contract',
+    `This room ${held}; this package renders ${digest}. Managed role documents are rewritten by setup, and a running seat keeps the text it started with.`,
+    'Run: paseo-room setup --apply, then restart the affected seats.')];
+}
+
+/**
+ * `thinkingOptionId` is seeded once and the operator's afterwards, so a risky selection is
+ * reported rather than corrected. Nothing here changes provider selection, profile writes, or
+ * exit status.
+ */
+function thinkingDiagnostics(live: readonly LiveProfile[], desired: readonly Profile[]): Check[] {
+  const owned = new Set(desired.map(profile => profile.id));
+  const selected = live
+    .filter(entry => owned.has(String(entry.id)))
+    .filter(entry => DELEGATING_THINKING.some(option => option === entry.thinkingOptionId))
+    .map(entry => `${String(entry.id)} (${String(entry.thinkingOptionId)})`)
+    .sort();
+  if (selected.length === 0) return [];
+  return [warn('room.thinking',
+    `${String(selected.length)} room seats are set to a top reasoning option that Paseo describes as including automatic task delegation: ${selected.join(', ')}. Whether that option can actually delegate once the room has closed the native multi-agent paths is unverified: paseo-room has not verified whether those closures prevent that option from delegating, and left your selection in place.`,
+    `Choose a lower reasoning option for those seats in Paseo if you want the room's own defaults (${ROLE_THINKING.supervisor} for Supervisor, ${ROLE_THINKING.lead} for Lead and Peer).`)];
+}
+
+/** Catalog copies are one of the room's three native multi-agent closures, so their drift is named. */
+function fileDriftDetail(targets: readonly string[]): string {
+  const catalogs = targets.filter(target => target.endsWith(`${sep}model-catalog.json`));
+  if (catalogs.length === 0) return '';
+  const count = catalogs.length === 1 ? 'One of them is a generated Codex model catalog' : `${String(catalogs.length)} of them are generated Codex model catalogs`;
+  return ` ${count}, so those seats currently lack the scrubbed catalog closure rather than only older contract text.`;
 }
 
 interface Stale {
@@ -230,9 +276,11 @@ export async function setup(options: RunOptions = {}): Promise<Result> {
   return withSession(daemon.daemon, async session => {
     const { operations, liveProfiles } = await planRoom(session, desired, stale);
     const pending = operations.filter(operation => operation.action !== 'noop');
+    // Diagnostics last: nothing above may be reached only through a warning.
+    const preApplyDiagnostics = [...checks, ...contractProvenance(previous), ...thinkingDiagnostics(liveProfiles, desired.profiles)];
     if (!options.apply) {
       return {
-        command: 'setup', outcome: pending.length > 0 ? 'changes-planned' : 'ok', changed: false, checks, operations,
+        command: 'setup', outcome: pending.length > 0 ? 'changes-planned' : 'ok', changed: false, checks: preApplyDiagnostics, operations,
       } satisfies Result;
     }
     await applyEntries(desired.entries);
@@ -241,13 +289,21 @@ export async function setup(options: RunOptions = {}): Promise<Result> {
     if (stale.providerIds.length > 0) await session.removeProviders(stale.providerIds);
     // Profiles point at providers, so they are written once the providers exist — and
     // only when something changed, since one write replaces the host's whole array.
+    let appliedProfiles = liveProfiles;
     if (pending.some(operation => operation.kind === 'profile')) {
-      await session.writeProfiles(mergeProfiles(liveProfiles, desired.profiles, stale.profileIds));
+      appliedProfiles = mergeProfiles(liveProfiles, desired.profiles, stale.profileIds);
+      await session.writeProfiles(appliedProfiles);
     }
     await session.refresh(ids);
+    const appliedMarker: Marker = {
+      version: metadata.version, agents: [...agents], roles: [...ROLES], contract: contractDigest(),
+    };
     return {
       command: 'setup', outcome: 'ok', changed: pending.length > 0,
-      checks: [...checks, pass('room.applied', `Room ready at ${layout.roomHome} with ${String(ids.length)} Paseo providers.`)],
+      // Report success before non-blocking diagnostics so it cannot read as if a later pass
+      // cleared a warning. `appliedProfiles` is the exact array written above when one changed.
+      checks: [...checks, pass('room.applied', `Room ready at ${layout.roomHome} with ${String(ids.length)} Paseo providers.`),
+        ...contractProvenance(appliedMarker), ...thinkingDiagnostics(appliedProfiles, desired.profiles)],
       operations,
     } satisfies Result;
   }, sessionOptions(options));
@@ -272,22 +328,26 @@ export async function verify(options: RunOptions = {}): Promise<Result> {
   if (hasFailure(checks)) return failed('verify', checks);
 
   return withSession(daemon.daemon, async session => {
-    const { operations } = await planRoom(session, desired, NOTHING_STALE);
+    const { operations, liveProfiles } = await planRoom(session, desired, NOTHING_STALE);
     const drifted = operations.filter(operation => operation.action !== 'noop');
     const count = (kind: Operation['kind']): number => drifted.filter(operation => operation.kind === kind).length;
     const providers = count('provider');
     const profiles = count('profile');
-    const files = drifted.length - providers - profiles;
+    const driftedFiles = drifted.filter(operation => operation.kind !== 'provider' && operation.kind !== 'profile');
+    const files = driftedFiles.length;
     const all: Check[] = [...checks,
       files === 0
         ? pass('room.files', 'Every managed role file matches the current definition.')
-        : fail('room.files', `${String(files)} managed role files are missing or outdated.`, 'Run: paseo-room setup --apply'),
+        : fail('room.files', `${String(files)} managed role files are missing or outdated.${fileDriftDetail(driftedFiles.map(operation => operation.target))}`, 'Run: paseo-room setup --apply'),
       providers === 0
         ? pass('room.providers', `All ${String(Object.keys(desired.providers).length)} Paseo providers are registered as expected.`)
         : fail('room.providers', `${String(providers)} Paseo providers are missing or differ.`, 'Run: paseo-room setup --apply'),
       profiles === 0
         ? pass('room.profiles', `All ${String(desired.profiles.length)} Paseo agent profiles are registered as expected.`)
         : fail('room.profiles', `${String(profiles)} Paseo agent profiles are missing or differ.`, 'Run: paseo-room setup --apply'),
+      // Diagnostics last: a warning never precedes the failure it might be mistaken for.
+      ...contractProvenance(marker),
+      ...thinkingDiagnostics(liveProfiles, desired.profiles),
     ];
     return {
       command: 'verify', outcome: hasFailure(all) ? 'failed' : 'ok', changed: false, checks: all, operations,

@@ -14,6 +14,13 @@ export const ROLE_PASEO_TOOLS: Record<Role, boolean> = { supervisor: true, lead:
  */
 export const ROLE_THINKING: Record<Role, string> = { supervisor: 'low', lead: 'high', peer: 'high' };
 
+/**
+ * The top option on either agent, which Paseo advertises as maximum reasoning with automatic
+ * task delegation. Whether it can still delegate once the room has closed the native
+ * multi-agent paths is unverified, so selecting one is reported and never rejected.
+ */
+export const DELEGATING_THINKING = ['ultra', 'ultracode'] as const;
+
 /** Paseo profile appearance encodes the room role, independent of agent runtime. */
 export const ROLE_ICON: Record<Role, string> = { supervisor: 'eye', lead: 'compass', peer: 'code' };
 export const ROLE_COLOR: Record<Role, string> = { supervisor: 'violet', lead: 'blue', peer: 'emerald' };

@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readdir, readFile, readlink, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { claudeAgent, renderRoleMemory, renderRoleSettings, renderRoleState } from '../src/agents/claude.js';
@@ -111,5 +111,202 @@ describe('claudeAgent.build', () => {
     await writeFile(statePath, '{"numStartups":9}');
     await applyEntries(plan.entries);
     expect(await readFile(statePath, 'utf8')).toBe('{"numStartups":9}');
+  });
+});
+
+describe('claudeAgent.build resource distribution', () => {
+  async function operatorResources(home: string): Promise<void> {
+    const claude = join(home, '.claude');
+    await mkdir(join(claude, 'skills', 'formatting'), { recursive: true });
+    await mkdir(join(claude, 'skills', 'paseo-handoff'), { recursive: true });
+    await mkdir(join(claude, 'plugins'), { recursive: true });
+    await mkdir(join(claude, 'commands'), { recursive: true });
+    await mkdir(join(claude, 'hooks'), { recursive: true });
+    await mkdir(join(claude, 'rules'), { recursive: true });
+  }
+
+  it('keeps Supervisor and Lead sharing while Peer omits plugins, commands, and hooks', async () => {
+    const fixture = await makeFixture();
+    await operatorResources(fixture.home);
+    const layout = resolveLayout({}, fixture.env);
+    await applyEntries((await claudeAgent.build(layout, ['supervisor', 'lead', 'peer'])).entries);
+
+    const operator = layout.agentHome.claude;
+    for (const role of ['supervisor', 'lead'] as const) {
+      const home = join(layout.roomHome, 'roles/claude', role);
+      for (const name of ['skills', 'plugins', 'commands', 'hooks', 'rules']) {
+        expect(await readlink(join(home, name))).toBe(join(operator, name));
+      }
+    }
+    const peer = join(layout.roomHome, 'roles/claude/peer');
+    for (const name of ['plugins', 'commands', 'hooks']) {
+      await expect(lstat(join(peer, name))).rejects.toThrow();
+    }
+    // Non-executable operator content still reaches Peer as one shared alias.
+    expect(await readlink(join(peer, 'rules'))).toBe(join(operator, 'rules'));
+  });
+
+  it('projects Peer skills exactly, excluding paseo* orchestration skills', async () => {
+    const fixture = await makeFixture();
+    await operatorResources(fixture.home);
+    const layout = resolveLayout({}, fixture.env);
+    await applyEntries((await claudeAgent.build(layout, ['peer'])).entries);
+
+    const skills = join(layout.roomHome, 'roles/claude/peer/skills');
+    expect((await lstat(skills)).isSymbolicLink()).toBe(false);
+    expect(await readdir(skills)).toEqual(['formatting']);
+    expect((await readdir(join(layout.agentHome.claude, 'skills'))).sort()).toEqual(['formatting', 'paseo-handoff']);
+  });
+});
+
+describe('claudeAgent.build MCP conflict detection', () => {
+  it('fails before apply for a recognizable server in operator state', async () => {
+    const fixture = await makeFixture();
+    await writeFile(join(fixture.home, '.claude.json'), JSON.stringify({
+      hasCompletedOnboarding: true,
+      mcpServers: { bridge: { command: 'npx', args: ['-y', 'paseo-mcp'] } },
+    }));
+    const plan = await claudeAgent.build(resolveLayout({}, fixture.env), ['supervisor', 'lead', 'peer']);
+    const check = plan.checks.find(entry => entry.id === 'claude.mcp');
+    expect(check?.status).toBe('fail');
+    expect(check?.message).toContain('bridge (args: paseo-mcp)');
+    expect(plan.entries).toHaveLength(0);
+    expect(plan.binary).toBeUndefined();
+  });
+
+  it('fails for an existing role-owned .claude.json and inspects that key only', async () => {
+    const fixture = await makeFixture();
+    const layout = resolveLayout({}, fixture.env);
+    await applyEntries((await claudeAgent.build(layout, ['peer'])).entries);
+    const statePath = join(layout.roomHome, 'roles/claude/peer/.claude.json');
+    await writeFile(statePath, JSON.stringify({
+      numStartups: 9,
+      oauthAccount: { email: 'operator@example.test' },
+      mcpServers: { local: { url: 'http://127.0.0.1:6767/paseo' } },
+    }));
+
+    const plan = await claudeAgent.build(layout, ['peer']);
+    const check = plan.checks.find(entry => entry.id === 'claude.mcp.peer');
+    expect(check?.status).toBe('fail');
+    expect(check?.message).toContain(statePath);
+    expect(check?.message).toContain('local (url: http://127.0.0.1:6767/paseo)');
+    expect(check?.message).not.toContain('operator@example.test');
+    expect(plan.entries).toHaveLength(0);
+    // Runtime-owned state is never rewritten by the check.
+    expect(JSON.parse(await readFile(statePath, 'utf8'))).toMatchObject({ numStartups: 9 });
+  });
+
+  it('passes benign operator and role MCP declarations', async () => {
+    const fixture = await makeFixture();
+    await writeFile(join(fixture.home, '.claude.json'), JSON.stringify({
+      hasCompletedOnboarding: true, mcpServers: { docs: { command: 'uvx', args: ['mcp-server-docs'] } },
+    }));
+    const layout = resolveLayout({}, fixture.env);
+    const plan = await claudeAgent.build(layout, ['peer']);
+    expect(plan.checks.some(check => check.status === 'fail')).toBe(false);
+    await applyEntries(plan.entries);
+    const state = JSON.parse(await readFile(join(layout.roomHome, 'roles/claude/peer/.claude.json'), 'utf8')) as {
+      mcpServers?: Record<string, unknown>;
+    };
+    expect(state.mcpServers).toEqual({ docs: { command: 'uvx', args: ['mcp-server-docs'] } });
+    expect((await claudeAgent.build(layout, ['peer'])).checks.some(check => check.status === 'fail')).toBe(false);
+  });
+
+  it('fails when operator or role state cannot be read or parsed for MCP inspection', async () => {
+    const operatorFixture = await makeFixture();
+    await rm(join(operatorFixture.home, '.claude.json'));
+    await mkdir(join(operatorFixture.home, '.claude.json'));
+    const operatorPlan = await claudeAgent.build(resolveLayout({}, operatorFixture.env), ['peer']);
+    expect(operatorPlan.checks.find(check => check.id === 'claude.mcp')).toMatchObject({ status: 'fail' });
+    expect(operatorPlan.entries).toHaveLength(0);
+
+    const malformedFixture = await makeFixture();
+    await writeFile(join(malformedFixture.home, '.claude.json'), '{not json');
+    const malformedPlan = await claudeAgent.build(resolveLayout({}, malformedFixture.env), ['peer']);
+    expect(malformedPlan.checks.find(check => check.id === 'claude.mcp')).toMatchObject({ status: 'fail' });
+    expect(malformedPlan.entries).toHaveLength(0);
+
+    const roleFixture = await makeFixture();
+    const layout = resolveLayout({}, roleFixture.env);
+    await applyEntries((await claudeAgent.build(layout, ['peer'])).entries);
+    const roleState = join(layout.roomHome, 'roles/claude/peer/.claude.json');
+    await rm(roleState);
+    await mkdir(roleState);
+    const rolePlan = await claudeAgent.build(layout, ['peer']);
+    expect(rolePlan.checks.find(check => check.id === 'claude.mcp.peer')).toMatchObject({ status: 'fail' });
+    expect(rolePlan.entries).toHaveLength(0);
+  });
+});
+
+describe('claudeAgent.build MCP name drift', () => {
+  it('warns when an already-seeded role home no longer matches the operator MCP names, and changes nothing', async () => {
+    const fixture = await makeFixture();
+    const layout = resolveLayout({}, fixture.env);
+    await writeFile(join(fixture.home, '.claude.json'), JSON.stringify({
+      hasCompletedOnboarding: true, mcpServers: { docs: { command: 'uvx' } },
+    }));
+    await applyEntries((await claudeAgent.build(layout, ['peer'])).entries);
+
+    // The operator adds a server and the runtime records its own state afterwards.
+    await writeFile(join(fixture.home, '.claude.json'), JSON.stringify({
+      hasCompletedOnboarding: true, mcpServers: { docs: { command: 'uvx' }, sql: { command: 'sqlx' } },
+    }));
+    const statePath = join(layout.roomHome, 'roles/claude/peer/.claude.json');
+    const roleState = {
+      hasCompletedOnboarding: true, numStartups: 12,
+      oauthAccount: { email: 'operator@example.test' },
+      mcpServers: { docs: { command: 'uvx' }, legacy: { command: 'old' } },
+    };
+    await writeFile(statePath, JSON.stringify(roleState));
+    const before = await readFile(statePath, 'utf8');
+
+    const plan = await claudeAgent.build(layout, ['peer']);
+    const check = plan.checks.find(entry => entry.id === 'claude.mcp.drift.peer');
+    expect(check?.status).toBe('warn');
+    expect(check?.message).toContain('not declared for this role: sql');
+    expect(check?.message).toContain('declared only for this role: legacy');
+    expect(check?.message).toContain('only server names were compared');
+    expect(check?.message).toContain(statePath);
+    // No credential or history content reaches the diagnostic.
+    expect(check?.message).not.toContain('operator@example.test');
+    expect(check?.message).not.toContain('sqlx');
+    expect(check?.fix).toContain('claude mcp add');
+    expect(plan.checks.some(entry => entry.status === 'fail')).toBe(false);
+
+    // Seed-once state stays byte-identical, before and after applying the plan.
+    expect(await readFile(statePath, 'utf8')).toBe(before);
+    await applyEntries(plan.entries);
+    expect(await readFile(statePath, 'utf8')).toBe(before);
+  });
+
+  it('stays quiet for a matching role home and for one that has not been seeded yet', async () => {
+    const fixture = await makeFixture();
+    const layout = resolveLayout({}, fixture.env);
+    await writeFile(join(fixture.home, '.claude.json'), JSON.stringify({
+      hasCompletedOnboarding: true, mcpServers: { docs: { command: 'uvx' } },
+    }));
+    // Nothing seeded yet: there is no divergence to report about a file about to be written.
+    const first = await claudeAgent.build(layout, ['supervisor', 'lead', 'peer']);
+    expect(first.checks.some(entry => entry.id.startsWith('claude.mcp.drift.'))).toBe(false);
+    await applyEntries(first.entries);
+    const second = await claudeAgent.build(layout, ['supervisor', 'lead', 'peer']);
+    expect(second.checks.some(entry => entry.id.startsWith('claude.mcp.drift.'))).toBe(false);
+  });
+
+  // Fail before warn: a recognizable Paseo server must not arrive behind a drift warning.
+  it('reports the hard conflict alone when both conditions hold', async () => {
+    const fixture = await makeFixture();
+    const layout = resolveLayout({}, fixture.env);
+    await applyEntries((await claudeAgent.build(layout, ['peer'])).entries);
+    await writeFile(join(fixture.home, '.claude.json'), JSON.stringify({
+      hasCompletedOnboarding: true, mcpServers: { docs: { command: 'uvx' } },
+    }));
+    await writeFile(join(layout.roomHome, 'roles/claude/peer/.claude.json'), JSON.stringify({
+      mcpServers: { bridge: { command: 'paseo-mcp' } },
+    }));
+    const plan = await claudeAgent.build(layout, ['peer']);
+    expect(plan.checks.find(entry => entry.id === 'claude.mcp.peer')?.status).toBe('fail');
+    expect(plan.checks.some(entry => entry.id.startsWith('claude.mcp.drift.'))).toBe(false);
+    expect(plan.entries).toHaveLength(0);
   });
 });

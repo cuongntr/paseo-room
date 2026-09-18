@@ -30,6 +30,7 @@ describe('role instructions', () => {
       'Directive Integrity',
       'Technical Non-Interference',
       'Lead Discovery and Recovery',
+      'Observation and Advice',
       'Escalation Boundaries',
       ...PROTOCOL_HEADINGS,
     ]);
@@ -48,6 +49,7 @@ describe('role instructions', () => {
       ...SHARED_HEADINGS,
       'Challenge Signals',
       'Bounded Outcome',
+      'Independent Judgment',
       'Writing and Review Scope',
       'No Orchestration',
       'Reproducible Handoff',
@@ -114,9 +116,9 @@ describe('role instructions', () => {
     expect(lead).toContain('never a replacement or duplicate project Lead');
     expect(lead).toContain('Lead remains the owner, receives the review evidence');
     expect(lead).toContain('read list_profiles and select the exact current room Peer profile');
-    expect(lead).toContain('materialize every launch field present in that profile');
-    expect(lead).toContain('combine provider and model');
-    expect(lead).toContain('copy modeId, thinkingOptionId, and featureValues');
+    expect(lead).toContain('materialize its launch configuration field by field');
+    expect(lead).toContain('copy provider, modeId and featureValues exactly');
+    expect(lead).toContain('use model and thinkingOptionId as the defaults governed below');
     expect(lead).toContain('omit absent fields');
     expect(lead).toContain('daemon-added paseo.parent-agent-id matching this Lead');
     expect(lead).toContain('A cwd, title or provider label is not room membership');
@@ -143,6 +145,60 @@ describe('role instructions', () => {
     expect(lead).toContain('Lead owns one project across turns');
     expect(lead).toContain('A completed turn, idle state, or closed but unarchived, resumable session does not end that ownership');
     expect(lead).toContain('Human closes or reassigns the project');
+  });
+
+  // The brief carries the question, not the answer: a plan read as binding turns Peer into
+  // a typist and loses the independent judgment the second seat exists for.
+  it('keeps the Lead brief from pre-solving the work', () => {
+    const lead = renderInstructions('lead');
+    expect(lead).toContain('it does not pre-solve the work or embed the verdict');
+    expect(lead).toContain('Only the outcome, boundaries, invariants and required evidence bind');
+    expect(lead).toContain('provisional context that Peer may contradict with evidence');
+  });
+
+  it('tells Peer to form an independent, evidence-backed position', () => {
+    const peer = renderInstructions('peer');
+    expect(peer).toContain('## Independent Judgment');
+    expect(peer).toContain('rather than adopting Lead\'s framing because Lead sent it');
+    expect(peer).toContain('is provisional context, not the answer');
+    expect(peer).toContain('Agreement is a valid outcome when the evidence supports it');
+    expect(peer).toContain('do not manufacture objections to look independent');
+    expect(peer).toContain('it never becomes orchestration or self-acceptance');
+  });
+
+  // Observation is the positive half of Technical Non-Interference: Supervisor watches the
+  // process and advises, and still decides nothing technical.
+  it('gives Supervisor observation and advice without technical authority', () => {
+    const supervisor = renderInstructions('supervisor');
+    expect(supervisor).toContain('## Observation and Advice');
+    expect(supervisor).toContain('an authority gradient that suppresses Peer judgment');
+    expect(supervisor).toContain('a brief that pre-solves the work');
+    expect(supervisor).toContain('framing capture, moving scope, polling instead of event-driven waiting');
+    expect(supervisor).toContain('ask Lead an evidence-backed question');
+    expect(supervisor).toContain('Advice carries no technical authority');
+    expect(supervisor).toContain('propose a workspace protocol change to Human instead of imposing one');
+    expect(renderInstructions('peer')).not.toContain('## Observation and Advice');
+  });
+
+  // The room has no writer isolation, so the stricter local limit is stated as a divergence
+  // rather than quietly implying the model's per-scope rule.
+  it('states the one-writable-Peer limit as an unrelaxable local rule', () => {
+    const lead = renderInstructions('lead');
+    expect(lead).toContain('at most one active writable Peer across the project at a time');
+    expect(lead).toContain('deliberately stricter than one writer per moving scope');
+    expect(lead).toContain('No workspace protocol relaxes the limit');
+    expect(lead).toContain('concurrent writable Peers in isolated worktrees are not available here');
+  });
+
+  // Eligibility evidence and tuning are different claims: copying a profile exactly must not
+  // read as forbidding the task-risk policy the workspace protocol owns.
+  it('keeps Peer eligibility exact while model and thinking stay protocol-governed defaults', () => {
+    const lead = renderInstructions('lead');
+    expect(lead).toContain('Provider, mode, workspace, parent and feature values are eligibility evidence');
+    expect(lead).toContain("The profile's model and thinking values are defaults for the seat");
+    expect(lead).toContain('only where the workspace protocol explicitly supplies a task-risk model and effort policy');
+    expect(lead).toContain('Never select a thinking tier that advertises automatic task delegation');
+    expect(lead).toContain('no thinking tier grants Peer delegation');
   });
 
   it('gives Lead acceptance authority and Supervisor routing only', () => {
@@ -218,7 +274,7 @@ describe('prompt assets', () => {
 
     expect(registered).toEqual(files);
     expect(documentAssets.map(asset => asset.kind)).toEqual(Array(4).fill('head'));
-    expect(contractAssets.map(asset => asset.kind)).toEqual(Array(20).fill('section'));
+    expect(contractAssets.map(asset => asset.kind)).toEqual(Array(22).fill('section'));
     expect(workspaceAssets.map(asset => asset.kind)).toEqual(Array(4).fill('section'));
     expect(piAssets.map(asset => asset.kind)).toEqual(Array(2).fill('capsule'));
   });
