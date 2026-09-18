@@ -105,8 +105,8 @@ role home.
 
 `paseo-room` owns the model's first instruction layer outright: the role contract, in the
 canonical Markdown under `src/room/prompts/contract/`, delivered as
-`developer_instructions` (Codex), `CLAUDE.md` (Claude), and additive `APPEND_SYSTEM.md`
-content (Pi). Document heads and Pi-specific capsules live alongside it under
+`developer_instructions` (Codex), a creation-time `config.systemPrompt` append plus a
+`CLAUDE.md` degraded fallback (Claude), and additive `APPEND_SYSTEM.md` content (Pi). Document heads and Pi-specific capsules live alongside it under
 `src/room/prompts/`; `src/room/prompts.ts` is the typed registry and loader rather than a
 second prose source.
 
@@ -513,11 +513,13 @@ role-home environment family, Pi's append path, and a profile provider. This pro
 content and the live daemon configuration observed by the commands.
 
 The next link is a vendor contract, not something `paseo-room` can observe from outside the
-process: Codex ingests `developer_instructions` from its role `config.toml`, Claude ingests
-its role `CLAUDE.md`, and Pi ingests the generated file named by
-`--append-system-prompt`. Tests prove those exact carriers and arguments. They do not prove
-that a process already running when setup changed the files reloaded them, and neither setup
-nor verify can prove that a model obeyed instructions in a particular turn. Generated/live
+process: Codex ingests `developer_instructions` from its role `config.toml`; Paseo maps the
+Claude plugin's `config.systemPrompt` value to the Claude Code SDK preset's append field,
+with role `CLAUDE.md` retained as fallback; and Pi ingests the generated file named by
+`--append-system-prompt`. Tests prove the generated carriers, plugin hook composition and live
+registration/status. They do not prove that a process already running when setup changed the
+files reloaded them, or that a resumed Claude session re-enters the creation hook, and neither
+setup nor verify can prove that a model obeyed instructions in a particular turn. Generated/live
 configuration evidence, vendor-runtime ingestion contracts, and model behavior are three
 different claims.
 
@@ -549,25 +551,30 @@ shipping a full copy of the vendor's system prompt — and re-shipping it on eve
 release, or silently degrading every seat when the vendor's prompt moves on.
 
 The role contract is additive by nature, so it goes in the additive channel:
-`developer_instructions` for Codex, `CLAUDE.md` (user memory) for Claude, and the generated
-Pi append passed with `--append-system-prompt`.
+`developer_instructions` for Codex, a room-owned Paseo `before('agent.create')` hook that
+writes `AgentSessionConfig.systemPrompt` for Claude, and the generated Pi append passed with
+`--append-system-prompt`. Claude's generated `CLAUDE.md` remains as a degraded and resume
+fallback.
 
 Pinning the base prompt for stability is a legitimate thing to want, but it is the
 operator's decision about their own installation, not the room's. If you set
 `model_instructions_file` yourself, the room copies it through untouched.
 
-The Claude side is weaker than the Codex side, and it is worth knowing why:
-`developer_instructions` is an instruction field, while `CLAUDE.md` is user memory that a
-project-level `CLAUDE.md` can dilute. That is a carrier limitation, not an oversight. Paseo
-launches Claude through the Claude Agent SDK rather than as a plain CLI process, so there is
-no provider-owned argv into which a stronger append could be inserted; `--system-prompt`
-would be the replace path this section exists to refuse, and inventing a command-line prompt
-hack around the SDK is deliberately not attempted. Paseo's
-`AgentSessionConfig.systemPrompt` would be the strong equivalent, but it is set per agent at
-creation time and cannot be pinned from a provider entry. A provider-owned SDK
-`systemPrompt.append` field is the real fix and it belongs upstream in Paseo. Until it exists,
-the room keeps the contract short enough to survive dilution and states the limit here rather
-than claiming parity with Codex.
+Paseo launches Claude through the Claude Agent SDK rather than as a plain CLI process, so
+there is no provider-owned argv into which a stronger append can be inserted;
+`--system-prompt` remains the replace path this section refuses. Paseo 0.8 maps
+`AgentSessionConfig.systemPrompt` to the Claude Code preset's SDK `append` field, but that
+value is set per agent at creation time and cannot be pinned from a provider entry. The
+room-owned, version-bounded server plugin supplies it at the `before('agent.create')` seam,
+targeting only exact room Claude provider ids and preserving any caller prompt. The full
+lifecycle and trust rationale is in
+[claude-strong-contract-carrier.md](design/claude-strong-contract-carrier.md).
+
+This stronger carrier is still bounded evidence: the room proves generated content, live
+plugin registration/status, and deterministic composition, not model obedience. Only newly
+created sessions pass through the hook; resume behavior is unproven, which is why
+`CLAUDE.md` remains. Missing or failed plugin state makes Claude setup/verify fail rather than
+silently claiming the stronger guarantee.
 
 ## 7. Deliberate non-goals
 
@@ -613,9 +620,9 @@ than claiming parity with Codex.
   shell access is not contained by it. Withholding executable resources and `paseo*` skills
   (§2b) is capability hygiene, and the MCP check is a bounded heuristic (§2a); neither is
   containment of a process that can run arbitrary code.
-- **No Claude command-line prompt workaround.** The weaker `CLAUDE.md` carrier (§6) is a
-  consequence of Paseo launching Claude through the Agent SDK. The fix is a provider-owned SDK
-  append field upstream in Paseo, not an argv hack invented here.
+- **No Claude command-line prompt workaround.** Claude's strong carrier (§6) uses Paseo's
+  creation-time SDK append seam through the room-owned plugin. It does not invent an argv hack,
+  replace the vendor prompt, or treat `CLAUDE.md` as equivalent to an instruction-layer append.
 
 `remove` is intentionally stronger than setup/update: after its dry-run warning and explicit
 `--apply`, it recursively deletes the room home, including role-owned credential files. It

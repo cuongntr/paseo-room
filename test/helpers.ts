@@ -1,8 +1,7 @@
 import { chmod, mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { PaseoClient } from '@getpaseo/client';
-import type { ClientFactory } from '../src/paseo.js';
+import type { ClientFactory, RoomClient } from '../src/paseo.js';
 
 export interface Fixture {
   readonly home: string;
@@ -63,16 +62,28 @@ export async function nodeScript(path: string, source: string): Promise<void> {
   await chmod(path, 0o755);
 }
 
+export interface FakePlugin {
+  id: string;
+  path: string;
+  enabled: boolean;
+  status: string;
+  error?: string;
+}
 export interface FakeDaemon {
   providers: Record<string, unknown>;
   agentProfiles: Record<string, unknown>[];
   refreshed: string[];
   connects: number;
+  pluginsEnabled?: boolean;
+  plugins?: FakePlugin[];
+  pluginReloads?: number;
+  pluginLists?: number;
   /** One-shot fault seam for recovery tests after a command has already connected. */
   failNextConfigGet?: boolean;
+  failNextPluginRemove?: boolean;
 }
 export function emptyDaemon(): FakeDaemon {
-  return { providers: {}, agentProfiles: [], refreshed: [], connects: 0 };
+  return { providers: {}, agentProfiles: [], refreshed: [], connects: 0, pluginsEnabled: true, plugins: [], pluginReloads: 0, pluginLists: 0 };
 }
 /** Stands in for the Paseo daemon: config.get/patch over an in-memory object. */
 export function fakeClient(state: FakeDaemon): ClientFactory {
@@ -85,7 +96,11 @@ export function fakeClient(state: FakeDaemon): ClientFactory {
           state.failNextConfigGet = false;
           return Promise.reject(new Error('synthetic config read failure'));
         }
-        return Promise.resolve({ config: { providers: state.providers, agentProfiles: state.agentProfiles } });
+        return Promise.resolve({ config: {
+          providers: state.providers,
+          agentProfiles: state.agentProfiles,
+          pluginsEnabled: state.pluginsEnabled ?? true,
+        } });
       },
       patch: (patch: { providers?: Record<string, unknown>; removeProviders?: string[]; agentProfiles?: Record<string, unknown>[] }) => {
         if (patch.providers) Object.assign(state.providers, patch.providers);
@@ -99,5 +114,38 @@ export function fakeClient(state: FakeDaemon): ClientFactory {
     providers: {
       refresh: (options: { providers: string[] }) => { state.refreshed = options.providers; return Promise.resolve({ acknowledged: true }); },
     },
-  } as unknown as PaseoClient);
+    listPlugins: () => {
+      state.pluginLists = (state.pluginLists ?? 0) + 1;
+      return Promise.resolve(state.plugins ?? []);
+    },
+    installDirectoryPlugin: (path: string, id?: string) => {
+      const plugin: FakePlugin = { id: id ?? 'paseo-room-claude-carrier', path, enabled: true, status: 'running' };
+      state.plugins = [...(state.plugins ?? []).filter(entry => entry.id !== plugin.id), plugin];
+      return Promise.resolve(plugin);
+    },
+    reloadPlugin: (id: string) => {
+      state.pluginReloads = (state.pluginReloads ?? 0) + 1;
+      const plugin = (state.plugins ?? []).find(entry => entry.id === id);
+      if (!plugin) return Promise.reject(new Error(`missing plugin ${id}`));
+      delete plugin.error;
+      plugin.enabled = true;
+      plugin.status = 'running';
+      return Promise.resolve(plugin);
+    },
+    enablePlugin: (id: string) => {
+      const plugin = (state.plugins ?? []).find(entry => entry.id === id);
+      if (!plugin) return Promise.reject(new Error(`missing plugin ${id}`));
+      plugin.enabled = true;
+      plugin.status = 'running';
+      return Promise.resolve(plugin);
+    },
+    removePlugin: (id: string) => {
+      if (state.failNextPluginRemove === true) {
+        state.failNextPluginRemove = false;
+        return Promise.reject(new Error('synthetic plugin remove failure'));
+      }
+      state.plugins = (state.plugins ?? []).filter(entry => entry.id !== id);
+      return Promise.resolve();
+    },
+  } as unknown as RoomClient);
 }

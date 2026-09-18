@@ -64,9 +64,12 @@ starts, its exit code is preserved; a signal is returned using the conventional
 ## Requirements
 
 - Node 22 or newer, macOS or Linux.
-- A running Paseo daemon with CLI and daemon on the same version. Codex and Claude require
-  **0.8.0-beta.1 or newer**; any selection containing Pi requires **0.8.0 or newer**.
-  `paseo-room` checks this before touching anything, and never installs or upgrades Paseo.
+- A running Paseo daemon with CLI and daemon on the same version. Codex requires
+  **0.8.0-beta.1 or newer**; any selection containing Claude or Pi requires **0.8.0 or newer**.
+  Claude also requires Paseo plugins to be enabled explicitly: the generated trusted server plugin
+  is the strong contract carrier, and `paseo-room` never enables plugins for you. The plugin is
+  version-bounded to `>=0.8.0 <0.9.0`. `paseo-room` checks compatibility before touching anything,
+  and never installs or upgrades Paseo.
 - An initialised Codex home (`~/.codex/config.toml`) and/or Claude Code home (`~/.claude`).
   Codex must be new enough for `codex debug models` to print its JSON model catalog: the room
   seats Codex only if it can generate the scrubbed catalog copy.
@@ -86,6 +89,9 @@ starts, its exit code is preserved; a signal is returned using the conventional
   room.json                       # what this CLI created; verify and remove read it
   AUTHENTICATION.md               # exact per-role login commands; contains no secrets
   room/WORKSPACE_PROTOCOL.md      # the default protocol every seat carries, as one readable file
+  plugin/                         # Claude only: trusted creation-time system-prompt append carrier
+    paseo-plugin.json             # accepts Paseo >=0.8.0 <0.9.0
+    index.server.ts, server/      # exact provider map + generated role contracts
   roles/codex/<role>/
     config.toml                   # your config.toml + the room's overrides
     role-instructions.md          # readable copy of what this seat was told
@@ -237,18 +243,20 @@ holding older contract text.
 
 **The room never replaces an agent's base prompt.** Codex's `model_instructions_file`,
 Claude's `--system-prompt` and Pi's `SYSTEM.md` / `--system-prompt` all *replace* the vendor
-system prompt; using them would mean
-vendoring a full copy of that prompt and re-vendoring it on every agent release. The role
-contract is additive instead: `developer_instructions` for Codex, `CLAUDE.md` for Claude,
-and the generated Pi `APPEND_SYSTEM.md` passed with `--append-system-prompt` for Pi. Pi keeps
-normal project `AGENTS.md` / `CLAUDE.md` context loading.
+system prompt; using them would mean vendoring a full copy of that prompt and re-vendoring it
+on every agent release. The role contract is additive instead: `developer_instructions` for
+Codex, a room-owned Paseo creation hook that writes `config.systemPrompt` for Claude, and the
+generated Pi `APPEND_SYSTEM.md` passed with `--append-system-prompt` for Pi. Pi keeps normal
+project `AGENTS.md` / `CLAUDE.md` context loading.
 
-Claude's carrier is the weakest of the three, and knowingly so. `CLAUDE.md` is user memory,
-which a project-level `CLAUDE.md` can dilute, and Paseo runs Claude through the Claude Agent
-SDK rather than as a plain CLI process — so there is no provider-owned command line to append
-a stronger prompt through, and no CLI flag is proposed here. The real fix is a
-provider-owned SDK append field in Paseo itself. Until that exists, the room keeps the
-contract short and states the limit instead of implying parity with Codex.
+For Claude, Paseo maps `config.systemPrompt` to the Claude Code preset's SDK `append` field,
+so the native prompt remains intact while the generated role contract enters the instruction
+layer. The trusted plugin targets only exact `claude-supervisor`, `claude-lead`, and
+`claude-peer` room providers and skips internal agents; existing caller prompt text is
+preserved. `CLAUDE.md` remains unchanged as a degraded and resume fallback. `verify` fails if
+the plugin is absent, disabled, failed, registered from another path, or drifted, because a
+silently missing carrier is not a guarantee. The hook runs for newly created sessions;
+recreate an existing Claude session after setup or an update.
 
 Pi providers use a strict command tail:
 

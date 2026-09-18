@@ -23,15 +23,18 @@ That design is in git history before the `v2` rewrite. Do not reintroduce it.
 - **No transaction machinery.** A failed `setup` is fixed by running `setup` again. Explicit
   `remove --apply` deletes the room home, including role-owned credential files, after warning.
 - **Compatibility is one check.** `paseo daemon status --json` must report a running daemon,
-  matching CLI and daemon versions, and `>= 0.8.0-beta.1`; a selection containing Pi raises
-  that floor to `>= 0.8.0`.
+  matching CLI and daemon versions, and `>= 0.8.0-beta.1`; a selection containing Claude or Pi
+  raises that floor to `>= 0.8.0`.
 - **Copy the operator's config, override the minimum.** Never rewrite someone's model, MCP
   servers, or hooks. Pi role settings omit package and extension declarations so startup
   cannot install packages or discover unrelated extensions.
 - **Add to a base prompt, never replace it.** `model_instructions_file` (Codex) and
-  `--system-prompt` (Claude) replace the vendor prompt and would force us to vendor a copy
-  of it. Role text goes in `developer_instructions` / `CLAUDE.md` / Pi's additive
-  `APPEND_SYSTEM.md`.
+  `--system-prompt` (Claude) replace the vendor prompt and would force us to vendor a copy.
+  Role text goes in `developer_instructions`, Claude's room plugin `config.systemPrompt` append
+  with `CLAUDE.md` as degraded fallback, and Pi's additive `APPEND_SYSTEM.md`.
+- **Claude's strong carrier is a required trusted plugin.** It is bounded to Paseo
+  `>=0.8.0 <0.9.0`, appends only for exact room Claude provider ids at agent creation, and
+  retains `CLAUDE.md` as degraded/resume fallback. Require `pluginsEnabled`; never set or infer it.
 - **Pin at the provider level whatever the agent's own config cannot guarantee.** A Paseo
   provider entry outranks the agent config: `params` for Codex sandbox/approval,
   `disallowedTools` and environment pins for Claude's native agent surfaces.

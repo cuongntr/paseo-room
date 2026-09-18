@@ -1,0 +1,301 @@
+# Claude Strong Contract Carrier — Technical Design
+
+| Field | Value |
+|---|---|
+| Status | Active |
+| Owner | Repository owner |
+| Requirements source | [Accepted change: Strong Claude contract carrier](../plans/role-contract-markdown-change-001-strong-claude-carrier.md), narrowing the [Role Contract Maintainability and Paseo Runtime Guard PRD](../product/role-contract-and-plugin-prd.md) |
+| Related ADRs | N/A — no ADR directory or governing ADR exists |
+| Routing decision | Brownfield; new required runtime dependency on a preview Paseo API, trusted-plugin boundary, prompt-carrier change; Technical Design → Implementation Plan → Beads; decided 2026-09-18 by Repository owner; supersedes the PRD Phase 2 feasibility gate for this carrier only |
+
+## Routing Decision
+
+- **Variant preset:** brownfield.
+- **Triggered risks:** new required dependency on a preview Paseo API; trusted-plugin boundary; model-facing prompt carrier; generated-state and live-daemon compatibility; multi-session resume behaviour.
+- **Required artifacts/gates:** accepted delta-change, Technical Design (`design-ready`), Implementation Plan (`plan-ready-for-beads`), feature closure (`feature-done`). No PRD amendment: the accepted PRD stays frozen and the delta-change records the narrowing.
+- **Execution path:** plan → converter → implementation.
+- **Exceptions:** proceeding on the Paseo 0.8 preview plugin API rather than waiting for a stable API, accepted by the repository owner on 2026-09-18 and fenced by the manifest bound `>=0.8.0 <0.9.0`.
+- **Decided:** 2026-09-18 — Repository owner.
+- **Supersedes:** the PRD Phase 2 plugin feasibility gate, for this carrier only.
+
+## 1. Boundaries
+
+**This design owns:**
+
+- a bundled, room-owned Paseo **server** plugin that appends the rendered role contract to
+  `config.systemPrompt` in a `before('agent.create')` hook, for exact room Claude provider ids;
+- the plugin's manifest version bound `>=0.8.0 <0.9.0` and its generated source files as managed
+  entries under `~/.paseo-room`;
+- daemon registration, status inspection, reload, and deregistration of that plugin through the Paseo
+  API, plus the `pluginsEnabled` precondition check;
+- `setup`/`verify`/`remove` behaviour, diagnostics, and drift semantics for all of the above;
+- the compatibility floor a Claude selection now implies; and
+- the documentation changes that state what the two Claude carriers each prove.
+
+**This design does NOT own:**
+
+- the role contract text, its composition, the Markdown asset tree, or `renderInstructions()`;
+- the `CLAUDE.md` carrier, which is unchanged;
+- Codex and Pi carriers, providers, profiles, credentials, role homes, or CLI flags;
+- any plugin client entry, UI surface, panel, RPC, slash command, timeline row, or theme;
+- any runtime guard, policy enforcement, duplicate-Lead prevention, or parentage validation — those
+  remain PRD REQ-014/REQ-015 behind the Phase 2 decision;
+- enabling `pluginsEnabled`, or installing/upgrading Paseo, Claude, or anything outside the room home;
+- replacing a vendor system prompt; and
+- proving that a model ingested the injected prompt.
+
+## 2. Architecture
+
+```text
+paseo-room setup --apply  (selection contains claude)
+  │
+  ├─ managed entries under ~/.paseo-room/plugin/
+  │    paseo-plugin.json          id, description, requirements.paseo = ">=0.8.0 <0.9.0"
+  │    package.json  tsconfig.json
+  │    index.server.ts            before('agent.create') hook, no client entry
+  │    server/carrier.ts          marker-delimited idempotent composition rule
+  │    server/contract.ts         generated: provider-id → rendered role document, + generation
+  │
+  └─ Paseo API, same session as provider/profile writes
+       read   config.pluginsEnabled          → precondition, never written
+       read   plugin.list                    → id, path, enabled, status, error
+       write  plugin.directory.install(path) → register the room plugin directory
+       write  plugin.reload(id)              → adopt regenerated source after an apply
+       write  plugin.remove(id)              → on remove --apply, before deleting the room home
+
+runtime (daemon)
+  agent.create(config.provider = paseo-room room Claude provider id)
+    → hook appends the room block to config.systemPrompt
+    → Paseo's Claude provider maps it to the Agent SDK
+      { type: "preset", preset: "claude_code", append }
+    → vendor prompt kept, room contract appended
+
+unchanged, in parallel
+  <role home>/CLAUDE.md = operator memory + role document   (degraded / resume fallback)
+```
+
+The plugin is deliberately **dependency-free**: the daemon compiles the installed directory as-is, so
+no module in it imports the plugin SDK, the Paseo client, or any package. The types it needs are
+declared locally, describing only the fields the hook reads or writes. This keeps the room from
+installing `node_modules` into a generated directory and lets this repository unit-test the
+composition rule as ordinary TypeScript.
+
+`server/contract.ts` is **generated by `setup`**, not authored. It contains the rendered role document
+per room Claude provider id plus the contract generation string. There is therefore still exactly one
+authoritative prose source (`src/room/prompts/**`); the plugin holds a generated copy in the same
+sense `CLAUDE.md` does.
+
+### 2.1 Why creation time, and why this is the strong channel
+
+[`docs/design.md` §6](../design.md) refuses every replace-the-prompt path and records that Paseo
+launches Claude through the Agent SDK, leaving no provider-owned argv for an additive append, and that
+`AgentSessionConfig.systemPrompt` is the strong equivalent but is set per agent at creation time. The
+`before('agent.create')` hook is precisely that creation-time seam. The hook **appends** to whatever
+prompt the caller already asked for, so the vendor preset is preserved and §6's refusal stands.
+
+`config.systemPrompt` is an instruction-layer input rather than user memory, so unlike `CLAUDE.md` it
+is not diluted by a project-level `CLAUDE.md`. That is the entire benefit being bought.
+
+### 2.2 Scope of the hook
+
+The hook returns its input unchanged unless every condition holds:
+
+1. `request.config.internal !== true` — Paseo's own ephemeral system agents are not room seats;
+2. `request.config.provider` is an **exact** room Claude provider id from the generated contract map —
+   an operator's own Claude provider is never touched; and
+3. composition would actually change the string — an already-carried, same-generation prompt is
+   returned unchanged.
+
+## 3. Data Model
+
+None. No persisted schema changes. `room.json` keeps its existing optional `contract` digest, which is
+reused verbatim as the plugin's contract generation marker so the two provenance stories cannot
+disagree.
+
+## 4. API / Consumed Contract
+
+Preview Paseo plugin contracts, consumed through the existing `@getpaseo/client` session:
+
+| Operation | Direction | Use |
+|---|---|---|
+| daemon config `pluginsEnabled` | read | Precondition. A missing field is `false`. Never written. |
+| `plugin.list` | read | Registered id, `path`, `enabled`, `status` (`running` / `failed` / `disabled`), `error`. |
+| `plugin.directory.install(path, id)` | write | Register `~/.paseo-room/plugin` under the room's plugin id. |
+| `plugin.reload(id)` | write | Adopt regenerated source after `setup --apply` rewrote it. |
+| `plugin.remove(id)` | write | Deregister on `remove --apply`. Configuration only; the directory is deleted by the existing room-home removal. |
+
+Plugin manifest contract, consumed by the daemon: `requirements.paseo = ">=0.8.0 <0.9.0"`. The daemon
+checks this before installing and again on startup, enable, and reload, and refuses an out-of-range
+plugin with a named diagnostic. That refusal is the intended behaviour on a future 0.9 daemon.
+
+No `paseo-room` public API, CLI flag, room path outside `~/.paseo-room`, provider field, or profile
+field changes.
+
+## 5. Integration & Events
+
+One event: the daemon-side `agent.create` before-hook. No outbound network calls, no external service,
+no scheduled work, and no client-side contribution.
+
+## 6. Security
+
+- **Trust.** The plugin is trusted, unsandboxed daemon code with access to the daemon machine. It is
+  room-authored, imports nothing, and registers exactly one hook that only rewrites one field of one
+  request shape. It is not a sandbox and must never be documented as one.
+- **Operator consent is explicit.** `pluginsEnabled` is read and, when false or absent, reported as an
+  actionable failure with the trust warning and the exact operator action. The room never sets,
+  patches, or infers it — the same rule as the existing refusal to rewrite operator control-plane
+  configuration.
+- **Blast radius on absence is degradation, never permission.** With the plugin missing, disabled,
+  failed, or version-refused, no seat gains a tool, authority, or a native multi-agent path. Provider
+  `disallowedTools`, environment pins, `paseoTools`, role-home isolation, and `CLAUDE.md` are all
+  untouched by plugin state.
+- **No credential contact.** The plugin reads no credential, no operator home, and no file outside
+  its own generated directory. Generated files keep the room's existing `0600` file / `0700` directory
+  modes.
+- **Managed-path ownership.** The plugin directory is an ordinary managed `dir` with managed `file`
+  children, so the existing shape rules apply: a managed path may replace only an absent path or the
+  same shape, renamed in from a temporary sibling. Exact directory ownership is **not** claimed, so
+  the room never deletes an unrecognised sibling under it.
+
+## 7. Reliability
+
+No caching, retries, or jobs. Registration happens in the one existing per-command Paseo session. A
+failed registration is fixed by running `setup` again — `AGENTS.md`'s no-transaction-machinery rule is
+preserved. Setup keeps the previous `room.json` marker until provider, profile, and plugin reconciliation
+all succeed, so a failed deselection retry still knows that the old Claude plugin must be removed.
+
+## 8. Interaction Flow
+
+### 8.1 `setup` (dry run, Claude selected)
+
+1. Compatibility check: a selection containing Claude requires a daemon `>= 0.8.0`, on the same footing
+   as Pi.
+2. Read `pluginsEnabled`. If false or absent, report the failure with the trust warning and the
+   operator action; the plan is still shown, and nothing is written.
+3. Plan the plugin directory and files with the generated contract for the selected Claude roles.
+4. Compare against the live plugin registration and the on-disk files, and report the diff exactly as
+   every other managed entry and provider comparison is reported.
+
+### 8.2 `setup --apply`
+
+1. Write the plugin files as managed entries.
+2. Register the directory when it is not registered; `plugin.reload(id)` when it is, so the daemon
+   adopts regenerated source.
+3. Report the resulting `status`; a `failed` status is a failure, with the plugin's own load error
+   surfaced.
+4. Existing restart guidance applies unchanged and now also covers the creation-time carrier: only a
+   **newly created** Claude agent goes through the hook.
+
+### 8.3 `verify` (Claude selected)
+
+Fails when any of the following holds:
+
+- `pluginsEnabled` is false or absent;
+- the room plugin id is not registered, is registered at a different path, or is disabled;
+- its `status` is `failed`, or the daemon reports a version-range refusal;
+- an on-disk plugin file is missing or differs from the desired content; or
+- the generated contract generation differs from what the installed package renders.
+
+This is failure, not warning, for the same reason provider pin drift is: a carrier that can be
+silently dropped is not a guarantee. `CLAUDE.md` drift keeps its existing failure behaviour, so the
+degraded fallback is still proven independently.
+
+### 8.4 `remove --apply`
+
+`plugin.remove(id)` runs with the existing provider/profile cleanup, before the room home is deleted.
+`pluginsEnabled` is left as the operator set it. A cleanup failure preserves the room home and its
+marker, exactly as the current removal contract does.
+
+### 8.5 Degraded runtime paths
+
+| Condition | Effect on a Claude seat | Diagnostic |
+|---|---|---|
+| `pluginsEnabled` false/absent | `CLAUDE.md` only | `verify` fails, names the operator action |
+| Plugin not registered / disabled / removed | `CLAUDE.md` only | `verify` fails, asks for `setup --apply` |
+| Plugin `status: failed` | `CLAUDE.md` only | `verify` fails and surfaces the load error |
+| Daemon outside `>=0.8.0 <0.9.0` | `CLAUDE.md` only | `verify` fails, naming the version bound |
+| Session resumed rather than created | Unproven whether the hook re-runs or an earlier prompt persists | Documented limitation; `CLAUDE.md` covers it |
+
+## 9. Testing Strategy
+
+Vitest, real temporary `$HOME` fixtures, fake executables and a fake daemon client — the existing
+repository patterns. No new framework, no new dependency.
+
+- **Composition rule (unit):** appends rather than replaces; the room block is always last and marked;
+  composing twice with the same generation returns an identical string; an existing prompt with an
+  older generation is rewritten in place instead of gaining a second copy; empty/undefined input
+  yields the block alone.
+- **Hook selection (unit):** internal agents skipped; unknown and operator Claude provider ids
+  returned unchanged; exact room provider ids rewritten; a no-op composition returns the original
+  object.
+- **Generated files (integration):** exact desired content for manifest, entries, and generated
+  contract; the manifest declares `>=0.8.0 <0.9.0`; the rendered contract equals
+  `renderInstructions()` for that role, so the two Claude carriers cannot diverge; the plugin source
+  contains no import of any package or SDK.
+- **Command behaviour (integration):** dry run writes nothing; `pluginsEnabled` false fails with the
+  operator action; install on first apply, reload on a subsequent apply; `failed` status fails;
+  registration-path drift, file drift, disabled state, and generation drift each fail `verify`;
+  `remove --apply` deregisters before deleting and leaves `pluginsEnabled` alone; a Codex/Pi-only
+  selection plans and registers no plugin.
+- **Non-regression (integration):** `CLAUDE.md` content, provider `disallowedTools`, environment pins,
+  `paseoTools`, profiles, role-home isolation, and credential preserve-only behaviour are byte- and
+  behaviour-identical with the plugin present, absent, and failed.
+- **Package boundary:** the existing packed-package test's asset inventory extends to the plugin source
+  assets, so a published package cannot be missing them.
+
+Runtime ingestion is deliberately **not** asserted: no test claims the model received the injected
+prompt. Evidence stops at the generated content, the live registration and status, and the composition
+result.
+
+Minimum acceptable coverage is requirement-based, consistent with the repository's existing position:
+every failure and degradation boundary in §8 has automated evidence. No percentage threshold is
+introduced.
+
+## 10. Phase Scope Summary
+
+- **In this change:** the required carrier, its registration/verification/removal lifecycle, and the
+  documentation of what each carrier proves.
+- **Deferred, unchanged:** PRD REQ-014/REQ-015 plugin guards, room-health UI, RPC surfaces, and every
+  remaining Phase 2 feasibility question. This design supersedes the Phase 2 gate **only** for this
+  carrier.
+
+## 11. Backward Compatibility / Migration
+
+**Preserved:** CLI flags, room paths outside the new plugin directory, provider and profile
+identities, role homes, credential ownership, Paseo tool policy, all three existing prompt carriers
+including `CLAUDE.md` byte-for-byte, and the contract digest semantics.
+
+**New requirement:** a Claude selection now requires a daemon `>= 0.8.0` and an operator-enabled
+plugin catalog. A Claude room on an older daemon or with plugins disabled is a **failing** room, not a
+silently degraded one.
+
+**Migration:** run `setup` to inspect, `setup --apply` to write and register, then restart the affected
+seats. Only newly created Claude agents pass through the hook; an already-running seat keeps the text
+it started with, which is the same rule §5c already states for the file carriers.
+
+**Rollback:** reinstall the prior `paseo-room` version and run its `setup --apply`. That version does
+not manage the plugin, so remove the stale registration with `paseo plugin remove <id>` (or from
+Settings → Plugins) — a stale registration pointing at a deleted directory would otherwise show as a
+failed plugin. Role-owned credentials and operator homes are untouched. `pluginsEnabled` is the
+operator's either way.
+
+**R3:** not applicable. No destructive, irreversible, schema, or credential action is introduced.
+Plugin registration is reversible through the same API, and the prior package deterministically
+restores the prior file bytes.
+
+## 12. Open Questions
+
+| ID | Question | Owner | Status |
+|---|---|---|---|
+| Q-001 | Does a resumed Claude session re-invoke `before('agent.create')`, or does it carry a previously injected prompt? | Repository owner | open — not blocking. `CLAUDE.md` is retained precisely because this is unproven, and no claim is made either way. |
+| Q-002 | Should the room plugin be published as a separate package rather than bundled? | Repository owner | answered — bundled and generated by `setup`, so the plugin cannot hold a contract generation the installed package does not render. PRD Q-005 stays open for any future guard/UI plugin. |
+| Q-003 | Will the plugin need re-verification against the 0.9 plugin API? | Repository owner | deferred — the `<0.9.0` bound makes a 0.9 daemon a named, failing degradation rather than a silent one. |
+
+No blocking question remains for this carrier.
+
+## 13. Revision History
+
+| Date | Author | Change |
+|---|---|---|
+| 2026-09-18 | Bytes | Created Active for the accepted strong Claude carrier: required bundled server plugin, creation-time `config.systemPrompt` append, retained `CLAUDE.md` fallback, explicit `pluginsEnabled` opt-in, and fail-closed Claude verification. |
+| 2026-09-18 | Bytes | Implementation alignment: documented delayed marker replacement so a failed plugin deselection remains rerunnable. |

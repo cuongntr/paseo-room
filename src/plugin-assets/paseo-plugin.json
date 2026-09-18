@@ -1,0 +1,5 @@
+{
+  "id": "paseo-room-claude-carrier",
+  "description": "Adds paseo-room role contracts to Claude's creation-time system prompt.",
+  "requirements": { "paseo": ">=0.8.0 <0.9.0" }
+}

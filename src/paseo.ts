@@ -11,7 +11,7 @@ export const MINIMUM_VERSION = '0.8.0-beta.1';
 export const PI_MINIMUM_VERSION = '0.8.0';
 
 export function minimumPaseoVersion(agents: readonly AgentId[]): string {
-  return agents.includes('pi') ? PI_MINIMUM_VERSION : MINIMUM_VERSION;
+  return agents.includes('pi') || agents.includes('claude') ? PI_MINIMUM_VERSION : MINIMUM_VERSION;
 }
 
 const statusSchema = z.object({
@@ -87,9 +87,17 @@ const configSchema = z.object({
     providers: z.record(z.string(), z.unknown()).optional(),
     // Read loosely: entries carry operator fields the room neither knows nor touches.
     agentProfiles: z.array(z.record(z.string(), z.unknown())).optional(),
+    pluginsEnabled: z.boolean().optional(),
   }),
 });
 export type LiveProfile = Record<string, unknown>;
+export interface LivePlugin {
+  readonly id: string;
+  readonly path: string;
+  readonly enabled: boolean;
+  readonly status: string;
+  readonly error?: string | undefined;
+}
 
 export interface Session {
   readProviders(): Promise<Record<string, unknown>>;
@@ -98,9 +106,22 @@ export interface Session {
   readProfiles(): Promise<readonly LiveProfile[]>;
   /** Paseo has no remove-one call for profiles, so this replaces the whole array. */
   writeProfiles(profiles: readonly LiveProfile[]): Promise<void>;
+  pluginsEnabled(): Promise<boolean>;
+  listPlugins(): Promise<readonly LivePlugin[]>;
+  installPlugin(path: string, id: string): Promise<LivePlugin>;
+  reloadPlugin(id: string): Promise<LivePlugin>;
+  enablePlugin(id: string): Promise<LivePlugin>;
+  removePlugin(id: string): Promise<void>;
   refresh(ids: readonly string[]): Promise<void>;
 }
-export type ClientFactory = (config: PaseoClientConfig) => PaseoClient;
+export interface RoomClient extends PaseoClient {
+  listPlugins(): Promise<LivePlugin[]>;
+  installDirectoryPlugin(path: string, id?: string): Promise<LivePlugin>;
+  reloadPlugin(id: string): Promise<LivePlugin>;
+  enablePlugin(id: string): Promise<LivePlugin>;
+  removePlugin(id: string): Promise<void>;
+}
+export type ClientFactory = (config: PaseoClientConfig) => RoomClient;
 
 /** One connection per command. No retries, no reconnects, no background state. */
 export async function withSession<T>(
@@ -110,15 +131,32 @@ export async function withSession<T>(
 ): Promise<T> {
   const quiet = { debug() { /* silent */ }, info() { /* silent */ }, warn() { /* silent */ }, error() { /* silent */ } };
   // Loaded here so the "Paseo is not running" path never pays for the SDK.
-  const factory = options.factory ?? (await import('@getpaseo/client')).createPaseoClient;
-  const client = factory({
+  const clientConfig: PaseoClientConfig = {
     url: `${daemon.url}/ws`,
     ...(options.password === undefined ? {} : { password: options.password }),
     appVersion: MINIMUM_VERSION,
     connectTimeoutMs: 10_000,
     reconnect: { enabled: false },
     logger: quiet,
-  });
+  };
+  let client: RoomClient;
+  if (options.factory !== undefined) {
+    client = options.factory(clientConfig);
+  } else {
+    const [{ createPaseoApi }, { DaemonClient }] = await Promise.all([
+      import('@getpaseo/client'), import('@getpaseo/client/internal/daemon-client'),
+    ]);
+    const raw = new DaemonClient({ ...clientConfig, clientId: `paseo-room-${String(process.pid)}`, clientType: 'cli' });
+    client = {
+      ...createPaseoApi(raw),
+      connect: () => raw.connect(), close: () => raw.close(),
+      ensureConnected: () => { raw.ensureConnected(); }, getConnectionState: () => raw.getConnectionState(),
+      listPlugins: () => raw.listPlugins(),
+      installDirectoryPlugin: (path, id) => raw.installDirectoryPlugin(path, id),
+      reloadPlugin: id => raw.reloadPlugin(id), enablePlugin: id => raw.enablePlugin(id),
+      removePlugin: id => raw.removePlugin(id),
+    };
+  }
   try {
     await client.connect();
     return await run({
@@ -138,6 +176,25 @@ export async function withSession<T>(
       },
       async writeProfiles(profiles) {
         await client.config.patch({ agentProfiles: [...profiles] } as unknown as Parameters<PaseoClient['config']['patch']>[0]);
+      },
+      async pluginsEnabled() {
+        const response = configSchema.parse(await client.config.get());
+        return response.config.pluginsEnabled === true;
+      },
+      async listPlugins() {
+        return await client.listPlugins();
+      },
+      async installPlugin(path, id) {
+        return await client.installDirectoryPlugin(path, id);
+      },
+      async reloadPlugin(id) {
+        return await client.reloadPlugin(id);
+      },
+      async enablePlugin(id) {
+        return await client.enablePlugin(id);
+      },
+      async removePlugin(id) {
+        await client.removePlugin(id);
       },
       async refresh(ids) {
         await client.providers.refresh({ providers: [...ids] });

@@ -4,7 +4,7 @@ import { promisify } from 'node:util';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
-  markdownInventory, parsePackFilePaths, promptContents, registeredPromptPaths,
+  markdownInventory, parsePackFilePaths, PLUGIN_ASSET_PATHS, promptContents, registeredPromptPaths,
 } from './package-inventory.js';
 
 const execFileAsync = promisify(execFile);
@@ -12,6 +12,8 @@ const repositoryRoot = join(import.meta.dirname, '..');
 const distRoot = join(repositoryRoot, 'dist');
 const distPrompts = join(distRoot, 'prompts');
 const sourcePrompts = join(repositoryRoot, 'src', 'room', 'prompts');
+const sourcePluginAssets = join(repositoryRoot, 'src', 'plugin-assets');
+const distPluginAssets = join(distRoot, 'plugin-assets');
 
 async function npm(...args: readonly string[]): Promise<string> {
   const { stdout } = await execFileAsync('npm', [...args], {
@@ -32,6 +34,9 @@ describe('build and package prompt inventory', { concurrent: false }, () => {
     await expect(readFile(join(distRoot, 'index.js'), 'utf8')).resolves.toContain(
       'new URL(`./prompts/${asset.path}`, import.meta.url)',
     );
+    for (const path of PLUGIN_ASSET_PATHS) {
+      expect(await readFile(join(distPluginAssets, path))).toEqual(await readFile(join(sourcePluginAssets, path)));
+    }
 
     await mkdir(join(distPrompts, 'prompts'), { recursive: true });
     await writeFile(join(distPrompts, 'stale.md'), '# stale\n');
@@ -51,5 +56,9 @@ describe('build and package prompt inventory', { concurrent: false }, () => {
     expect(packedPrompts).toEqual(registeredPromptPaths('dist/prompts/'));
     expect(packPaths).toContain('dist/index.js');
     expect(packPaths.some(path => path.startsWith('src/room/prompts'))).toBe(false);
+    expect(packPaths.filter(path => path.startsWith('dist/plugin-assets/'))).toEqual(
+      PLUGIN_ASSET_PATHS.map(path => `dist/plugin-assets/${path}`).sort(),
+    );
+    expect(packPaths.some(path => path.startsWith('src/plugin-assets'))).toBe(false);
   }, 30_000);
 });

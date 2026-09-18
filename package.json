@@ -1,6 +1,6 @@
 {
   "name": "paseo-room",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "One CLI that configures Codex, Claude Code, and Pi role homes in $HOME and registers them with your local Paseo daemon.",
   "keywords": [
     "paseo",
@@ -34,7 +34,7 @@
     "lint": "eslint . --max-warnings 0",
     "test": "vitest run",
     "test:package": "vitest run --config vitest.package.config.ts",
-    "build": "tsup && node --input-type=module -e \"import { cpSync, rmSync } from 'node:fs'; rmSync('dist/prompts', { recursive: true, force: true }); cpSync('src/room/prompts', 'dist/prompts', { recursive: true });\"",
+    "build": "tsup && node --input-type=module -e \"import { cpSync, rmSync } from 'node:fs'; for (const [source, target] of [['src/room/prompts', 'dist/prompts'], ['src/plugin-assets', 'dist/plugin-assets']]) { rmSync(target, { recursive: true, force: true }); cpSync(source, target, { recursive: true }); }\"",
     "prepack": "npm run build",
     "verify": "npm run typecheck && npm run lint && npm test && npm run build && npm run test:package"
   },

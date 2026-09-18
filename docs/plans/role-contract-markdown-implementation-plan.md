@@ -114,3 +114,4 @@ No open question blocks conversion. PRD Q-003 through Q-006 remain deferred to t
 | 2026-09-16 | Bytes | Created Draft with four Phase 1 work packages, acyclic dependencies, compatibility evidence, package-boundary verification, and rollback containment. |
 | 2026-09-16 | Bytes | Clarified WP ownership for forced test updates versus documentation cleanup, closed the non-prompt inventory, pinned reviewed documentation evidence, and added CI inheritance requirements after plan review. |
 | 2026-09-16 | Repository owner | Activated and froze Phase 1 scope after `plan-ready-for-beads` passed with no blocking question. |
+| 2026-09-18 | Bytes | Reference only, frozen scope unchanged: see [change-001 — Strong Claude contract carrier](role-contract-markdown-change-001-strong-claude-carrier.md), which supersedes the optional Phase-2 plugin feasibility gate for the Claude system-prompt carrier alone. |

@@ -8,7 +8,8 @@ import type { Agent, AgentPlan, Profile, Provider } from './agents/types.js';
 import { AUTHENTICATION_GUIDE, renderAuthenticationGuide } from './auth.js';
 import { applyEntries, exists, planEntries, type Entry } from './fsops.js';
 import { layoutChecks, resolveLayout, roleHome, sharedRoom, type Layout, type Options } from './layout.js';
-import { checkDaemon, mergeProfiles, minimumPaseoVersion, profileMatches, providerMatches, withSession, type ClientFactory, type LiveProfile, type Session } from './paseo.js';
+import { checkDaemon, mergeProfiles, minimumPaseoVersion, profileMatches, providerMatches, withSession, type ClientFactory, type LivePlugin, type LiveProfile, type Session } from './paseo.js';
+import { CLAUDE_CARRIER_PLUGIN_ID, claudeCarrierEntries, claudeCarrierPluginDir } from './plugin.js';
 import { fail, failed, hasFailure, pass, warn, type Check, type Operation, type Result } from './result.js';
 import { contractDigest, renderInstructions } from './room/instructions.js';
 import { MARKER, readMarker, renderMarker, type Marker } from './room.js';
@@ -64,6 +65,7 @@ interface Desired {
   readonly providers: Readonly<Record<string, Provider>>;
   readonly profiles: readonly Profile[];
   readonly checks: readonly Check[];
+  readonly pluginPath?: string;
 }
 async function buildDesired(layout: Layout, agents: readonly AgentId[], roles: readonly Role[]): Promise<Desired> {
   // Template, not linked into any seat: each repo owns its own docs/WORKSPACE_PROTOCOL.md.
@@ -110,8 +112,10 @@ async function buildDesired(layout: Layout, agents: readonly AgentId[], roles: r
       `Role authentication was not validated. Login instructions are managed at ${join(layout.roomHome, AUTHENTICATION_GUIDE)}.`,
       'After setup --apply, follow that guide or run: paseo-room auth login <agent> <role>'));
   }
+  const pluginPath = agents.includes('claude') ? claudeCarrierPluginDir(layout) : undefined;
+  if (pluginPath !== undefined) entries.push(...claudeCarrierEntries(layout, roles));
   entries.push({ kind: 'file', path: join(layout.roomHome, MARKER), content: renderMarker(metadata.version, agents, roles, contractDigest()) });
-  return { entries, providers, profiles, checks };
+  return { entries, providers, profiles, checks, ...(pluginPath === undefined ? {} : { pluginPath }) };
 }
 
 /**
@@ -163,10 +167,11 @@ function fileDriftDetail(targets: readonly string[]): string {
 interface Stale {
   readonly providerIds: readonly string[];
   readonly profileIds: readonly string[];
+  readonly removePlugin: boolean;
   /** Role homes are retained during setup because runtime-owned credentials may be inside. */
   readonly retainedDirectories: readonly string[];
 }
-const NOTHING_STALE: Stale = { providerIds: [], profileIds: [], retainedDirectories: [] };
+const NOTHING_STALE: Stale = { providerIds: [], profileIds: [], removePlugin: false, retainedDirectories: [] };
 
 async function safeDirectory(path: string, checks: Check[]): Promise<boolean> {
   try {
@@ -215,22 +220,63 @@ async function staleFrom(layout: Layout, previous: Marker | undefined, agents: r
       if (await exists(path)) retainedDirectories.push(path);
     }
   }
-  return { providerIds, profileIds, retainedDirectories };
+  return {
+    providerIds,
+    profileIds,
+    removePlugin: previous.agents.includes('claude') && !agents.includes('claude'),
+    retainedDirectories,
+  };
 }
 
 interface Plan {
   readonly operations: readonly Operation[];
   /** Carried out of the plan so apply rewrites the array it actually compared against. */
   readonly liveProfiles: readonly LiveProfile[];
+  readonly livePlugin?: LivePlugin;
+  readonly pluginChecks: readonly Check[];
+}
+
+function pluginPlan(desired: Desired, stale: Stale, plugins: readonly LivePlugin[], expectedPath: string): {
+  operation?: Operation; livePlugin?: LivePlugin; checks: Check[];
+} {
+  const livePlugin = plugins.find(plugin => plugin.id === CLAUDE_CARRIER_PLUGIN_ID);
+  const shouldManage = desired.pluginPath !== undefined || stale.removePlugin;
+  if (!shouldManage) return { checks: [] };
+  if (livePlugin !== undefined && livePlugin.path !== expectedPath) {
+    return {
+      livePlugin,
+      checks: [fail('claude.plugin.path',
+        `Plugin ${CLAUDE_CARRIER_PLUGIN_ID} is registered from ${livePlugin.path}, not the room-owned path ${expectedPath}.`,
+        'Move or remove that conflicting plugin registration manually, then run setup again.')],
+    };
+  }
+  if (desired.pluginPath !== undefined) {
+    const healthy = livePlugin?.enabled === true && livePlugin.status === 'running' && livePlugin.error === undefined;
+    return {
+      ...(livePlugin === undefined ? {} : { livePlugin }),
+      operation: { action: livePlugin === undefined ? 'create' : healthy ? 'noop' : 'update', kind: 'plugin', target: CLAUDE_CARRIER_PLUGIN_ID },
+      checks: [],
+    };
+  }
+  return {
+    ...(livePlugin === undefined ? {} : { livePlugin }),
+    operation: { action: livePlugin === undefined ? 'noop' : 'remove', kind: 'plugin', target: CLAUDE_CARRIER_PLUGIN_ID },
+    checks: [],
+  };
 }
 
 /** One definition of drift, shared by the command that fixes it and the one that reports it. */
-async function planRoom(session: Session, desired: Desired, stale: Stale): Promise<Plan> {
-  const live = await session.readProviders();
-  const liveProfiles = await session.readProfiles();
+async function planRoom(session: Session, desired: Desired, stale: Stale, expectedPluginPath: string): Promise<Plan> {
+  const inspectPlugins = desired.pluginPath !== undefined || stale.removePlugin;
+  const [live, liveProfiles, plugins] = await Promise.all([
+    session.readProviders(), session.readProfiles(), inspectPlugins ? session.listPlugins() : Promise.resolve([]),
+  ]);
   const byId = new Map(liveProfiles.map(entry => [String(entry.id), entry]));
+  const plugin = pluginPlan(desired, stale, plugins, expectedPluginPath);
   return {
     liveProfiles,
+    ...(plugin.livePlugin === undefined ? {} : { livePlugin: plugin.livePlugin }),
+    pluginChecks: plugin.checks,
     operations: [
       ...await planEntries(desired.entries),
       ...Object.entries(desired.providers).map(([id, provider]) => ({
@@ -245,8 +291,53 @@ async function planRoom(session: Session, desired: Desired, stale: Stale): Promi
       }) satisfies Operation),
       ...stale.providerIds.filter(id => id in live).map(id => ({ action: 'remove', kind: 'provider', target: id }) satisfies Operation),
       ...stale.profileIds.filter(id => byId.has(id)).map(id => ({ action: 'remove', kind: 'profile', target: id }) satisfies Operation),
+      ...(plugin.operation === undefined ? [] : [plugin.operation]),
     ],
   };
+}
+
+function pluginsEnabledCheck(enabled: boolean): Check {
+  return enabled
+    ? pass('claude.plugin.enabled', 'Paseo plugins are enabled for the required Claude contract carrier.')
+    : fail('claude.plugin.enabled',
+      'Claude rooms require the paseo-room trusted server plugin, but Paseo plugins are disabled. Plugins are trusted, unsandboxed code with access to the daemon machine.',
+      'Review that trust boundary, enable plugins in Paseo Settings, reload Paseo, then run setup again.');
+}
+
+function pluginRuntimeCheck(plugin: LivePlugin | undefined, expectedPath: string): Check {
+  if (plugin === undefined) {
+    return fail('claude.plugin.runtime', `Plugin ${CLAUDE_CARRIER_PLUGIN_ID} is not registered.`, 'Run: paseo-room setup --apply');
+  }
+  if (plugin.path !== expectedPath) {
+    return fail('claude.plugin.runtime', `Plugin ${CLAUDE_CARRIER_PLUGIN_ID} is registered from ${plugin.path}, not ${expectedPath}.`,
+      'Move or remove that conflicting plugin registration manually, then run setup again.');
+  }
+  if (!plugin.enabled || plugin.status !== 'running' || plugin.error !== undefined) {
+    const detail = plugin.error === undefined ? `status ${plugin.status}` : `${plugin.status}: ${plugin.error}`;
+    return fail('claude.plugin.runtime', `Plugin ${CLAUDE_CARRIER_PLUGIN_ID} is not running (${detail}).`, 'Run: paseo-room setup --apply');
+  }
+  return pass('claude.plugin.runtime', `Claude contract carrier plugin is running from ${expectedPath}.`);
+}
+
+async function reconcilePlugin(
+  session: Session, desired: Desired, plan: Plan, pending: readonly Operation[], expectedPath: string,
+): Promise<Check[]> {
+  if (desired.pluginPath === undefined) {
+    if (plan.livePlugin !== undefined) await session.removePlugin(CLAUDE_CARRIER_PLUGIN_ID);
+    return [];
+  }
+  let plugin = plan.livePlugin;
+  if (plugin === undefined) {
+    plugin = await session.installPlugin(expectedPath, CLAUDE_CARRIER_PLUGIN_ID);
+  } else {
+    if (!plugin.enabled) plugin = await session.enablePlugin(CLAUDE_CARRIER_PLUGIN_ID);
+    const filesChanged = pending.some(operation =>
+      (operation.kind === 'file' || operation.kind === 'dir') && operation.target.startsWith(`${expectedPath}${sep}`),
+    );
+    const needsReload = filesChanged || plugin.status !== 'running' || plugin.error !== undefined;
+    if (needsReload) plugin = await session.reloadPlugin(CLAUDE_CARRIER_PLUGIN_ID);
+  }
+  return [pluginRuntimeCheck(plugin, expectedPath)];
 }
 
 /** The whole product: write the role homes, then register them with Paseo. */
@@ -261,7 +352,9 @@ export async function setup(options: RunOptions = {}): Promise<Result> {
   const safetyAgents = [...new Set([...agents, ...(previous?.agents ?? [])])];
   const pathSafety = await roomPathSafety(layout, safetyAgents, ROLES);
   if (hasFailure(pathSafety)) return failed('setup', pathSafety);
-  const daemon = await checkDaemon(layout, options.env, minimumPaseoVersion(agents));
+  // Cleanup uses the APIs required by the old selection too (notably Claude's plugin API).
+  const compatibilityAgents = [...new Set([...agents, ...(previous?.agents ?? [])])];
+  const daemon = await checkDaemon(layout, options.env, minimumPaseoVersion(compatibilityAgents));
   if (!daemon.daemon) return failed('setup', daemon.checks);
   const desired = await buildDesired(layout, agents, ROLES);
   const stale = await staleFrom(layout, previous, agents, ROLES);
@@ -274,16 +367,27 @@ export async function setup(options: RunOptions = {}): Promise<Result> {
   if (hasFailure(checks)) return failed('setup', checks);
 
   return withSession(daemon.daemon, async session => {
-    const { operations, liveProfiles } = await planRoom(session, desired, stale);
+    const expectedPluginPath = claudeCarrierPluginDir(layout);
+    const plan = await planRoom(session, desired, stale, expectedPluginPath);
+    const { operations, liveProfiles } = plan;
     const pending = operations.filter(operation => operation.action !== 'noop');
+    const pluginPreconditions = desired.pluginPath === undefined
+      ? plan.pluginChecks
+      : [pluginsEnabledCheck(await session.pluginsEnabled()), ...plan.pluginChecks];
     // Diagnostics last: nothing above may be reached only through a warning.
-    const preApplyDiagnostics = [...checks, ...contractProvenance(previous), ...thinkingDiagnostics(liveProfiles, desired.profiles)];
-    if (!options.apply) {
+    const preApplyDiagnostics = [...checks, ...pluginPreconditions, ...contractProvenance(previous), ...thinkingDiagnostics(liveProfiles, desired.profiles)];
+    if (hasFailure(preApplyDiagnostics) || !options.apply) {
       return {
-        command: 'setup', outcome: pending.length > 0 ? 'changes-planned' : 'ok', changed: false, checks: preApplyDiagnostics, operations,
+        command: 'setup',
+        outcome: hasFailure(preApplyDiagnostics) ? 'failed' : pending.length > 0 ? 'changes-planned' : 'ok',
+        changed: false, checks: preApplyDiagnostics, operations,
       } satisfies Result;
     }
-    await applyEntries(desired.entries);
+    // Keep the old marker until daemon reconciliation succeeds. If a remote write fails,
+    // rerunning setup can still discover every stale provider/profile/plugin it must remove.
+    const markerPath = join(layout.roomHome, MARKER);
+    const markerEntries = desired.entries.filter(entry => entry.path === markerPath);
+    await applyEntries(desired.entries.filter(entry => entry.path !== markerPath));
     const ids = Object.keys(desired.providers);
     await session.writeProviders(desired.providers);
     if (stale.providerIds.length > 0) await session.removeProviders(stale.providerIds);
@@ -295,16 +399,17 @@ export async function setup(options: RunOptions = {}): Promise<Result> {
       await session.writeProfiles(appliedProfiles);
     }
     await session.refresh(ids);
+    const pluginChecks = await reconcilePlugin(session, desired, plan, pending, expectedPluginPath);
+    await applyEntries(markerEntries);
     const appliedMarker: Marker = {
       version: metadata.version, agents: [...agents], roles: [...ROLES], contract: contractDigest(),
     };
+    const appliedChecks = [...checks, ...pluginPreconditions, ...pluginChecks,
+      pass('room.applied', `Room ready at ${layout.roomHome} with ${String(ids.length)} Paseo providers.`),
+      ...contractProvenance(appliedMarker), ...thinkingDiagnostics(appliedProfiles, desired.profiles)];
     return {
-      command: 'setup', outcome: 'ok', changed: pending.length > 0,
-      // Report success before non-blocking diagnostics so it cannot read as if a later pass
-      // cleared a warning. `appliedProfiles` is the exact array written above when one changed.
-      checks: [...checks, pass('room.applied', `Room ready at ${layout.roomHome} with ${String(ids.length)} Paseo providers.`),
-        ...contractProvenance(appliedMarker), ...thinkingDiagnostics(appliedProfiles, desired.profiles)],
-      operations,
+      command: 'setup', outcome: hasFailure(appliedChecks) ? 'failed' : 'ok', changed: pending.length > 0,
+      checks: appliedChecks, operations,
     } satisfies Result;
   }, sessionOptions(options));
 }
@@ -328,13 +433,20 @@ export async function verify(options: RunOptions = {}): Promise<Result> {
   if (hasFailure(checks)) return failed('verify', checks);
 
   return withSession(daemon.daemon, async session => {
-    const { operations, liveProfiles } = await planRoom(session, desired, NOTHING_STALE);
+    const expectedPluginPath = claudeCarrierPluginDir(layout);
+    const plan = await planRoom(session, desired, NOTHING_STALE, expectedPluginPath);
+    const { operations, liveProfiles } = plan;
     const drifted = operations.filter(operation => operation.action !== 'noop');
     const count = (kind: Operation['kind']): number => drifted.filter(operation => operation.kind === kind).length;
     const providers = count('provider');
     const profiles = count('profile');
-    const driftedFiles = drifted.filter(operation => operation.kind !== 'provider' && operation.kind !== 'profile');
+    const driftedFiles = drifted.filter(operation => !['provider', 'profile', 'plugin'].includes(operation.kind));
     const files = driftedFiles.length;
+    const pluginChecks = desired.pluginPath === undefined ? [] : [
+      pluginsEnabledCheck(await session.pluginsEnabled()),
+      ...plan.pluginChecks,
+      pluginRuntimeCheck(plan.livePlugin, expectedPluginPath),
+    ];
     const all: Check[] = [...checks,
       files === 0
         ? pass('room.files', 'Every managed role file matches the current definition.')
@@ -345,6 +457,7 @@ export async function verify(options: RunOptions = {}): Promise<Result> {
       profiles === 0
         ? pass('room.profiles', `All ${String(desired.profiles.length)} Paseo agent profiles are registered as expected.`)
         : fail('room.profiles', `${String(profiles)} Paseo agent profiles are missing or differ.`, 'Run: paseo-room setup --apply'),
+      ...pluginChecks,
       // Diagnostics last: a warning never precedes the failure it might be mistaken for.
       ...contractProvenance(marker),
       ...thinkingDiagnostics(liveProfiles, desired.profiles),
@@ -368,9 +481,11 @@ export async function remove(options: RunOptions = {}): Promise<Result> {
   if (invalid.length > 0) return failed('remove', invalid);
   const ids = marker.agents.flatMap(agent => marker.roles.map(role => providerId(agent, role)));
   const profiles = new Set(marker.agents.flatMap(agent => marker.roles.map(role => profileId(agent, role))));
+  const hasClaude = marker.agents.includes('claude');
   const operations: Operation[] = [
     ...ids.map(id => ({ action: 'remove', kind: 'provider', target: id }) satisfies Operation),
     ...[...profiles].map(id => ({ action: 'remove', kind: 'profile', target: id }) satisfies Operation),
+    ...(hasClaude ? [{ action: 'remove', kind: 'plugin', target: CLAUDE_CARRIER_PLUGIN_ID } satisfies Operation] : []),
     { action: 'remove', kind: 'dir', target: layout.roomHome },
   ];
   const credentialWarning = warn('room.remove.credentials',
@@ -393,6 +508,14 @@ export async function remove(options: RunOptions = {}): Promise<Result> {
   }
   try {
     await withSession(daemon.daemon, async session => {
+      if (hasClaude) {
+        const plugin = (await session.listPlugins()).find(entry => entry.id === CLAUDE_CARRIER_PLUGIN_ID);
+        const expectedPath = claudeCarrierPluginDir(layout);
+        if (plugin !== undefined && plugin.path !== expectedPath) {
+          throw new Error(`refusing to remove foreign plugin path ${plugin.path}`);
+        }
+        if (plugin !== undefined) await session.removePlugin(CLAUDE_CARRIER_PLUGIN_ID);
+      }
       await session.removeProviders(ids);
       const live = await session.readProfiles();
       const kept = live.filter(entry => !profiles.has(String(entry.id)));

@@ -10,6 +10,15 @@ interface PackResult {
   readonly files: readonly PackFile[];
 }
 
+export const PLUGIN_ASSET_PATHS = [
+  'index.server.ts',
+  'package.json',
+  'paseo-plugin.json',
+  'server/carrier.ts',
+  'server/contract.ts',
+  'tsconfig.json',
+] as const;
+
 export function registeredPromptPaths(prefix = ''): string[] {
   const groups: readonly Readonly<Record<string, { readonly path: string }>>[] = [
     PROMPT_ASSETS.documents,
