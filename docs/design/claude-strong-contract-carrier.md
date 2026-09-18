@@ -50,7 +50,7 @@
 paseo-room setup --apply  (selection contains claude)
   │
   ├─ managed entries under ~/.paseo-room/plugin/
-  │    paseo-plugin.json          id, description, requirements.paseo = ">=0.8.0 <0.9.0"
+  │    paseo-plugin.json          id, requirements.paseo = ">=0.8.0 <0.9.0"
   │    package.json  tsconfig.json
   │    index.server.ts            before('agent.create') hook, no client entry
   │    server/carrier.ts          marker-delimited idempotent composition rule

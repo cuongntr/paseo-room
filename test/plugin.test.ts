@@ -65,7 +65,11 @@ describe('Claude contract carrier lifecycle', () => {
       status: 'running',
     })]);
     const manifest = await readFile(join(fixture.roomHome, 'plugin/paseo-plugin.json'), 'utf8');
-    expect(manifest).toContain('>=0.8.0 <0.9.0');
+    const parsedManifest: unknown = JSON.parse(manifest);
+    expect(parsedManifest).toEqual({
+      id: CLAUDE_CARRIER_PLUGIN_ID,
+      requirements: { paseo: '>=0.8.0 <0.9.0' },
+    });
     await expect(readFile(join(fixture.roomHome, 'plugin/server/contract.ts'), 'utf8'))
       .resolves.toContain(JSON.stringify(renderInstructions('lead')));
     expect((await verify({ env: fixture.env, factory: fakeClient(daemon) })).outcome).toBe('ok');
