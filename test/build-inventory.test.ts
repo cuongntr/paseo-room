@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   markdownInventory, parsePackFilePaths, PLUGIN_ASSET_PATHS, promptContents, registeredPromptPaths,
+  registeredSkillPaths, skillContents,
 } from './package-inventory.js';
 
 const execFileAsync = promisify(execFile);
@@ -12,6 +13,8 @@ const repositoryRoot = join(import.meta.dirname, '..');
 const distRoot = join(repositoryRoot, 'dist');
 const distPrompts = join(distRoot, 'prompts');
 const sourcePrompts = join(repositoryRoot, 'src', 'room', 'prompts');
+const distSkills = join(distRoot, 'skills');
+const sourceSkills = join(repositoryRoot, 'src', 'room', 'skills');
 const sourcePluginAssets = join(repositoryRoot, 'src', 'plugin-assets');
 const distPluginAssets = join(distRoot, 'plugin-assets');
 
@@ -31,6 +34,8 @@ describe('build and package prompt inventory', { concurrent: false }, () => {
 
     expect(await markdownInventory(distPrompts)).toEqual(registeredPromptPaths());
     expect(await promptContents(distPrompts)).toEqual(await promptContents(sourcePrompts));
+    expect(await markdownInventory(distSkills)).toEqual(registeredSkillPaths());
+    expect(await skillContents(distSkills)).toEqual(await skillContents(sourceSkills));
     await expect(readFile(join(distRoot, 'index.js'), 'utf8')).resolves.toContain(
       'new URL(`./prompts/${asset.path}`, import.meta.url)',
     );
@@ -41,12 +46,15 @@ describe('build and package prompt inventory', { concurrent: false }, () => {
     await mkdir(join(distPrompts, 'prompts'), { recursive: true });
     await writeFile(join(distPrompts, 'stale.md'), '# stale\n');
     await writeFile(join(distPrompts, 'prompts', 'nested.md'), '# nested\n');
+    await writeFile(join(distSkills, 'stale.md'), '# stale\n');
     await npm('run', 'build');
 
     expect(await markdownInventory(distPrompts)).toEqual(registeredPromptPaths());
     expect(await promptContents(distPrompts)).toEqual(await promptContents(sourcePrompts));
+    expect(await markdownInventory(distSkills)).toEqual(registeredSkillPaths());
     await expect(stat(join(distPrompts, 'prompts'))).rejects.toThrow();
     await expect(stat(join(distPrompts, 'stale.md'))).rejects.toThrow();
+    await expect(stat(join(distSkills, 'stale.md'))).rejects.toThrow();
   }, 60_000);
 
   it('includes every registered prompt and no source prompt tree in a lifecycle-disabled pack', async () => {
@@ -54,8 +62,11 @@ describe('build and package prompt inventory', { concurrent: false }, () => {
     const packedPrompts = packPaths.filter(path => path.startsWith('dist/prompts/'));
 
     expect(packedPrompts).toEqual(registeredPromptPaths('dist/prompts/'));
+    expect(packPaths.filter(path => path.startsWith('dist/skills/')))
+      .toEqual(registeredSkillPaths('dist/skills/'));
     expect(packPaths).toContain('dist/index.js');
     expect(packPaths.some(path => path.startsWith('src/room/prompts'))).toBe(false);
+    expect(packPaths.some(path => path.startsWith('src/room/skills'))).toBe(false);
     expect(packPaths.filter(path => path.startsWith('dist/plugin-assets/'))).toEqual(
       PLUGIN_ASSET_PATHS.map(path => `dist/plugin-assets/${path}`).sort(),
     );

@@ -11,6 +11,7 @@ import { renderInstructions } from '../room/instructions.js';
 import { probe, which } from '../which.js';
 import { paseoMcpCheck, serverTable } from './mcp.js';
 import { roleResourceEntries } from './resources.js';
+import { leadSkillProjection, ROOM_SKILL_NAME, roomSkillSource } from '../room/skills.js';
 import type { Agent, AgentPlan } from './types.js';
 
 /** Read-only operator resources every role shares by reference, never by copy. */
@@ -221,6 +222,7 @@ export const codexAgent: Agent = {
       : `Codex model catalog captured from ${capture}; ${String(evidence.markers)} multi_agent_version field(s) are nulled in the generated copy in each role home.`));
 
     const shared = await existingPaths(home, SHARED);
+    const roomSkill = { name: ROOM_SKILL_NAME, source: roomSkillSource(layout) };
     for (const role of roles) {
       const target = roleHome(layout, 'codex', role);
       const catalogPath = join(target, CATALOG);
@@ -234,7 +236,10 @@ export const codexAgent: Agent = {
         content: renderRoleConfig(source, { roleDocument, catalogPath }),
       });
       entries.push({ kind: 'file', path: catalogPath, content: catalogSource });
-      entries.push(...await roleResourceEntries({ role, target, home, names: SHARED, shared, executable: EXECUTABLE }));
+      entries.push(...await roleResourceEntries({
+        role, target, home, names: SHARED, shared, executable: EXECUTABLE, roomSkill,
+        leadSkillProjection: leadSkillProjection(layout, 'codex'),
+      }));
       credentials.push(await credentialDiagnostic(layout, role, store, binary));
     }
     return { entries, credentials, checks, binary };

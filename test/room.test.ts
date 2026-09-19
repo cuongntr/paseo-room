@@ -67,7 +67,8 @@ describe('room marker agent set', () => {
   it('derives the digest from the rendered documents, deterministically and not from the package version', () => {
     expect(contractDigest()).toMatch(/^sha256:[0-9a-f]{16}$/);
     expect(contractDigest()).toBe(contractDigest());
-    expect(INSTRUCTION_KINDS).toEqual(['supervisor', 'lead', 'peer', 'workspace']);
+    // The digest covers the three rendered role documents only; the room composes nothing else.
+    expect(INSTRUCTION_KINDS).toEqual(['supervisor', 'lead', 'peer']);
     // Same inputs, same algorithm: recomputing it by hand over every rendered document
     // must reproduce the marker value, so no package metadata can be feeding it.
     const hash = createHash('sha256');

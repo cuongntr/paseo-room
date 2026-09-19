@@ -14,6 +14,7 @@ import { renderInstructions } from '../room/instructions.js';
 import { which } from '../which.js';
 import { jsonServerTable, paseoMcpCheck, serverNameDivergence, type NameDivergence } from './mcp.js';
 import { roleResourceEntries } from './resources.js';
+import { leadSkillProjection, ROOM_SKILL_NAME, roomSkillSource } from '../room/skills.js';
 import type { Agent, AgentPlan, BuildOptions } from './types.js';
 
 /** Operator-authored resources shared by reference; native agent definitions stay out. */
@@ -208,6 +209,7 @@ export const claudeAgent: Agent = {
     const providerEnv: Partial<Record<Role, Readonly<Record<string, string>>>> = {};
     // Held back so a hard conflict found in a later role is never preceded by advice.
     const drift: Check[] = [];
+    const roomSkill = { name: ROOM_SKILL_NAME, source: roomSkillSource(layout) };
     for (const role of roles) {
       const target = roleHome(layout, 'claude', role);
       const statePath = join(target, '.claude.json');
@@ -240,7 +242,11 @@ export const claudeAgent: Agent = {
         : { kind: 'file', path: memoryPath, content: memory });
       entries.push({ kind: 'file', path: join(target, 'settings.json'), content: renderRoleSettings(settingsSource, role, target) });
       entries.push({ kind: 'file', path: statePath, content: renderRoleState(stateSource), once: true });
-      entries.push(...await roleResourceEntries({ role, target, home, names: SHARED, shared, executable: EXECUTABLE, reservedSkills: RUNTIME_SKILLS }));
+      entries.push(...await roleResourceEntries({
+        role, target, home, names: SHARED, shared, executable: EXECUTABLE,
+        reservedSkills: RUNTIME_SKILLS, roomSkill,
+        leadSkillProjection: leadSkillProjection(layout, 'claude'),
+      }));
       credentials.push(await claudeCredentialDiagnostic(layout, role, settingsSource, process.platform, binary));
       providerEnv[role] = { [SECURE_STORAGE_ENV]: target };
     }

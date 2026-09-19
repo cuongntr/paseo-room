@@ -14,9 +14,6 @@ export const PROMPT_ASSETS = {
     lead: { path: 'contract/lead.md', kind: 'body' },
     peer: { path: 'contract/peer.md', kind: 'body' },
   },
-  workspace: {
-    default: { path: 'workspace/default.md', kind: 'document' },
-  },
   pi: {
     communicationStyle: { path: 'pi/communication-style.md', kind: 'capsule' },
     runtime: { path: 'pi/runtime.md', kind: 'capsule' },
@@ -26,11 +23,10 @@ export const PROMPT_ASSETS = {
 export type PromptAssetGroup = keyof typeof PROMPT_ASSETS;
 export type PromptAssetKey<Group extends PromptAssetGroup> = keyof (typeof PROMPT_ASSETS)[Group];
 export type ContractKey = PromptAssetKey<'contract'>;
-export type WorkspaceKey = PromptAssetKey<'workspace'>;
 export type DocumentKey = PromptAssetKey<'documents'>;
 export type PiPromptKey = PromptAssetKey<'pi'>;
 
-type PromptAssetKind = 'head' | 'section' | 'body' | 'document' | 'capsule';
+type PromptAssetKind = 'head' | 'section' | 'body' | 'capsule';
 interface PromptAssetDefinition {
   readonly path: string;
   readonly kind: PromptAssetKind;
@@ -138,26 +134,6 @@ function validateBody(source: string): string {
   return sections.map(section => renderSection(section.heading, section.lines)).join('\n\n');
 }
 
-/**
- * A complete workspace document: one H1 plus a hard-wrapped preface, then H2 sections. The
- * preface keeps its authored line breaks because it is read as a document, not as a clause
- * list; every section below it normalizes like any other.
- */
-function validateDocument(source: string): string {
-  const trimmed = source.trimEnd();
-  if (!trimmed.trim()) throw new Error('is empty.');
-  const lines = trimmed.split('\n');
-  const title = lines.shift() ?? '';
-  if (!/^# \S.*$/.test(title) || headingCount(trimmed, 1) !== 1) {
-    throw new Error('workspace document must begin with exactly one H1 heading.');
-  }
-  const { preface, sections } = splitSections(lines);
-  if (sections.length === 0) throw new Error('workspace document must contain at least one H2 section.');
-  const head = [title, ...preface].join('\n').trimEnd();
-  const rendered = sections.map(section => renderSection(section.heading, section.lines));
-  return [head, ...rendered].join('\n\n');
-}
-
 export function loadPromptAsset<Group extends PromptAssetGroup>(
   group: Group,
   key: PromptAssetKey<Group>,
@@ -185,7 +161,6 @@ function validate(source: string, kind: PromptAssetKind): string {
   switch (kind) {
     case 'section': return validateSection(source);
     case 'body': return validateBody(source);
-    case 'document': return validateDocument(source);
     default: return validateHeadOrCapsule(source, kind);
   }
 }

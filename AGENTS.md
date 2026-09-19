@@ -50,14 +50,28 @@ That design is in git history before the `v2` rewrite. Do not reintroduce it.
 - **Peer never gets room tools.** `ROLE_PASEO_TOOLS` in `src/roles.ts` is the single source
   of that rule, and it must stay a single call site. Peer's narrower resource set follows from
   the same principle and lives in `src/agents/resources.ts`; it is capability hygiene, not
-  containment, and must never be documented as a sandbox.
-- **Lead is the only standing protocol reader.** Lead carries the default workspace layer and
-  resolves the repository root to read `WORKSPACE_PROTOCOL.md` in full before orchestration.
-  Supervisor carries no default and reads a repository's protocol only under an explicit Human
-  audit, update, or maintenance mandate; it may propose a change with causal evidence but never
-  impose one.
-- **Peer reads one brief, not the organisation manual.** Peer receives no workspace layer and
-  is never told the protocol filename; Lead quotes the constraints that bear on an assignment
+  containment, and must never be documented as a sandbox. `roleResourceEntries` decides both
+  projections generically: Supervisor keeps whole-directory aliases, Lead's role-home `skills`
+  stays a symlink to an exact room-owned aggregate of every operator skill plus the room-owned
+  one, and Peer's is an exact role-home projection of the non-`paseo*` operator skills. No
+  projection ever writes into an operator home.
+- **The room ships no default workspace protocol.** A repository's root
+  `WORKSPACE_PROTOCOL.md` is optional and, where it exists, complete: there is no room default
+  behind it and no point-by-point merge. Lead resolves the repository root and reads it in full
+  before orchestration, and is the only standing reader; Supervisor reads a repository's protocol
+  only under an explicit Human audit, update, or maintenance mandate, and may propose a change
+  with causal evidence but never impose one. Lead's contract carries a deliberately small,
+  always-visible `Assignment Vocabulary and Operating Baseline`, not a hidden workspace fallback.
+  Do not reintroduce a shipped default, a generated room template, or a merge rule; read
+  [docs/design/lead-project-onboarding-skill.md](docs/design/lead-project-onboarding-skill.md)
+  first if you are tempted.
+- **One room-owned skill, for Lead only.** `src/room/skills/paseo-project-onboarding/` is the
+  procedure for drafting a repository protocol from that repository's own evidence. It is
+  proposal-first and writes the repository file only under an explicit Human apply instruction.
+  It reaches Lead through the projected `skills` directory and no other seat. Its bundled
+  template is a scaffold loaded while the skill runs, never a runtime default.
+- **Peer reads one brief, not the organisation manual.** Peer receives no workspace layer, no
+  room skill, and is never told the protocol filename; Lead quotes the constraints that bear on an assignment
   into the brief. The `Authority Floor` section of `contract/shared-authority.md` keeps the
   invariant that repository or workspace instructions cannot enlarge or weaken contract
   authority and routes conflicts to Lead. What a Peer needs unconditionally lives in its own
@@ -84,8 +98,9 @@ src/
   agents/codex.ts  agents/claude.ts  agents/pi.ts   # per-agent role homes
   agents/resources.ts                       # per-role operator resource sharing and Peer projection
   agents/mcp.ts                             # bounded Paseo MCP recognition, shared by the adapters
-  room/instructions.ts                      # semantic role/protocol composition
+  room/instructions.ts                      # semantic role document composition
   room/prompts.ts  room/prompts/             # typed registry + canonical Markdown assets
+  room/skills.ts   room/skills/              # the room-owned Lead skill: loader + assets
 test/                                       # one file per area, real temp $HOME fixtures
 docs/demonthorn-agent-orchestration-deep-dive.md  # the model; changes here are conceptual
 docs/design.md                              # this tool's rationale; keep current with code
@@ -126,32 +141,27 @@ contract/shared-authority.md      every role
 contract/shared-seat-identity.md  Supervisor + Lead
 contract/challenge-signals.md     Lead + Peer
 contract/{supervisor,lead,peer}.md  exactly one role each
-workspace/default.md              Lead only, and the room copy
 ```
 
 All of them use ordinary wrapped prose: blank lines separate statements, and line breaks
-inside a statement collapse when rendered. A role body and the workspace document may hold
-several H2 sections; the workspace document also has one H1 and a hard-wrapped preface that
-survives rendering verbatim. Changing a contract asset changes what at least one seat is told,
-so state the authority it grants or removes in the commit message. `instructionKeys()` in
-`src/room/instructions.ts` defines each role's layer sequence and gives every role exactly one
-role body.
+inside a statement collapse when rendered. A role body may hold several H2 sections; a document
+head or Pi capsule has one H1 and keeps its authored line breaks. Changing a contract asset
+changes what at least one seat is told, so state the authority it grants or removes in the commit
+message. `instructionKeys()` in `src/room/instructions.ts` defines each role's layer sequence and
+gives every role exactly one role body.
 
-`prompts/workspace/default.md` is the default *workspace* layer: repository workflow policy —
-task classes and topology, the Engineer/Architect/Reviewer/Scout catalog, model and effort
-routing principles, ownership and candidate rhythm, review triggers, verification, escalation,
-repository conventions, project anti-patterns, and protocol evolution. It is appended to the
-Lead document and written out whole as `room/WORKSPACE_PROTOCOL.md`. `protocolKeys()` in
-`src/room/instructions.ts` gives it to Lead alone: Supervisor reads a repository's own file
-only under a Human mandate, and Peer receives none of it because Lead quotes what bears on an
-assignment into the brief. Adding a workspace section therefore adds nothing to the Supervisor
-or Peer document, and anything either must know belongs in its contract body or in the brief.
+Anything true of only one project belongs in that project's own root `WORKSPACE_PROTOCOL.md`,
+which the room never writes: only `~/.paseo-room` is written. Do not add a room-wide workflow
+document to compensate — that is exactly what this design removed. If Lead demonstrably cannot
+act without some statement in the absence of a repository protocol, it belongs in Lead's
+`Assignment Vocabulary and Operating Baseline` section, kept minimal, and nowhere else.
 
-Every workspace statement must be workflow and must be new. Authority belongs in the
-contract sections: restating it in the workspace layer teaches the seat nothing and blurs the
-boundary the two layers depend on. Anything true of only one project belongs in that
-project's own root `WORKSPACE_PROTOCOL.md`, which wins over the default wherever it speaks.
-The room never writes that file: only `~/.paseo-room` is written.
+`src/room/skills/` is model-facing too, and read the same way: `SKILL.md` follows Agent Skill
+frontmatter (`name`, a precise triggering `description`), and the `references/` template is a
+scaffold, not policy. Its hard boundaries — no authority change, no tool-policy change, no
+writer-cap change, no invented policy, no write without an explicit Human apply instruction —
+are covered by static contract tests in `test/instructions.test.ts`. Changing the skill's
+boundaries changes what Lead may do to a repository, so say so in the commit message.
 
 ## Before committing
 

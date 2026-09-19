@@ -7,11 +7,13 @@ import { promisify } from 'node:util';
 import { afterAll, describe, expect, it } from 'vitest';
 import {
   markdownInventory, parsePackFilePaths, promptContents, registeredPromptPaths,
+  registeredSkillPaths, skillContents,
 } from './package-inventory.js';
 
 const execFileAsync = promisify(execFile);
 const repositoryRoot = join(import.meta.dirname, '..');
 const sourcePrompts = join(repositoryRoot, 'src', 'room', 'prompts');
+const sourceSkills = join(repositoryRoot, 'src', 'room', 'skills');
 const temporaryRoots: string[] = [];
 
 interface CliResult {
@@ -107,6 +109,9 @@ describe('packed CLI prompt rendering', { concurrent: false }, () => {
     expect(packPaths.filter(path => path.startsWith('dist/prompts/'))).toEqual(
       registeredPromptPaths('dist/prompts/'),
     );
+    expect(packPaths.filter(path => path.startsWith('dist/skills/'))).toEqual(
+      registeredSkillPaths('dist/skills/'),
+    );
 
     const archives = (await readdir(packRoot)).filter(path => path.endsWith('.tgz'));
     expect(archives).toHaveLength(1);
@@ -116,6 +121,8 @@ describe('packed CLI prompt rendering', { concurrent: false }, () => {
     const installedEntry = join(installedRoot, 'dist', 'index.js');
     expect(await markdownInventory(join(installedRoot, 'dist', 'prompts'))).toEqual(registeredPromptPaths());
     expect(await promptContents(join(installedRoot, 'dist', 'prompts'))).toEqual(await promptContents(sourcePrompts));
+    expect(await markdownInventory(join(installedRoot, 'dist', 'skills'))).toEqual(registeredSkillPaths());
+    expect(await skillContents(join(installedRoot, 'dist', 'skills'))).toEqual(await skillContents(sourceSkills));
     await symlink(join(repositoryRoot, 'node_modules'), join(installedRoot, 'node_modules'), 'dir');
 
     const home = join(packageRoot, 'home');
@@ -159,5 +166,16 @@ describe('packed CLI prompt rendering', { concurrent: false }, () => {
     expect(incomplete.stdout).not.toContain('Transport closed');
     expect(incomplete.stdout).not.toContain('Check that Paseo is running and reachable');
     expect(incomplete.stderr).toBe('');
+
+    // A missing skill asset is reported the same way: the room names it and the remedy rather
+    // than failing on the filesystem or blaming the daemon.
+    await execFileAsync('tar', ['-xzf', join(packRoot, archives[0] ?? ''), '-C', extractRoot]);
+    await rm(join(installedRoot, 'dist', 'skills', 'paseo-project-onboarding', 'SKILL.md'));
+    const missingSkill = await runCli(installedEntry, installedRoot, env);
+    expect(missingSkill.code).not.toBe(0);
+    expect(missingSkill.stdout).toContain('paseo-project-onboarding/SKILL.md');
+    expect(missingSkill.stdout).toContain('Reinstall paseo-room');
+    expect(missingSkill.stdout).not.toContain('Check that Paseo is running and reachable');
+    expect(missingSkill.stderr).toBe('');
   }, 60_000);
 });

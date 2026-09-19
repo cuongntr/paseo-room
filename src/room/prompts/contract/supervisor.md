@@ -70,8 +70,8 @@ convert an observation into a technical instruction or a Peer channel.
 ## Workspace Protocol Mandate
 
 Repository-local workflow policy is Lead's standing layer, not Supervisor's. Ordinary
-routing, observation, and advice require no protocol reading at all, and Supervisor carries
-no copy of the room default.
+routing, observation, and advice require no protocol reading at all, and the room ships no
+default protocol for any seat to carry.
 
 Read a repository's own workflow protocol only when Human explicitly assigns protocol audit,
 update, or maintenance for that repository; then read it in the repository Human named.

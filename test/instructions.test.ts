@@ -1,7 +1,8 @@
-import { readdir } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
-import { instructionKeys, protocolKeys, renderInstructions } from '../src/room/instructions.js';
+import { instructionKeys, renderInstructions } from '../src/room/instructions.js';
 import { PROMPT_ASSETS, loadPromptAsset } from '../src/room/prompts.js';
+import { ROOM_SKILL_NAME } from '../src/room/skills.js';
 import { ROLES } from '../src/roles.js';
 
 const AUTHORITY_HEADINGS = [
@@ -10,14 +11,14 @@ const AUTHORITY_HEADINGS = [
   'Evidence and Event-Driven Waiting',
   'Scope and Unrelated Work',
 ] as const;
-const WORKSPACE_HEADINGS = [
+/** Headings the removed always-on default workspace document used to contribute to Lead. */
+const RETIRED_WORKSPACE_HEADINGS = [
   'Status and Readers',
   'Topology',
   'Dispositions',
   'Routing',
   'Ownership and Candidates',
   'Review',
-  'Verification',
   'Escalation',
   'Repository Conventions',
   'Anti-Patterns',
@@ -48,12 +49,12 @@ describe('role instructions', () => {
       'Challenge Signals',
       'Project Technical Ownership',
       'Workspace Protocol',
+      'Assignment Vocabulary and Operating Baseline',
       'Moving Write Ownership',
       'Complete Peer Brief',
       'Technical Acceptance',
       'Independent Review',
       'Peer Seat Lifecycle',
-      ...WORKSPACE_HEADINGS,
     ]);
     expect(headings(renderInstructions('peer'))).toEqual([
       ...AUTHORITY_HEADINGS,
@@ -65,21 +66,16 @@ describe('role instructions', () => {
       'Reproducible Handoff',
       'No Self-Acceptance',
     ]);
-    expect(headings(renderInstructions('workspace'))).toEqual([...WORKSPACE_HEADINGS]);
   });
 
   it('composes one role body plus only the independently distributed layers', () => {
     expect(instructionKeys('supervisor')).toEqual(['sharedAuthority', 'sharedSeatIdentity', 'supervisor']);
     expect(instructionKeys('lead')).toEqual(['sharedAuthority', 'sharedSeatIdentity', 'challengeSignals', 'lead']);
     expect(instructionKeys('peer')).toEqual(['sharedAuthority', 'challengeSignals', 'peer']);
-    expect(protocolKeys('supervisor')).toEqual([]);
-    expect(protocolKeys('lead')).toEqual(['default']);
-    expect(protocolKeys('peer')).toEqual([]);
 
     for (const role of ROLES) {
       const document = renderInstructions(role);
       for (const key of instructionKeys(role)) expect(document).toContain(loadPromptAsset('contract', key));
-      for (const key of protocolKeys(role)) expect(document).toContain(loadPromptAsset('workspace', key));
       for (const heading of AUTHORITY_HEADINGS) expect(document).toContain(`## ${heading}`);
     }
   });
@@ -125,11 +121,10 @@ describe('role instructions', () => {
     expect(supervisor).toContain("Repository-local workflow policy is Lead's standing layer, not Supervisor's");
     expect(supervisor).toContain('only when Human explicitly assigns protocol audit, update, or maintenance');
     expect(supervisor).toContain('Supervisor proposes; it does not impose');
+    expect(supervisor).toContain('the room ships no default protocol for any seat to carry');
     expect(supervisor).not.toContain(WORKSPACE_PROTOCOL_PATH);
     expect(supervisor).not.toContain(WORKSPACE_PREFACE_MARKER);
-    expect(headings(supervisor).filter(heading => WORKSPACE_HEADINGS.includes(
-      heading as typeof WORKSPACE_HEADINGS[number],
-    ))).toEqual([]);
+    expect(supervisor).not.toContain(ROOM_SKILL_NAME);
   });
 
   it('keeps Lead project ownership, hard writer limits, and technical acceptance durable', () => {
@@ -152,57 +147,74 @@ describe('role instructions', () => {
     expect(peer).toContain('Lead alone performs technical acceptance among agents');
     expect(peer).not.toContain('## Room Seat Identity');
     expect(peer).not.toContain(WORKSPACE_PREFACE_MARKER);
+    expect(peer).not.toContain(ROOM_SKILL_NAME);
   });
 
-  it('makes Lead the sole standing protocol reader with point-by-point precedence', () => {
+  it('makes Lead the sole standing reader of an optional, complete repository protocol', () => {
     const lead = renderInstructions('lead');
     expect(lead).toContain('resolve the repository root');
     expect(lead).toContain(`read ${WORKSPACE_PROTOCOL_PATH} at its root in full`);
     expect(lead).toContain('Lead is the only seat that reads it as a matter of course');
-    expect(lead).toContain('A repository rule wins over the default wherever it speaks to a point');
-    expect(lead).toContain('the default still holds on every point the repository leaves silent');
-    expect(lead).toContain(WORKSPACE_PREFACE_MARKER);
-    for (const heading of WORKSPACE_HEADINGS) expect(lead).toContain(`## ${heading}`);
+    expect(lead).toContain("A repository protocol that exists is that repository's complete workflow policy");
+    expect(lead).toContain('The room ships no default protocol');
+    expect(lead).toContain('no second, hidden document to reconcile it against point by point');
+    expect(lead).toContain('can never enlarge or weaken the authority this contract grants');
+    expect(lead).toContain('Do not infer repository policy the repository never stated');
   });
 
-  it('keeps the brief schema durable while disposition meanings and routing stay in workspace policy', () => {
-    const leadContract = loadPromptAsset('contract', 'lead');
-    const workspace = loadPromptAsset('workspace', 'default');
+  // The always-on default is gone: no Lead turn may carry the removed generic protocol.
+  it('gives Lead no default workspace document, heading, or preface', () => {
+    const lead = renderInstructions('lead');
+    expect(lead).not.toContain(WORKSPACE_PREFACE_MARKER);
+    for (const heading of RETIRED_WORKSPACE_HEADINGS) expect(lead).not.toContain(`## ${heading}`);
+    expect(lead).not.toContain('Architecture lock-in is the only shape worth more than one read-only seat');
+    expect(lead).not.toContain('A third correction to the same symptom');
+    expect(lead).not.toContain('rather than editing this default, which ships with the room');
+  });
 
+  it('keeps only the minimum visible operating baseline Lead needs to act', () => {
+    const lead = renderInstructions('lead');
+    expect(lead).toContain('## Assignment Vocabulary and Operating Baseline');
+    expect(lead).toContain('not a hidden workspace protocol');
+    expect(lead).toContain('its silence never erases these stated rules');
+    for (const marker of ['Engineer is writable', 'Architect is read-only', 'Reviewer is read-only', 'Scout is read-only']) {
+      expect(lead).toContain(marker);
+    }
+    expect(lead).toContain('Use the exact profile model and thinking defaults of the seat being opened');
+    expect(lead).toContain("Name the repository's own verification gate and run it");
+    expect(lead).toContain('a candidate whose gate was not run is not a candidate');
+    expect(lead).toContain('Use a fresh read-only review when Human or a repository protocol requires one');
+    expect(lead).toContain('when Lead identifies material technical risk');
+  });
+
+  it('advertises the Lead-only onboarding skill as proposal-first and explicit-write only', () => {
+    const lead = renderInstructions('lead');
+    expect(lead).toContain(`The room ships one Lead-only skill, ${ROOM_SKILL_NAME}`);
+    expect(lead).toContain('It is proposal-first');
+    expect(lead).toContain('writes the repository file only under an explicit Human instruction to apply that draft');
+    expect(lead).toContain('It changes no authority, tool policy, writer limit, or provider identity');
+  });
+
+  it('keeps the brief schema durable and its disposition source explicit', () => {
+    const leadContract = loadPromptAsset('contract', 'lead');
     expect(leadContract).toContain('Every brief names exactly one disposition');
     expect(leadContract).toContain('quote the constraint into the brief as a brief term');
     expect(leadContract).toContain('it does not pre-solve the work or embed the verdict');
-    expect(leadContract).not.toContain('Engineer is writable');
-    expect(leadContract).not.toContain('When material uncertainty warrants independent review');
-    expect(leadContract).not.toContain('raise it for architecture-sensitive');
-
-    for (const marker of ['Engineer is writable', 'Architect is read-only', 'Reviewer is read-only', 'Scout is read-only']) {
-      expect(workspace).toContain(marker);
-    }
-    expect(workspace).toContain('raise it for architecture-sensitive, high-consequence or weakly observable work');
-    expect(workspace).toContain('Review is worth its cost where the change is hard to reverse');
-    expect(leadContract).toContain('When the workspace protocol or Human requires independent review');
+    expect(leadContract).toContain('The assignment vocabulary above defines each disposition');
+    expect(leadContract).toContain('cannot change its write mode or return contract');
   });
 
-  it('keeps seat tuning safety durable while workspace policy selects proportionate effort', () => {
+  it('keeps seat tuning safety durable while a repository protocol alone may route', () => {
     const leadContract = loadPromptAsset('contract', 'lead');
-    expect(leadContract).toContain('The model stays the exact current Peer profile default unless the workspace');
-    expect(leadContract).toContain("Select thinking effort under that protocol's routing policy");
+    expect(leadContract).toContain('The model stays the exact current Peer profile default unless a repository');
+    expect(leadContract).toContain("Select thinking effort under that repository protocol's routing policy");
     expect(leadContract).toContain('never invent an identifier');
     expect(leadContract).toContain('Never select a thinking tier that advertises automatic task delegation');
     expect(leadContract).toContain('A decision with material cost belongs to Human');
   });
 
-  it('writes the complete default protocol as the room copy without role authority', () => {
-    const workspace = renderInstructions('workspace');
-    expect(workspace).toBe(loadPromptAsset('workspace', 'default') + '\n');
-    expect(workspace).toContain('`WORKSPACE_PROTOCOL.md` at its root');
-    expect(workspace).not.toContain('## Human Authority');
-    expect(workspace).not.toContain('## Authority Floor');
-  });
-
   it('renders repeatedly with byte-identical output and no retired heading patterns', () => {
-    for (const kind of [...ROLES, 'workspace'] as const) {
+    for (const kind of ROLES) {
       const first = renderInstructions(kind);
       expect(renderInstructions(kind)).toBe(first);
       expect(first).not.toMatch(/^## (?:RC-|WP-)/m);
@@ -218,36 +230,96 @@ describe('prompt assets', () => {
       .sort();
     const documentAssets = Object.values(PROMPT_ASSETS.documents);
     const contractAssets = Object.values(PROMPT_ASSETS.contract);
-    const workspaceAssets = Object.values(PROMPT_ASSETS.workspace);
     const piAssets = Object.values(PROMPT_ASSETS.pi);
     const registered = [
       ...documentAssets,
       ...contractAssets,
-      ...workspaceAssets,
       ...piAssets,
     ].map(asset => asset.path).sort();
 
     expect(registered).toEqual(files);
+    // The workspace group is gone: no prompt asset may reintroduce a default protocol.
+    expect(Object.keys(PROMPT_ASSETS)).toEqual(['documents', 'contract', 'pi']);
+    expect(files.some(path => path.startsWith('workspace/'))).toBe(false);
     expect(documentAssets.map(asset => asset.kind)).toEqual(Array(3).fill('head'));
     expect(contractAssets.map(asset => asset.kind)).toEqual([
       'body', 'section', 'section', 'body', 'body', 'body',
     ]);
-    expect(workspaceAssets.map(asset => asset.kind)).toEqual(['document']);
     expect(piAssets.map(asset => asset.kind)).toEqual(Array(2).fill('capsule'));
   });
 
-  it('normalizes bodies and sections while preserving document and capsule hard lines', () => {
+  it('normalizes bodies and sections while preserving head and capsule hard lines', () => {
     expect(loadPromptAsset('contract', 'sharedAuthority')).toMatch(
       /^## Human Authority\n- Human owns product goals/,
     );
     expect(loadPromptAsset('contract', 'lead')).toContain(
       '\n\n## Workspace Protocol\n- Repository-local workflow policy',
     );
-    expect(loadPromptAsset('workspace', 'default')).toContain(
-      'different rules\nprovides `WORKSPACE_PROTOCOL.md` at its root',
-    );
     expect(loadPromptAsset('pi', 'communicationStyle')).toContain(
       'Prefer plain language\nand minimal formatting.',
     );
+  });
+});
+
+describe('room-owned onboarding skill contract', () => {
+  const root = new URL(`../src/room/skills/${ROOM_SKILL_NAME}/`, import.meta.url);
+  const read = (path: string): Promise<string> => readFile(new URL(path, root), 'utf8');
+
+  it('ships valid Agent Skill frontmatter naming its own directory and triggers', async () => {
+    const source = await read('SKILL.md');
+    const frontmatter = /^---\n([\s\S]*?)\n---\n/.exec(source)?.[1];
+    expect(frontmatter).toBeDefined();
+    expect(frontmatter).toContain(`name: ${ROOM_SKILL_NAME}`);
+    const description = /^description: (.+)$/m.exec(frontmatter ?? '')?.[1] ?? '';
+    expect(description.length).toBeGreaterThan(80);
+    for (const trigger of ['onboard', 'WORKSPACE_PROTOCOL.md', 'audit', 'update', 'repeated observed workflow failure']) {
+      expect(description).toContain(trigger);
+    }
+    expect(description).toContain('Proposal-first');
+  });
+
+  it('is proposal-first and writes only under an explicit apply instruction', async () => {
+    const source = await read('SKILL.md');
+    expect(source).toContain('The skill writes nothing by default');
+    expect(source).toContain('never writes any path other than the repository\'s\n  root `WORKSPACE_PROTOCOL.md`');
+    expect(source).toContain('Write the root `WORKSPACE_PROTOCOL.md` only when Human explicitly instructs you to apply the');
+    expect(source).toContain('An audit or review request is not an apply instruction');
+    expect(source).toContain('refuse any other shape');
+    expect(source).toContain('leave every unrelated change in the working tree untouched');
+  });
+
+  it('separates evidence from proposal and refuses to invent policy', async () => {
+    const source = await read('SKILL.md');
+    expect(source).toContain('Resolve the repository root');
+    for (const evidence of ['AGENTS.md', 'CONTRIBUTING', 'package.json', 'CI and automation configuration', 'test and lint configuration', 'architecture, design, decision-record, and operations documentation']) {
+      expect(source).toContain(evidence);
+    }
+    expect(source).toContain('**Evidence**');
+    expect(source).toContain('**Proposal**');
+    expect(source).toContain('**Unknown or conflicting**');
+    expect(source).toContain('The skill cannot invent policy');
+    expect(source).toContain('Drop a section rather than fill it with filler');
+    expect(source).toContain('the draft has to be complete on its own');
+  });
+
+  it('cannot alter authority, tool policy, the writer cap, credentials, or Peer readership', async () => {
+    const source = await read('SKILL.md');
+    expect(source).toContain('cannot change Human, Supervisor, Lead, or Peer authority');
+    expect(source).toContain('the Paseo tool policy');
+    expect(source).toContain('the one-writable-Peer limit');
+    expect(source).toContain('provider or profile identity, or credentials');
+    expect(source).toContain('cannot give Peer the protocol');
+    expect(source).toContain('adds no dependency, tooling, or other top-level file');
+  });
+
+  it('keeps the bundled template a scaffold loaded only during the skill', async () => {
+    const skill = await read('SKILL.md');
+    const template = await read('references/workspace-protocol-template.md');
+    expect(skill).toContain('references/workspace-protocol-template.md');
+    expect(skill).toContain('it is a reference loaded during this skill, never a default\nappended to a session');
+    expect(template).toContain('A shape to start from, not content to ship');
+    expect(template).toContain('Every section here is optional');
+    // A scaffold must not restate role authority, or it becomes a second contract.
+    for (const heading of ['## Human Authority', '## Authority Floor']) expect(template).not.toContain(heading);
   });
 });

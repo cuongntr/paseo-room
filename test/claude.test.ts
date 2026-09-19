@@ -5,6 +5,7 @@ import { claudeAgent, renderRoleMemory, renderRoleSettings, renderRoleState } fr
 import { applyEntries } from '../src/fsops.js';
 import { resolveLayout } from '../src/layout.js';
 import { renderInstructions } from '../src/room/instructions.js';
+import { leadSkillProjection, ROOM_SKILL_NAME, roomSkillSource } from '../src/room/skills.js';
 import { makeFixture } from './helpers.js';
 
 describe('renderRoleSettings', () => {
@@ -144,10 +145,19 @@ describe('claudeAgent.build resource distribution', () => {
     const operator = layout.agentHome.claude;
     for (const role of ['supervisor', 'lead'] as const) {
       const home = join(layout.roomHome, 'roles/claude', role);
-      for (const name of ['skills', 'plugins', 'commands', 'hooks', 'rules']) {
+      for (const name of ['plugins', 'commands', 'hooks', 'rules']) {
         expect(await readlink(join(home, name))).toBe(join(operator, name));
       }
     }
+    // Supervisor keeps the whole-directory alias; Lead projects the operator skills plus the
+    // room-owned one, with Claude's runtime bucket reserved rather than projected.
+    expect(await readlink(join(layout.roomHome, 'roles/claude/supervisor/skills'))).toBe(join(operator, 'skills'));
+    const leadSkills = join(layout.roomHome, 'roles/claude/lead/skills');
+    expect((await lstat(leadSkills)).isSymbolicLink()).toBe(true);
+    expect(await readlink(leadSkills)).toBe(leadSkillProjection(layout, 'claude'));
+    expect((await readdir(leadSkills)).sort()).toEqual(['formatting', ROOM_SKILL_NAME, 'paseo-handoff'].sort());
+    expect(await readlink(join(leadSkills, ROOM_SKILL_NAME))).toBe(roomSkillSource(layout));
+    expect((await readdir(join(operator, 'skills'))).sort()).toEqual(['formatting', 'paseo-handoff']);
     const peer = join(layout.roomHome, 'roles/claude/peer');
     for (const name of ['plugins', 'commands', 'hooks']) {
       await expect(lstat(join(peer, name))).rejects.toThrow();

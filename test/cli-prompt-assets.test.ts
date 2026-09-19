@@ -1,5 +1,5 @@
 import { mkdir, stat, writeFile } from 'node:fs/promises';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CliContext, Output } from '../src/cli.js';
 import type { Prompts } from '../src/wizard.js';
 import { emptyDaemon, fakeClient, makeFixture } from './helpers.js';
@@ -7,6 +7,8 @@ import { emptyDaemon, fakeClient, makeFixture } from './helpers.js';
 const promptFs = vi.hoisted(() => ({
   failure: undefined as undefined | 'missing' | 'malformed',
   reads: 0,
+  skillFailure: undefined as undefined | 'missing' | 'empty' | 'malformed',
+  skillReads: 0,
 }));
 
 vi.mock('node:fs', async () => {
@@ -14,6 +16,15 @@ vi.mock('node:fs', async () => {
   return {
     ...actual,
     readFileSync: (url: URL): string => {
+      if (url.pathname.includes('/room/skills/')) {
+        promptFs.skillReads += 1;
+        if (promptFs.skillFailure === 'missing') throw new Error('ENOENT synthetic missing skill asset');
+        if (promptFs.skillFailure === 'empty') return '\n';
+        if (promptFs.skillFailure === 'malformed' && url.pathname.endsWith('/SKILL.md')) {
+          return '---\nname: wrong-skill\ndescription: wrong\n---\n';
+        }
+        return actual.readFileSync(url, 'utf8');
+      }
       if (!url.pathname.includes('/room/prompts/')) return actual.readFileSync(url, 'utf8');
       promptFs.reads += 1;
       if (promptFs.failure === 'missing') throw new Error('ENOENT synthetic missing asset');
@@ -58,6 +69,11 @@ function scriptedSetup(): Prompts {
 }
 
 describe('CLI prompt-asset failure containment', () => {
+  beforeEach(() => {
+    promptFs.skillFailure = undefined;
+    promptFs.skillReads = 0;
+  });
+
   it('returns a failed result with reinstall guidance for a missing asset on the flag path', async () => {
     const fixture = await makeFixture();
     promptFs.failure = 'missing';
@@ -70,7 +86,7 @@ describe('CLI prompt-asset failure containment', () => {
 
     expect(result.code).toBe(1);
     expect(result.err).toBe('');
-    expect(result.out).toContain('workspace.default');
+    expect(result.out).toContain('documents.supervisor');
     expect(result.out).toContain('Reinstall paseo-room');
     expect(result.out).not.toContain('Check that Paseo is running and reachable');
     expect(result.out).toContain('setup: failed');
@@ -154,5 +170,52 @@ describe('CLI prompt-asset failure containment', () => {
     expect(noCommand.err).toContain('no command given');
     expect(promptCalls).toBe(0);
     expect(promptFs.reads).toBe(0);
+  });
+
+  // A skill asset is as load-bearing as a prompt asset: it names itself and its remedy rather
+  // than being reported as a filesystem or daemon failure.
+  it.each([
+    ['missing', 'ENOENT synthetic missing skill asset'] as const,
+    ['empty', 'is empty.'] as const,
+    ['malformed', 'frontmatter name must be paseo-project-onboarding'] as const,
+  ])('returns a failed result with reinstall guidance for a %s skill asset', async (failure, detail) => {
+    const fixture = await makeFixture();
+    promptFs.failure = undefined;
+    promptFs.skillFailure = failure;
+    promptFs.skillReads = 0;
+
+    const result = await runCli(['setup'], {
+      isTTY: false,
+      options: { env: fixture.env, factory: fakeClient(emptyDaemon()) },
+    });
+
+    expect(result.code).toBe(1);
+    expect(result.err).toBe('');
+    expect(result.out).toContain('paseo-project-onboarding/SKILL.md');
+    expect(result.out).toContain(detail);
+    expect(result.out).toContain('Reinstall paseo-room');
+    expect(result.out).not.toContain('Check that Paseo is running and reachable');
+    expect(result.out).toContain('setup: failed');
+    expect(promptFs.skillReads).toBeGreaterThan(0);
+  });
+
+  it('removes an existing room without reading a skill asset', async () => {
+    const fixture = await makeFixture();
+    await mkdir(fixture.roomHome, { recursive: true });
+    await writeFile(`${fixture.roomHome}/room.json`, JSON.stringify({
+      version: '0.1.0', agents: ['codex'], roles: ['supervisor', 'lead', 'peer'],
+    }));
+    promptFs.failure = undefined;
+    promptFs.skillFailure = 'missing';
+    promptFs.skillReads = 0;
+
+    const result = await runCli(['remove', '--apply'], {
+      isTTY: false,
+      options: { env: fixture.env, factory: fakeClient(emptyDaemon()) },
+    });
+
+    expect(result.code).toBe(0);
+    expect(result.out).toContain('remove: ok');
+    expect(promptFs.skillReads).toBe(0);
   });
 });

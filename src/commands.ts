@@ -11,7 +11,8 @@ import { layoutChecks, resolveLayout, roleHome, sharedRoom, type Layout, type Op
 import { checkDaemon, mergeProfiles, minimumPaseoVersion, profileMatches, providerMatches, withSession, type ClientFactory, type LivePlugin, type LiveProfile, type Session } from './paseo.js';
 import { CLAUDE_CARRIER_PLUGIN_ID, claudeCarrierEntries, claudeCarrierPluginDir } from './plugin.js';
 import { fail, failed, hasFailure, pass, warn, type Check, type Operation, type Result } from './result.js';
-import { contractDigest, renderInstructions } from './room/instructions.js';
+import { contractDigest } from './room/instructions.js';
+import { roomSkillEntries } from './room/skills.js';
 import { MARKER, readMarker, renderMarker, type Marker } from './room.js';
 import { DELEGATING_THINKING, profileId, providerId, providerLabel, ROLES, ROLE_COLOR, ROLE_ICON, ROLE_NOTES, ROLE_PASEO_TOOLS, ROLE_THINKING, type AgentId, type Role } from './roles.js';
 
@@ -79,12 +80,15 @@ async function buildDesired(
   roles: readonly Role[],
   build: BuildOptions = {},
 ): Promise<Desired> {
-  // Template, not linked into any seat: each repo owns its own root WORKSPACE_PROTOCOL.md.
-  // Named exactly as Lead's Workspace Protocol section names it, so a copy needs no rename.
+  // The room-owned skill source is composed once here rather than per adapter, so three
+  // seated agents cannot declare the same managed paths three times.
   const entries: Entry[] = [
     { kind: 'dir', path: layout.roomHome },
     { kind: 'dir', path: sharedRoom(layout) },
-    { kind: 'file', path: join(sharedRoom(layout), 'WORKSPACE_PROTOCOL.md'), content: renderInstructions('workspace') },
+    // Earlier versions generated a default workspace protocol template here. The room ships no
+    // default protocol now, so the old generated regular file is declared absent and removed.
+    { kind: 'absent', path: join(sharedRoom(layout), 'WORKSPACE_PROTOCOL.md') },
+    ...roomSkillEntries(layout),
   ];
   const providers: Record<string, Provider> = {};
   const profiles: Profile[] = [];

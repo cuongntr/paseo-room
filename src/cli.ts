@@ -7,6 +7,7 @@ import { renderHuman, renderJson } from './render.js';
 import { exitCode, fail, failed, type Result } from './result.js';
 import { AGENT_IDS, type AgentId } from './roles.js';
 import { PromptAssetError } from './room/prompts.js';
+import { SkillAssetError } from './room/skills.js';
 import type { Prompts } from './wizard.js';
 
 export interface Output {
@@ -48,6 +49,13 @@ function failedFromThrown(command: string, error: unknown): Result {
   if (error instanceof PromptAssetError) {
     return failed(command, [fail(
       `${command}.prompt-asset`,
+      error.message,
+      'Reinstall paseo-room, then try again.',
+    )]);
+  }
+  if (error instanceof SkillAssetError) {
+    return failed(command, [fail(
+      `${command}.skill-asset`,
       error.message,
       'Reinstall paseo-room, then try again.',
     )]);

@@ -89,7 +89,8 @@ starts, its exit code is preserved; a signal is returned using the conventional
 ~/.paseo-room/
   room.json                       # what this CLI created; verify and remove read it
   AUTHENTICATION.md               # exact per-role login commands; contains no secrets
-  room/WORKSPACE_PROTOCOL.md      # the default protocol Lead carries, as one readable file
+  room/skills/paseo-project-onboarding/   # Lead-only Agent Skill: draft a repository protocol
+    SKILL.md, references/         # procedure plus a scaffold loaded only when the skill runs
   plugin/                         # Claude only: trusted creation-time system-prompt append carrier
     paseo-plugin.json             # accepts Paseo >=0.8.0 <0.9.0
     index.server.ts, server/      # exact provider map + generated role contracts
@@ -98,20 +99,20 @@ starts, its exit code is preserved; a signal is returned using the conventional
     role-instructions.md          # readable copy of what this seat was told
     model-catalog.json            # generated copy of your catalog, native multi-agent metadata removed
     auth.json                       # created and owned by Codex after role login, if file-backed
-    AGENTS.md, skills, plugins, hooks.json              → symlinks into ~/.codex when present (Peer: see below)
+    AGENTS.md, skills, plugins, hooks.json              → shared resources (Lead/Peer: see below)
   roles/claude/<role>/
     CLAUDE.md                     # your global memory + role instructions (contract omitted with --no-claude-memory-contract)
     settings.json                 # your settings.json + PASEO_ROOM_ROLE
     .claude.json                  # seeded once from yours, then owned by Claude
     .credentials.json                # created and owned by Claude after role login, if file-backed
     skills, plugins, commands, hooks, rules, output-styles,
-    keybindings.json, themes                          → symlinks into ~/.claude when present (Peer: see below)
+    keybindings.json, themes                          → shared resources (Lead/Peer: see below)
   roles/pi/<role>/
     settings.json                 # your settings minus package/extension declarations
     APPEND_SYSTEM.md              # your append + style/runtime capsules + role instructions
     auth.json                         # created and owned by Pi after role login, if used
     models.json, AGENTS.md, skills, prompts, themes,
-    keybindings.json, mcp.json                        → symlinks into ~/.pi/agent when present (Peer: see below)
+    keybindings.json, mcp.json                        → shared resources (Lead/Peer: see below)
 ```
 
 Each seat gets its own file-backed credential path, sessions, history and projects inside its
@@ -125,7 +126,13 @@ file. Anything else at a managed path — a directory where a file belongs, an u
 symlink — makes setup stop and name the path for you to move aside. Nothing is deleted
 recursively on your behalf.
 
-### What Peer does not receive
+### How Lead and Peer receive skills
+
+Lead's `skills` remains a symlink, but now points to a room-owned managed aggregate containing
+links to every operator skill plus the room-owned `paseo-project-onboarding` skill. This adds the
+room skill without writing into your agent home, while keeping the role path replaceable by an
+older package during rollback. A same-name operator skill remains untouched but is shadowed in
+the aggregate by the room-owned copy.
 
 Peer has no room tools, so the room also stops handing it orchestration surfaces:
 
@@ -138,9 +145,9 @@ Peer has no room tools, so the room also stops handing it orchestration surfaces
   removing one of your skills is drift `verify` reports and `setup --apply` reconciles.
 
 Your own skills directory is never modified: `paseo*` skills stay exactly where they are.
-An existing room upgrades its one legacy Peer `skills` symlink to that projection on the next
-`setup --apply`; setup only unlinks the alias, never your skills, and stops with an actionable
-message if that path has become something it does not recognize.
+On the next `setup --apply`, an existing Lead `skills` symlink is retargeted to its room aggregate,
+while a legacy Peer symlink becomes its managed directory. Setup only replaces or unlinks those
+aliases, never your skills, and stops with an actionable message for an unrecognized Peer shape.
 
 This is capability hygiene, not a sandbox. Peer still has shell access.
 
@@ -358,8 +365,8 @@ outline: the seat's evidence is the current live configuration. Both seats read 
 creation takes no profile id), then inspect the live seat's provider, workspace and mode.
 Supervisor additionally uses `list_agents(cwd)` for discovery and corroborates Lead ownership by
 parentage or known Human-opened history. For `room-<agent>-peer`, Lead copies provider, mode and
-features exactly, keeps the profile's model unless the workspace protocol in force routes models,
-chooses the thinking effort under that protocol's policy, and requires the live seat's
+features exactly, keeps the profile's model unless a repository protocol routes models,
+chooses the thinking effort under that repository protocol's policy, and requires the live seat's
 daemon-added `paseo.parent-agent-id` to name itself. An ambiguous Lead candidate goes to
 duplicate recovery and Human escalation instead of being adopted.
 
@@ -392,16 +399,20 @@ seat after the apply; sending another turn to an already-running seat is not a r
 context reloaded them. Only a newly launched seat context is expected to ingest the
 regenerated instructions.
 
-`room.json` records a short `contract` digest of the role documents and workspace protocol
-this room was installed from. When it differs from what the installed package renders — or is
-absent, because the room predates the field — setup and verify warn that the seats are holding
-older text and ask for `setup --apply` plus a restart. It is provenance you compare by eye, not
-a security claim. Rooms written before the field still parse.
+`room.json` records a short `contract` digest of the three rendered role documents this room
+was installed from. When it differs from what the installed package renders — or is absent,
+because the room predates the field — setup and verify warn that the seats are holding older
+text and ask for `setup --apply` plus a restart. It is provenance you compare by eye, not a
+security claim. Rooms written before the field still parse.
 
-One migration happens on the first upgraded apply: an existing Peer `skills` symlink becomes
-the room-owned projection described above. Only the alias is unlinked, never your skills, and
-setup stops with an actionable message rather than guessing if that path has become something
-it does not recognize.
+The room-owned skill files are live managed entries instead: `verify` compares their exact bytes,
+so a skill update is not reported as stale seat instructions.
+
+On the first upgraded apply, each Lead `skills` symlink is retargeted to its room-owned aggregate
+and an existing Peer `skills` symlink becomes the room-owned projection described above. Only
+aliases are replaced or unlinked, never your skills. Lead retains the symlink shape the prior
+package expects, so package-level rollback can retarget it without a reverse migration; setup
+still stops rather than guessing if the Peer path has become something it does not recognize.
 
 To roll back, run the prior package version with the same agent selection and `setup --apply`,
 then restart the affected seats again:
@@ -422,8 +433,7 @@ There are three separate evidence boundaries:
 - `setup --apply` and `verify`, backed by regression tests, prove the generated/live
   configuration chain: each room profile points to its exact role provider and owned mode,
   each provider points to the exact role home, and each provider-selected role home carries
-  the exact prompt input with the applicable role contract, plus the default workspace protocol
-  for Lead.
+  the exact prompt input with the applicable role contract.
 - Delivery of those files and arguments into a newly launched model context relies on the
   documented Codex, Claude Code and Pi configuration contracts for
   `developer_instructions`, `CLAUDE.md`, and `--append-system-prompt`.
@@ -448,9 +458,8 @@ command again.
 The exact model-facing wording every seat reads lives in the canonical Markdown under
 [`src/room/prompts/`](src/room/prompts/), organised by who reads it: one shared authority body
 for every role, shared room-seat identity evidence for Supervisor and Lead, the shared challenge
-vocabulary for Lead and Peer, exactly one body per role, and the default workspace document for
-Lead. TypeScript selects those layers with `instructionKeys()` and `protocolKeys()`; it does not
-duplicate their prose. In short:
+vocabulary for Lead and Peer, and exactly one body per role. TypeScript selects those layers with
+`instructionKeys()`; it does not duplicate their prose. In short:
 
 - **Supervisor** routes Human directives to Lead and observes. Before opening a seat it checks
   for and reuses the project's existing Lead, including an idle or resumable Lead. It observes
@@ -488,33 +497,56 @@ Two further limits are deliberately conservative. **One writable Peer per projec
 per moving scope: the room gives you no writer isolation, so separate scopes are not evidence
 of separate working trees, and no workspace protocol relaxes the limit. Concurrent writable
 Peers in isolated worktrees are a deferred decision, not an oversight. And a seat's **model and
-reasoning effort are not one knob**: the model stays the profile's default unless the workspace
-protocol in force explicitly supplies model routing, while the thinking effort is Lead's
+reasoning effort are not one knob**: the model stays the profile's default unless a repository
+protocol explicitly supplies model routing, while the thinking effort is Lead's
 per-brief choice on task risk, uncertainty, context size and verification burden — lowest that
 reliably answers the task, higher for architecture-sensitive or weakly observable work, only an
 option the live Paseo and provider context establishes as supported, and never up to a tier
 advertising automatic delegation. Provider, mode, workspace, parent and feature values are
 eligibility evidence and copied exactly.
 
-The room also ships a **default workspace protocol** — topology by difficulty, the four
-disposition mandates, model and effort routing principles, ownership and candidate rhythm,
-review triggers, verification, escalation, repository conventions, project anti-patterns and
-protocol evolution — so a project has that layer without doing anything. It goes to **Lead
-alone**, because Lead is the only standing reader of workflow policy: Lead resolves the
-repository root, reads `WORKSPACE_PROTOCOL.md` in full when the repository ships one, and quotes
-what bears on an assignment into the brief, including the exact verification command. Supervisor
-carries no copy and reads a repository's protocol only under an explicit Human audit, update or
-maintenance mandate; ordinary routing and observation need none of it, and it may propose a
-change with causal evidence but never impose one. Peer is never told the filename at all, so it
-spends its attention on one brief rather than on deciding which repository rules apply — what it
-needs unconditionally is in its own contract, including the floor that no repository or workspace
-instruction can enlarge or weaken its authority, with conflicts routed to Lead.
+The room ships **no default workspace protocol**. A repository's root `WORKSPACE_PROTOCOL.md`
+is optional, and when it exists it is that repository's complete workflow policy — there is no
+hidden room document behind it to reconcile point by point, and no unstated rule survives where
+it is silent. It stays subordinate to the authority floor: repository workflow directs how work
+is done and can never enlarge or weaken role authority. The file lives at the repository root
+because it is agent guidance rather than project documentation. The CLI never writes into a
+repository.
 
-A repository that needs different rules writes `WORKSPACE_PROTOCOL.md` at its root, which wins
-wherever it speaks while the default holds wherever it is silent — the root, because it is
-agent guidance rather than project documentation. `~/.paseo-room/room/WORKSPACE_PROTOCOL.md` is
-the whole default as one file, so you can read what is in force and start from it. The CLI
-never writes into a repository.
+Reading it goes to **Lead alone**, the only standing reader of workflow policy: Lead resolves
+the repository root, reads the file in full when the repository ships one, and quotes what bears
+on an assignment into the brief, including the exact verification command. Supervisor reads a
+repository's protocol only under an explicit Human audit, update or maintenance mandate;
+ordinary routing and observation need none of it, and it may propose a change with causal
+evidence but never impose one. Peer is never told the filename at all, so it spends its attention
+on one brief rather than on deciding which repository rules apply — what it needs unconditionally
+is in its own contract, including the floor that no repository or workspace instruction can
+enlarge or weaken its authority, with conflicts routed to Lead.
+
+Lead's own contract carries a short, visible **operating baseline**, not another workspace
+policy: compact Engineer/Architect/Reviewer/Scout assignment vocabulary; exact profile model and
+thinking defaults absent explicit repository routing; the obligation to name and run the
+repository's own verification gate; and fresh read-only review when Human or a repository
+protocol requires it, or when Lead sees material technical risk. These stated contract rules
+remain visible when a repository protocol is silent; no generic topology matrix, anti-pattern
+catalog, or protocol-evolution policy survives in any prompt.
+
+To write a protocol, Lead has one room-owned **Agent Skill**, `paseo-project-onboarding`,
+delivered to Lead's `skills` directory from `~/.paseo-room/room/skills/` and to no other seat.
+It inspects what the repository actually contains — agent instructions, README/CONTRIBUTING,
+build manifests and scripts, CI, test configuration, architecture and operations docs — and
+returns an evidence map, one standalone complete draft, and the decisions Human still owns,
+separating observed facts from proposals rather than guessing. It is proposal-first: it writes
+nothing by default, and writes the repository's root `WORKSPACE_PROTOCOL.md` only under an
+explicit Human instruction to apply the draft, refusing any non-regular shape at that path and
+leaving unrelated work alone. It cannot change authority, tool policy, the writer limit,
+provider identity or credentials, and cannot make Peer a protocol reader. Its bundled template
+is a scaffold loaded while the skill runs, never appended to a session.
+
+Lead's visible skill inventory is therefore an exact room-owned aggregate behind the role-home
+symlink: one link per skill in your own agent home, plus a link to the room's skill. Your own home
+is never modified, and an operator skill named `paseo-project-onboarding` is left exactly where
+it is — the room-owned copy owns that name inside the aggregate only.
 
 ## Working the room
 

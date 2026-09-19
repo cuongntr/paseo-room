@@ -18,6 +18,7 @@ import { loadPromptAsset } from '../room/prompts.js';
 import { which } from '../which.js';
 import { jsonServerTable, paseoMcpCheck } from './mcp.js';
 import { roleResourceEntries } from './resources.js';
+import { leadSkillProjection, ROOM_SKILL_NAME, roomSkillSource } from '../room/skills.js';
 import type { Agent, AgentPlan } from './types.js';
 
 const PACKAGE_NAME = 'pi-mcp-adapter';
@@ -357,13 +358,17 @@ export const piAgent: Agent = {
     const entries: Entry[] = [];
     const credentials: CredentialDiagnostic[] = [];
     const argv: Partial<Record<Role, readonly string[]>> = {};
+    const roomSkill = { name: ROOM_SKILL_NAME, source: roomSkillSource(layout) };
     for (const role of roles) {
       const target = roleHome(layout, 'pi', role);
       const appendPath = join(target, 'APPEND_SYSTEM.md');
       entries.push({ kind: 'dir', path: target });
       entries.push({ kind: 'file', path: join(target, 'settings.json'), content: settings });
       entries.push({ kind: 'file', path: appendPath, content: renderPiAppend(operatorAppend, role) });
-      entries.push(...await roleResourceEntries({ role, target, home, names: SHARED, shared, executable: EXECUTABLE }));
+      entries.push(...await roleResourceEntries({
+        role, target, home, names: SHARED, shared, executable: EXECUTABLE, roomSkill,
+        leadSkillProjection: leadSkillProjection(layout, 'pi'),
+      }));
       credentials.push(await piCredentialDiagnostic(layout, role, binary));
       argv[role] = ['--no-extensions', '--extension', resolved.adapter.entry, '--no-approve', '--append-system-prompt', appendPath];
     }

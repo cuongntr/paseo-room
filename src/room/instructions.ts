@@ -1,12 +1,8 @@
 import { createHash } from 'node:crypto';
 import { ROLES, type Role } from '../roles.js';
-import {
-  loadPromptAsset,
-  type ContractKey,
-  type WorkspaceKey,
-} from './prompts.js';
+import { loadPromptAsset, type ContractKey } from './prompts.js';
 
-export type InstructionKind = Role | 'workspace';
+export type InstructionKind = Role;
 
 // Every role carries the same authority floor. The layers above it reach only the seats they
 // belong to: room-seat identity evidence reaches the two seats that open seats, and the
@@ -26,35 +22,24 @@ const ROLE_KEYS = {
   peer: 'peer',
 } as const satisfies Record<Role, ContractKey>;
 
-// The workspace layer belongs to the only standing protocol reader. Supervisor reads a
-// repository's protocol under a Human mandate and carries no default with it; Peer receives
-// none of it, so its attention stays on one brief and the brief remains the only channel for
-// repository-local constraints.
-const PROTOCOL_KEYS = {
-  supervisor: [],
-  lead: ['default'],
-  peer: [],
-} as const satisfies Record<Role, readonly WorkspaceKey[]>;
-
 export function instructionKeys(role: Role): readonly ContractKey[] {
   return [...SHARED_KEYS[role], ROLE_KEYS[role]];
 }
 
-export function protocolKeys(role: Role): readonly WorkspaceKey[] {
-  return PROTOCOL_KEYS[role];
-}
-
+/**
+ * The room composes role documents only. Repository workflow policy is a repository's own
+ * optional root `WORKSPACE_PROTOCOL.md`: the room ships no default copy of it, so nothing
+ * here can inject a second, hidden workflow document into a seat.
+ */
 export function renderInstructions(kind: InstructionKind): string {
-  if (kind === 'workspace') return loadPromptAsset('workspace', 'default') + '\n';
   return [
     loadPromptAsset('documents', kind),
     ...instructionKeys(kind).map(key => loadPromptAsset('contract', key)),
-    ...protocolKeys(kind).map(key => loadPromptAsset('workspace', key)),
   ].join('\n\n') + '\n';
 }
 
 /** Every document the room composes, in one fixed order, so a digest over them is stable. */
-export const INSTRUCTION_KINDS = [...ROLES, 'workspace'] as const satisfies readonly InstructionKind[];
+export const INSTRUCTION_KINDS = [...ROLES] as const satisfies readonly InstructionKind[];
 
 /**
  * Identifies the rendered contract generation a room was installed from.

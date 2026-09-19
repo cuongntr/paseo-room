@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readdir, readFile, readlink, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { piAgent, probePiMcp, renderPiAppend, renderPiSettings } from '../src/agents/pi.js';
@@ -6,6 +6,7 @@ import { loadPromptAsset } from '../src/room/prompts.js';
 import { applyEntries, planEntries } from '../src/fsops.js';
 import { resolveLayout } from '../src/layout.js';
 import { renderInstructions } from '../src/room/instructions.js';
+import { leadSkillProjection, ROOM_SKILL_NAME, roomSkillSource } from '../src/room/skills.js';
 import { makeFixture, nodeScript, script } from './helpers.js';
 
 const probeId = 'paseo-room-pi-mcp-probe';
@@ -180,9 +181,18 @@ describe('piAgent.build resource distribution', () => {
     const operator = layout.agentHome.pi;
     for (const role of ['supervisor', 'lead'] as const) {
       const home = join(layout.roomHome, 'roles/pi', role);
-      expect(await realpath(join(home, 'skills'))).toBe(await realpath(join(operator, 'skills')));
       expect(await realpath(join(home, 'prompts'))).toBe(await realpath(join(operator, 'prompts')));
     }
+    // Supervisor keeps the whole-directory alias; Lead projects the operator skills plus the
+    // room-owned one without modifying the operator home.
+    expect(await realpath(join(layout.roomHome, 'roles/pi/supervisor/skills')))
+      .toBe(await realpath(join(operator, 'skills')));
+    const leadSkills = join(layout.roomHome, 'roles/pi/lead/skills');
+    expect((await lstat(leadSkills)).isSymbolicLink()).toBe(true);
+    expect(await readlink(leadSkills)).toBe(leadSkillProjection(layout, 'pi'));
+    expect((await readdir(leadSkills)).sort()).toEqual(['formatting', ROOM_SKILL_NAME, 'paseo-advisor'].sort());
+    expect(await readlink(join(leadSkills, ROOM_SKILL_NAME))).toBe(roomSkillSource(layout));
+    expect((await readdir(join(operator, 'skills'))).sort()).toEqual(['formatting', 'paseo-advisor']);
     const peer = join(layout.roomHome, 'roles/pi/peer');
     await expect(stat(join(peer, 'prompts'))).rejects.toThrow();
     expect(await readFile(join(peer, 'keybindings.json'), 'utf8')).toBe('{}');

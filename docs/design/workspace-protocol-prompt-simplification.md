@@ -2,11 +2,23 @@
 
 | Field | Value |
 |---|---|
-| Status | Active |
+| Status | Partially superseded |
 | Owner | Repository owner |
 | Requirements source | [`demonthorn-agent-orchestration-deep-dive.md`](../demonthorn-agent-orchestration-deep-dive.md) plus the repository owner's 2026-09-19 direction |
 | Related ADRs | N/A — no ADR directory or governing ADR exists |
 | Routing decision | Brownfield model-facing contract change; technical design → direct implementation because this is one settled delivery atom with no rollout or dependency graph |
+| Superseded by | [lead-project-onboarding-skill.md](lead-project-onboarding-skill.md) — the always-on default Workspace Protocol, its point-by-point precedence, and the generated `room/WORKSPACE_PROTOCOL.md` are removed. Its role-authority, reader-scope, and prompt-consolidation decisions remain active. |
+
+> **Supersession note.** Everything below describing a shipped default workspace document —
+> `workspace/default.md`, the `document` loader kind, `protocolKeys()`, point-by-point
+> precedence, the 32 → 12 asset count, and the standalone generated `room/WORKSPACE_PROTOCOL.md`
+> — is historical. The room now ships no default protocol: a repository's root
+> `WORKSPACE_PROTOCOL.md` is optional and complete where present, Lead carries a small visible
+> `Assignment Vocabulary and Operating Baseline` instead, and the Lead-only
+> `paseo-project-onboarding` skill drafts a repository's protocol from that repository's own
+> evidence. The reader scoping this design established — Lead the only standing reader,
+> Supervisor mandate-bound, Peer path-free — is unchanged and still active. This file is kept as
+> frozen history rather than rewritten.
 
 ## Routing Decision
 
@@ -143,3 +155,4 @@ None. Point-by-point default precedence remains unchanged in this delivery and c
 |---|---|---|
 | 2026-09-19 | Bytes | Activated from the repository owner's accepted Workspace Protocol layering and prompt-granularity direction. |
 | 2026-09-19 | Bytes | Aligned with the delivered implementation: named the rendered sections, recorded the `body` and `document` loader kinds and the 32 → 12 asset count, and noted that disposition definitions moved to the workspace default. |
+| 2026-09-19 | Bytes | Marked the default-protocol, precedence, and generated-template portions superseded by [lead-project-onboarding-skill.md](lead-project-onboarding-skill.md); reader scoping and prompt consolidation remain active. |

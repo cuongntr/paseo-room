@@ -7,8 +7,8 @@ import { renderPiAppend } from '../src/agents/pi.js';
 import { runCli } from '../src/cli.js';
 import metadata from '../package.json' with { type: 'json' };
 import { renderMarker } from '../src/room.js';
-import { contractDigest, protocolKeys, renderInstructions } from '../src/room/instructions.js';
-import { loadPromptAsset } from '../src/room/prompts.js';
+import { contractDigest, renderInstructions } from '../src/room/instructions.js';
+import { ROOM_SKILL_NAME } from '../src/room/skills.js';
 import type { AgentId, Role } from '../src/roles.js';
 import { emptyDaemon, fakeClient, makeFixture, RUNNING_STATUS, script, type FakeDaemon } from './helpers.js';
 
@@ -24,29 +24,21 @@ async function run(argv: readonly string[], env: NodeJS.ProcessEnv, daemon: Fake
 
 const version = metadata.version;
 
-const WORKSPACE_HEADINGS = [
+/** Headings the removed always-on default workspace document used to contribute to Lead. */
+const RETIRED_WORKSPACE_HEADINGS = [
   'Status and Readers',
   'Topology',
   'Dispositions',
   'Routing',
   'Ownership and Candidates',
-  'Review',
-  'Verification',
-  'Escalation',
-  'Repository Conventions',
   'Anti-Patterns',
   'Protocol Evolution',
 ] as const;
 
-function workspaceHeadings(document: string): string[] {
+function retiredWorkspaceHeadings(document: string): string[] {
   return [...document.matchAll(/^## (.+)$/gm)]
     .map(match => match[1] ?? '')
-    .filter(heading => WORKSPACE_HEADINGS.includes(heading as typeof WORKSPACE_HEADINGS[number]));
-}
-
-/** The headings a role's registered workspace layer contributes, in asset order. */
-function expectedWorkspaceHeadings(role: Role): string[] {
-  return protocolKeys(role).flatMap(key => workspaceHeadings(loadPromptAsset('workspace', key)));
+    .filter(heading => RETIRED_WORKSPACE_HEADINGS.includes(heading as typeof RETIRED_WORKSPACE_HEADINGS[number]));
 }
 
 describe('paseo-room CLI', () => {
@@ -177,13 +169,14 @@ describe('paseo-room CLI', () => {
           expect(flag).toBeGreaterThan(-1);
           expect(provider.command[flag + 1]).toBe(appendPath);
         }
-        expect(workspaceHeadings(delivered)).toEqual(expectedWorkspaceHeadings(role));
+        // No seat carries the removed default workspace document.
+        expect(retiredWorkspaceHeadings(delivered)).toEqual([]);
+        expect(delivered).not.toContain('# Workspace protocol');
       }
     }
 
-    const workspace = await readFile(join(fixture.roomHome, 'room/WORKSPACE_PROTOCOL.md'), 'utf8');
-    expect(workspace).toBe(renderInstructions('workspace'));
-    expect(workspaceHeadings(workspace)).toEqual([...WORKSPACE_HEADINGS]);
+    // The room no longer generates a protocol template of its own.
+    await expect(stat(join(fixture.roomHome, 'room/WORKSPACE_PROTOCOL.md'))).rejects.toThrow();
   });
 
   it('is idempotent: a second run plans no changes and verify passes', async () => {
@@ -283,7 +276,8 @@ describe('paseo-room CLI', () => {
       join(fixture.roomHome, 'roles/codex/lead/config.toml'),
       join(fixture.roomHome, 'roles/claude/lead/CLAUDE.md'),
       join(fixture.roomHome, 'roles/pi/lead/APPEND_SYSTEM.md'),
-      join(fixture.roomHome, 'room/WORKSPACE_PROTOCOL.md'),
+      join(fixture.roomHome, `room/skills/${ROOM_SKILL_NAME}/SKILL.md`),
+      join(fixture.roomHome, `room/skills/${ROOM_SKILL_NAME}/references/workspace-protocol-template.md`),
     ];
     const originals = new Map<string, string>();
     for (const path of carriers) {
@@ -785,7 +779,7 @@ describe('agent profiles', () => {
   });
 });
 
-describe('Peer capability hygiene', () => {
+describe('role resource projection', () => {
   async function operatorResources(home: string): Promise<void> {
     for (const [agent, executable] of [
       ['.codex', ['plugins']],
@@ -800,7 +794,7 @@ describe('Peer capability hygiene', () => {
     await writeFile(join(home, '.codex', 'hooks.json'), '{}');
   }
 
-  it('gives Supervisor and Lead every shared resource and Peer an exact non-paseo skill projection', async () => {
+  it('gives Supervisor aliases, Lead every operator skill plus the room skill, and Peer an exact non-paseo projection', async () => {
     const fixture = await makeFixture();
     await operatorResources(fixture.home);
     const daemon = emptyDaemon();
@@ -812,21 +806,132 @@ describe('Peer capability hygiene', () => {
       claude: ['plugins', 'commands', 'hooks'],
       pi: ['prompts'],
     };
+    const roomSkill = join(fixture.roomHome, 'room/skills', ROOM_SKILL_NAME);
     for (const agent of ['codex', 'claude', 'pi'] as const) {
-      for (const role of ['supervisor', 'lead'] as const) {
-        const home = join(fixture.roomHome, 'roles', agent, role);
-        expect((await lstat(join(home, 'skills'))).isSymbolicLink()).toBe(true);
-        for (const name of executable[agent]) expect((await lstat(join(home, name))).isSymbolicLink()).toBe(true);
+      const supervisor = join(fixture.roomHome, 'roles', agent, 'supervisor');
+      expect((await lstat(join(supervisor, 'skills'))).isSymbolicLink()).toBe(true);
+      const lead = join(fixture.roomHome, 'roles', agent, 'lead');
+      for (const role of [supervisor, lead]) {
+        for (const name of executable[agent]) expect((await lstat(join(role, name))).isSymbolicLink()).toBe(true);
       }
+      // Lead reaches an exact room-owned projection through a rollback-compatible role symlink.
+      const leadSkills = join(lead, 'skills');
+      expect((await lstat(leadSkills)).isSymbolicLink()).toBe(true);
+      expect(await readlink(leadSkills)).toBe(join(fixture.roomHome, 'room/skill-projections', agent, 'lead'));
+      expect((await readdir(leadSkills)).sort()).toEqual(['formatting', ROOM_SKILL_NAME, 'paseo-committee'].sort());
+      expect(await readlink(join(leadSkills, ROOM_SKILL_NAME))).toBe(roomSkill);
+      expect(await readFile(join(leadSkills, ROOM_SKILL_NAME, 'SKILL.md'), 'utf8'))
+        .toContain(`name: ${ROOM_SKILL_NAME}`);
+
       const peer = join(fixture.roomHome, 'roles', agent, 'peer');
       for (const name of executable[agent]) await expect(lstat(join(peer, name))).rejects.toThrow();
       const skills = join(peer, 'skills');
       expect((await lstat(skills)).isSymbolicLink()).toBe(false);
+      // Peer receives neither the room skill nor any operator paseo* skill.
       expect(await readdir(skills)).toEqual(['formatting']);
+    }
+    // The operator's own inventories are untouched in every home.
+    for (const agent of ['.codex', '.claude', '.pi/agent'] as const) {
+      expect((await readdir(join(fixture.home, agent, 'skills'))).sort()).toEqual(['formatting', 'paseo-committee']);
     }
     // Room tools stay the single policy source, and Peer never receives them.
     const tools = (id: string): unknown => (daemon.providers[id] as { paseoTools: { enabled: boolean } }).paseoTools.enabled;
     expect(['codex', 'claude', 'pi'].map(agent => tools(`${agent}-peer`))).toEqual([false, false, false]);
+    expect((await run(['verify', '--json'], fixture.env, daemon)).code).toBe(0);
+    // A second run is stable: nothing about the projection or the skill source drifts.
+    expect((await run(['setup', '--agent', 'codex', '--agent', 'claude', '--agent', 'pi'], fixture.env, daemon)).out)
+      .toContain('already up to date');
+  });
+
+  // The same-name collision resolves to the room-owned copy, and the operator copy is untouched.
+  it('links the room-owned skill over an operator skill of the same name', async () => {
+    const fixture = await makeFixture();
+    await operatorResources(fixture.home);
+    const operatorCopy = join(fixture.home, '.codex/skills', ROOM_SKILL_NAME);
+    await mkdir(operatorCopy, { recursive: true });
+    await writeFile(join(operatorCopy, 'SKILL.md'), '# operator copy\n');
+    const daemon = emptyDaemon();
+
+    expect((await run(['setup', '--apply'], fixture.env, daemon)).code).toBe(0);
+    const link = join(fixture.roomHome, 'roles/codex/lead/skills', ROOM_SKILL_NAME);
+    expect(await readlink(link)).toBe(join(fixture.roomHome, 'room/skills', ROOM_SKILL_NAME));
+    expect(await readFile(join(link, 'SKILL.md'), 'utf8')).not.toContain('operator copy');
+    expect(await readFile(join(operatorCopy, 'SKILL.md'), 'utf8')).toBe('# operator copy\n');
+    expect((await run(['verify', '--json'], fixture.env, daemon)).code).toBe(0);
+  });
+
+  // An upgrade over a room that generated the old template removes exactly that regular file.
+  it('removes the room-generated workspace protocol template left by an older package', async () => {
+    const fixture = await makeFixture();
+    const daemon = emptyDaemon();
+    await run(['setup', '--apply'], fixture.env, daemon);
+    const legacy = join(fixture.roomHome, 'room/WORKSPACE_PROTOCOL.md');
+    await writeFile(legacy, '# Workspace protocol\n\nGenerated by an older package.\n');
+
+    const drifted = await run(['verify'], fixture.env, daemon);
+    expect(drifted.code).toBe(1);
+    expect(drifted.out).toContain('present but suppressed by this room');
+    const repaired = await run(['setup', '--apply'], fixture.env, daemon);
+    expect(repaired.code).toBe(0);
+    await expect(stat(legacy)).rejects.toThrow();
+    expect((await run(['verify', '--json'], fixture.env, daemon)).code).toBe(0);
+  });
+
+  it('migrates a legacy whole-directory Lead skills symlink without touching the operator home', async () => {
+    const fixture = await makeFixture();
+    await operatorResources(fixture.home);
+    const daemon = emptyDaemon();
+    const lead = join(fixture.roomHome, 'roles/codex/lead');
+    await mkdir(lead, { recursive: true });
+    await symlink(join(fixture.home, '.codex/skills'), join(lead, 'skills'));
+
+    expect((await run(['setup', '--apply'], fixture.env, daemon)).code).toBe(0);
+    const skills = join(lead, 'skills');
+    expect((await lstat(skills)).isSymbolicLink()).toBe(true);
+    expect(await readlink(skills)).toBe(join(fixture.roomHome, 'room/skill-projections/codex/lead'));
+    expect((await readdir(skills)).sort()).toEqual(['formatting', ROOM_SKILL_NAME, 'paseo-committee'].sort());
+    expect((await readdir(join(fixture.home, '.codex/skills'))).sort()).toEqual(['formatting', 'paseo-committee']);
+  });
+
+  // Symlink shape is preserved, so old and new packages can replace the target during rollback.
+  it('replaces an existing Lead skills symlink without touching its prior target', async () => {
+    const fixture = await makeFixture();
+    await operatorResources(fixture.home);
+    const elsewhere = join(fixture.home, 'elsewhere');
+    await mkdir(elsewhere, { recursive: true });
+    const lead = join(fixture.roomHome, 'roles/codex/lead');
+    await mkdir(lead, { recursive: true });
+    await symlink(elsewhere, join(lead, 'skills'));
+
+    const repaired = await run(['setup', '--apply'], fixture.env, emptyDaemon());
+    expect(repaired.code).toBe(0);
+    expect(await readlink(join(lead, 'skills'))).toBe(join(fixture.roomHome, 'room/skill-projections/codex/lead'));
+    expect((await stat(elsewhere)).isDirectory()).toBe(true);
+  });
+
+  it('reports and repairs Lead skill inventory drift through verify and setup', async () => {
+    const fixture = await makeFixture();
+    await operatorResources(fixture.home);
+    const daemon = emptyDaemon();
+    await run(['setup', '--apply'], fixture.env, daemon);
+    const skills = join(fixture.roomHome, 'roles/codex/lead/skills');
+
+    await mkdir(join(fixture.home, '.codex/skills/reviewing'), { recursive: true });
+    expect((await run(['verify'], fixture.env, daemon)).code).toBe(1);
+    await run(['setup', '--apply'], fixture.env, daemon);
+    expect((await readdir(skills)).sort()).toEqual(['formatting', ROOM_SKILL_NAME, 'paseo-committee', 'reviewing'].sort());
+
+    // Room-owned skill drift is live managed state: verify compares its exact bytes and child shape.
+    const roomSkill = join(fixture.roomHome, 'room/skills', ROOM_SKILL_NAME);
+    await writeFile(join(roomSkill, 'SKILL.md'), 'drifted\n');
+    expect((await run(['verify'], fixture.env, daemon)).code).toBe(1);
+    await run(['setup', '--apply'], fixture.env, daemon);
+    expect(await readFile(join(skills, ROOM_SKILL_NAME, 'SKILL.md'), 'utf8')).toContain(`name: ${ROOM_SKILL_NAME}`);
+
+    await writeFile(join(roomSkill, 'stale.md'), '# stale\n');
+    expect((await run(['verify'], fixture.env, daemon)).code).toBe(1);
+    await run(['setup', '--apply'], fixture.env, daemon);
+    await expect(stat(join(roomSkill, 'stale.md'))).rejects.toThrow();
     expect((await run(['verify', '--json'], fixture.env, daemon)).code).toBe(0);
   });
 
@@ -840,7 +945,8 @@ describe('Peer capability hygiene', () => {
     await mkdir(join(fixture.home, '.codex/skills/reviewing'), { recursive: true });
     const added = await run(['verify'], fixture.env, daemon);
     expect(added.code).toBe(1);
-    expect(added.out).toContain('1 managed role file is missing or outdated');
+    // Lead and Peer both project that inventory exactly, so both report the new child.
+    expect(added.out).toContain('2 managed role files are missing or outdated');
     await run(['setup', '--apply'], fixture.env, daemon);
     expect(await readdir(skills)).toEqual(['formatting', 'reviewing']);
 
@@ -888,14 +994,16 @@ describe('Peer capability hygiene', () => {
       const skills = join(fixture.roomHome, 'roles', agent, 'peer', 'skills');
       expect((await lstat(skills)).isSymbolicLink()).toBe(false);
       expect(await readdir(skills)).toEqual([]);
-      // Supervisor and Lead are never given a fresh alias to the deleted directory; the one
-      // left from the previous run simply resolves nowhere, since a role home's child
-      // inventory is not room-owned and may hold role credentials.
-      for (const role of ['supervisor', 'lead'] as const) {
-        const alias = join(fixture.roomHome, 'roles', agent, role, 'skills');
-        expect((await lstat(alias)).isSymbolicLink()).toBe(true);
-        await expect(stat(alias)).rejects.toThrow();
-      }
+      // Lead's projection is managed, so it empties down to the room-owned skill alone.
+      const leadSkills = join(fixture.roomHome, 'roles', agent, 'lead', 'skills');
+      expect((await lstat(leadSkills)).isSymbolicLink()).toBe(true);
+      expect(await readdir(leadSkills)).toEqual([ROOM_SKILL_NAME]);
+      // Supervisor is never given a fresh alias to the deleted directory; the one left from
+      // the previous run simply resolves nowhere, since a role home's child inventory is not
+      // room-owned and may hold role credentials.
+      const alias = join(fixture.roomHome, 'roles', agent, 'supervisor', 'skills');
+      expect((await lstat(alias)).isSymbolicLink()).toBe(true);
+      await expect(stat(alias)).rejects.toThrow();
     }
     expect((await run(['verify', '--json'], fixture.env, daemon)).code).toBe(0);
   });

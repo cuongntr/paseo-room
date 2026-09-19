@@ -104,25 +104,21 @@ describe('prompt asset loader', () => {
 
   it.each([
     ['', /is empty/],
-    ['## Missing title\n\nStatement.\n', /exactly one H1 heading/],
-    ['# Title\n\nPreface only.\n', /at least one H2 section/],
-    ['# Title\n\n## Section\n', /at least one non-empty statement/],
-  ])('rejects a malformed workspace document without rendering it: %j', async (source, message) => {
+    ['## Missing an H1\n\nStatement.\n', /must begin with exactly one H1 heading/],
+    ['# First\n\n# Second\n', /must begin with exactly one H1 heading/],
+  ])('rejects a malformed Pi capsule without rendering it: %j', async (source, message) => {
     fsState.read = () => source;
     const { loadPromptAsset, PromptAssetError } = await freshPrompts();
 
-    expect(() => loadPromptAsset('workspace', 'default')).toThrow(PromptAssetError);
-    expect(() => loadPromptAsset('workspace', 'default')).toThrow(message);
+    expect(() => loadPromptAsset('pi', 'runtime')).toThrow(PromptAssetError);
+    expect(() => loadPromptAsset('pi', 'runtime')).toThrow(message);
   });
 
-  // The document's H1 and preface are read as a document, so their authored line breaks
-  // survive; every section below them normalizes like any other section.
-  it('keeps the workspace document preface hard-wrapped and normalizes its sections', async () => {
-    fsState.read = () => '# Workspace protocol\n\nA preface line\nwith a hard break.\n\n## Section\n\nOne\nwrapped statement.\n';
+  // A capsule is read as a document, so its authored line breaks survive verbatim.
+  it('keeps Pi capsule hard line breaks intact', async () => {
+    fsState.read = () => '# Runtime\n\nA capsule line\nwith a hard break.\n';
     const { loadPromptAsset } = await freshPrompts();
 
-    expect(loadPromptAsset('workspace', 'default')).toBe(
-      '# Workspace protocol\n\nA preface line\nwith a hard break.\n\n## Section\n- One wrapped statement.',
-    );
+    expect(loadPromptAsset('pi', 'runtime')).toBe('# Runtime\n\nA capsule line\nwith a hard break.');
   });
 });

@@ -6,6 +6,7 @@ import { catalogEvidence, codexAgent, renderCatalog, renderRoleConfig } from '..
 import { applyEntries, planEntries } from '../src/fsops.js';
 import { resolveLayout } from '../src/layout.js';
 import { renderInstructions } from '../src/room/instructions.js';
+import { leadSkillProjection, ROOM_SKILL_NAME, roomSkillSource } from '../src/room/skills.js';
 import { makeFixture, script } from './helpers.js';
 
 describe('renderRoleConfig', () => {
@@ -87,9 +88,10 @@ describe('codexAgent.build', () => {
     const plan = await codexAgent.build(resolveLayout({}, fixture.env), ['supervisor', 'lead', 'peer']);
     const links = plan.entries.filter(entry => entry.kind === 'link');
     // AGENTS.md and skills exist in the fixture; auth and absent resources are not linked.
-    // Supervisor and Lead alias both; Peer aliases AGENTS.md and projects skills instead.
-    expect(links).toHaveLength(5);
-    expect(plan.entries.filter(entry => entry.kind === 'managed-dir')).toHaveLength(1);
+    // Three AGENTS.md aliases, Supervisor's whole skills alias, and Lead's room-skill and
+    // aggregate aliases; Lead and Peer project the (empty) operator inventory.
+    expect(links).toHaveLength(6);
+    expect(plan.entries.filter(entry => entry.kind === 'managed-dir')).toHaveLength(2);
     expect(plan.credentials).toHaveLength(3);
     expect(plan.binary).toContain('codex');
   });
@@ -120,10 +122,18 @@ describe('codexAgent.build resource distribution', () => {
     const operator = join(layout.agentHome.codex);
     for (const role of ['supervisor', 'lead'] as const) {
       const home = join(layout.roomHome, 'roles/codex', role);
-      expect(await readlink(join(home, 'skills'))).toBe(join(operator, 'skills'));
       expect(await readlink(join(home, 'plugins'))).toBe(join(operator, 'plugins'));
       expect(await readlink(join(home, 'hooks.json'))).toBe(join(operator, 'hooks.json'));
     }
+    // Supervisor keeps the whole-directory alias; Lead projects every operator skill plus the
+    // room-owned one, so neither operator inventory nor operator home is modified.
+    expect(await readlink(join(layout.roomHome, 'roles/codex/supervisor/skills'))).toBe(join(operator, 'skills'));
+    const leadSkills = join(layout.roomHome, 'roles/codex/lead/skills');
+    expect((await lstat(leadSkills)).isSymbolicLink()).toBe(true);
+    expect(await readlink(leadSkills)).toBe(leadSkillProjection(layout, 'codex'));
+    expect((await readdir(leadSkills)).sort()).toEqual(['formatting', ROOM_SKILL_NAME, 'paseo-committee'].sort());
+    expect(await readlink(join(leadSkills, ROOM_SKILL_NAME))).toBe(roomSkillSource(layout));
+    expect((await readdir(join(operator, 'skills'))).sort()).toEqual(['formatting', 'paseo-committee']);
     const peer = join(layout.roomHome, 'roles/codex/peer');
     await expect(lstat(join(peer, 'plugins'))).rejects.toThrow();
     await expect(lstat(join(peer, 'hooks.json'))).rejects.toThrow();
@@ -169,18 +179,42 @@ describe('codexAgent.build resource distribution', () => {
     expect(await readdir(skills)).toEqual(['reviewing']);
   });
 
-  it('migrates a legacy whole-directory Peer skills symlink', async () => {
+  it('migrates legacy skills aliases to each role projection shape', async () => {
+    for (const role of ['peer', 'lead'] as const) {
+      const fixture = await makeFixture();
+      await operatorResources(fixture.home);
+      const layout = resolveLayout({}, fixture.env);
+      const home = join(layout.roomHome, 'roles/codex', role);
+      const operatorSkills = join(layout.agentHome.codex, 'skills');
+      await mkdir(home, { recursive: true });
+      await symlink(operatorSkills, join(home, 'skills'));
+
+      await applyEntries((await codexAgent.build(layout, [role])).entries);
+      expect((await lstat(join(home, 'skills'))).isSymbolicLink()).toBe(role === 'lead');
+      if (role === 'lead') {
+        expect(await readlink(join(home, 'skills'))).toBe(leadSkillProjection(layout, 'codex'));
+      }
+      expect((await readdir(join(home, 'skills'))).sort()).toEqual(
+        role === 'peer' ? ['formatting'] : ['formatting', ROOM_SKILL_NAME, 'paseo-committee'].sort(),
+      );
+      expect((await readdir(operatorSkills)).sort()).toEqual(['formatting', 'paseo-committee']);
+    }
+  });
+
+  it('keeps the Lead skills path replaceable by a prior package symlink', async () => {
     const fixture = await makeFixture();
     await operatorResources(fixture.home);
     const layout = resolveLayout({}, fixture.env);
-    const peer = join(layout.roomHome, 'roles/codex/peer');
+    const skills = join(layout.roomHome, 'roles/codex/lead/skills');
     const operatorSkills = join(layout.agentHome.codex, 'skills');
-    await mkdir(peer, { recursive: true });
-    await symlink(operatorSkills, join(peer, 'skills'));
+    const projection = leadSkillProjection(layout, 'codex');
 
-    await applyEntries((await codexAgent.build(layout, ['peer'])).entries);
-    expect((await lstat(join(peer, 'skills'))).isSymbolicLink()).toBe(false);
-    expect(await readdir(join(peer, 'skills'))).toEqual(['formatting']);
+    await applyEntries((await codexAgent.build(layout, ['lead'])).entries);
+    expect(await readlink(skills)).toBe(projection);
+    await applyEntries([{ kind: 'link', path: skills, target: operatorSkills }]);
+
+    expect(await readlink(skills)).toBe(operatorSkills);
+    expect((await stat(projection)).isDirectory()).toBe(true);
     expect((await readdir(operatorSkills)).sort()).toEqual(['formatting', 'paseo-committee']);
   });
 });
