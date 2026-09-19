@@ -8,8 +8,8 @@ and several of them are not obvious from the code alone.
 
 The room seats three roles — Supervisor, Lead, Peer — under one Human owner, with the
 authority boundaries, delegation contract and invariants described in
-[orchestration-model.md](orchestration-model.md). Read that first; this file only covers
-what the model costs to implement here.
+[demonthorn-agent-orchestration-deep-dive.md](demonthorn-agent-orchestration-deep-dive.md).
+Read that first; this file only covers what the model costs to implement here.
 
 Three of its invariants drive almost every decision below:
 
@@ -118,34 +118,53 @@ canonical Markdown under `src/room/prompts/contract/`, delivered as
 `src/room/prompts/`; `src/room/prompts.ts` is the typed registry and loader rather than a
 second prose source.
 
-It also ships a **default** for the second layer under `src/room/prompts/workspace/`,
-appended to the Lead and Supervisor documents. The layer is therefore never simply absent: a
-repository that says nothing still gets rules for topology, verification, review and
-conventions. A repository that needs different ones writes `WORKSPACE_PROTOCOL.md` at its
-root, and **Workspace Protocol Precedence** gives that file precedence point by point — it
-wins wherever it speaks, the default holds wherever it is silent. Whole-file replacement was
+Those files are cut by **independent distribution**, not one file per heading. A layer that
+always reaches the same set of seats is one file, so a review unit is one diff:
+`contract/shared-authority.md` for every role, `contract/shared-seat-identity.md` for the two
+seat-opening seats, `contract/challenge-signals.md` for the two seats that use the vocabulary,
+and one body per role. The earlier per-heading tree made the composition a long key list in
+TypeScript and made a role document impossible to read as a document; a role body may now hold
+several H2 sections, and the loader validates that shape.
+
+It also ships a **default** for the second layer as one complete document,
+`src/room/prompts/workspace/default.md`, appended to the Lead document. The layer is therefore
+never simply absent: a repository that says nothing still gets task classes and topology, the
+four disposition mandates, model/effort routing principles, ownership and candidate rhythm,
+review triggers, verification, escalation, conventions, project anti-patterns and protocol
+evolution. A repository that needs different ones writes `WORKSPACE_PROTOCOL.md` at its root,
+and Lead's **Workspace Protocol** section gives that file precedence point by point — it wins
+wherever it speaks, the default holds wherever it is silent. Whole-file replacement was
 considered and rejected: it would mean a repository that states one rule loses every other
 rule, which is worse than the gap this default was added to close. The path is the repository
 root rather than `docs/` because the file is agent guidance, not project documentation.
 
-The workspace layer reaches Lead and Supervisor and stops there, which is what
-[orchestration-model.md](orchestration-model.md) §3 asks for: Lead reads the protocol,
-Supervisor reads it when auditing, and Lead quotes the constraints that bear on an assignment
-into the brief instead of handing an implementer the whole file. Peer therefore receives no
-workspace sections and no workspace preface at all — **Complete Peer Brief** carries the
-quoting obligation, including naming the exact verification command, and Peer's own contract
-keeps what the withdrawn sections were carrying for it: **Bounded Outcome** states that
-repository instructions cannot enlarge or weaken its authority, that a conflict goes to Lead,
-and that an implementer matches the house style in scope and adds no unrequested top-level
-file, dependency or tooling; **Reproducible Handoff** keeps faithful reporting and the bar
-that an unrun gate is not a candidate. Withholding topology in particular is also a
-coherence requirement, since **No Orchestration** forbids Peer to infer room topology and a
-document that both forbids and teaches it is incoherent.
+The workspace layer reaches **Lead alone**, which is what
+[demonthorn-agent-orchestration-deep-dive.md](demonthorn-agent-orchestration-deep-dive.md) §6.2
+asks for: Lead is the standing reader and reads the repository file in full before
+orchestration. Supervisor carries no default, because a standing protocol instruction there
+recreates the second workflow owner the model separates out; its **Workspace Protocol Mandate**
+reads a repository's file only under an explicit Human audit, update or maintenance mandate, and
+lets it propose a change with causal evidence rather than impose one. Peer receives no workspace
+document and is never told the filename — **Complete Peer Brief** carries the quoting
+obligation, including naming the exact verification command, and Peer's own contract keeps what
+it needs unconditionally: the shared **Authority Floor** states that repository and workspace
+instructions cannot enlarge or weaken contract authority and routes a conflict to Lead,
+**Bounded Outcome** keeps house style in scope and no unrequested top-level file, dependency or
+tooling, and **Reproducible Handoff** keeps faithful reporting and the bar that an unrun gate is
+not a candidate. The floor is worded without the filename so Peer never learns a path it has no
+use for. Withholding topology in particular is also a coherence requirement, since **No
+Orchestration** forbids Peer to infer room topology and a document that both forbids and teaches
+it is incoherent.
+
+Dispositions are workflow, so their meanings live in the workspace default rather than in
+Lead's durable contract. Lead's brief section keeps only the schema, the requirement that
+exactly one disposition is selected, the quoting duty and the anti-pre-solving guard; the
+concrete disposition arrives in the task brief.
 
 `room/WORKSPACE_PROTOCOL.md` is that default written out as one file: not linked into any
-seat, since the seats that read it already carry the text, but readable by the operator and
-usable as a starting point. It carries the name used by **Workspace Protocol Precedence**, so
-a copy into a repository root needs no rename. Nothing is ever written into a repository,
+seat, since the seat that reads it already carries the text, but readable by the operator and
+usable as a starting point. It carries the name used by Lead's **Workspace Protocol** section,
+so a copy into a repository root needs no rename. Nothing is ever written into a repository,
 `AGENTS.md` included, and task briefs are Lead's job at dispatch time rather than this tool's
 concern.
 
@@ -485,7 +504,8 @@ that the seat is absent.
 
 **Lead Discovery and Recovery** therefore gives Supervisor an explicit discovery-and-reuse
 procedure. Its authoritative wording is the canonical contract section
-[`contract/supervisor/lead-discovery-and-recovery.md`](../src/room/prompts/contract/supervisor/lead-discovery-and-recovery.md)
+[`contract/supervisor.md`](../src/room/prompts/contract/supervisor.md), over the shared evidence
+in [`contract/shared-seat-identity.md`](../src/room/prompts/contract/shared-seat-identity.md),
 and is not restated here. What matters for this file is the shape of its evidence: eligibility
 comes from the *current live configuration* rather than display names — the exact current room
 Lead profile read from `list_profiles` and materialized field by field, a cwd-filtered agent
@@ -503,9 +523,9 @@ Review**; freshness never creates a second Lead or gives Supervisor a channel to
 
 **Peer Seat Lifecycle** applies the same live-config rule to a Lead-created Peer: Lead reads
 the exact current room Peer profile, copies provider, mode and feature values exactly, keeps
-the profile's model unless the root workspace protocol routes models and chooses the thinking
-effort per brief as described in §7, and requires the live
-seat's daemon-added `paseo.parent-agent-id` to equal the current Lead. A wrong provider,
+the profile's model unless the workspace protocol in force routes models, selects thinking
+effort under that protocol's routing policy as described in §7, and requires the live seat's
+daemon-added `paseo.parent-agent-id` to equal the current Lead. A wrong provider,
 workspace, mode or parent is not eligible for a brief. The Peer remains one fresh session for
 one brief and has no room tools or orchestration path. The brief also names exactly one
 disposition — Engineer, Architect, Reviewer or Scout — which is an assignment mandate, not a
@@ -637,16 +657,15 @@ silently claiming the stronger guarantee.
   own config needs `setup --apply` again, which `verify` reports.
 - **No per-seat model or task routing.** Model tier belongs to task risk, and that is a
   Workspace Protocol and Lead decision, not a room decision. The room preserves whatever
-  model and reasoning effort you configured. **Peer Seat Lifecycle** says the same thing to
-  Lead, and splits the two knobs asymmetrically: provider, mode, workspace, parent and feature
-  values are copied exactly as eligibility evidence; the profile's model stays the seat default
-  unless the root `WORKSPACE_PROTOCOL.md` explicitly supplies model routing; and the thinking
-  effort is Lead's per-brief choice on task risk, uncertainty, context size and verification
-  burden — lowest that reliably answers the task, raised for architecture-sensitive,
-  high-consequence or weakly observable work, restricted to an option the live Paseo and
-  provider context establishes as supported so no identifier is ever invented, and never up to
-  a tier advertising automatic delegation. Disposition informs that judgment and never fixes a
-  tier. This is about *task* routing, and it is not a claim of
+  model and reasoning effort you configured. **Peer Seat Lifecycle** keeps the hard split:
+  provider, mode, workspace, parent and feature values are copied exactly as eligibility
+  evidence; the profile's model stays the seat default unless the workspace protocol in force
+  explicitly supplies model routing; and thinking effort must follow that protocol's routing
+  policy, use only an option the live Paseo/provider context establishes as supported, and never
+  use a tier advertising automatic delegation. The default workspace protocol owns the tactical
+  criteria — task risk, uncertainty, context size and verification burden; lowest that reliably
+  answers the task, raised for architecture-sensitive, high-consequence or weakly observable
+  work. Disposition informs that judgment and never fixes a tier. This is about *task* routing, and it is not a claim of
   capability parity between seats: which capabilities a seat carries is decided by role (§2b),
   because a seat with no room tools has no use for an orchestration surface.
 - **No rewriting of operator control-plane configuration.** A recognizably Paseo-related MCP
@@ -676,7 +695,8 @@ so rerunning `remove --apply` after recovery can finish without a journal or rol
 
 ## 8. Lineage
 
-The model's own provenance is in [orchestration-model.md](orchestration-model.md) §11.
+The model's own provenance is in
+[demonthorn-agent-orchestration-deep-dive.md](demonthorn-agent-orchestration-deep-dive.md) §1.
 This tool reaches it by way of `codex-room-setup` — a bash + Python implementation that
 generated the same runtime homes and required a patched Paseo build to limit MCP injection
 per provider. The contract wording in `src/room/prompts/contract/` descends from that
@@ -699,9 +719,9 @@ implementation, because it is what actually ran. One such disagreement is live:
 
 Two earlier deviations about the workspace protocol are resolved rather than live. The
 reference overlays told every seat to read `WORKSPACE_PROTOCOL.md`, and the room reproduced
-the default in every role document; both broadcast the layer the model reserves for Lead and
-for Supervisor when auditing. The room now follows the document: Peer receives neither the
-protocol path nor any workspace section, and Lead quotes what bears on an assignment into the
-brief (§3). Shipping an in-force default to those two seats is not the broadcast the model
-warns about — the alternative on offer was not a narrower protocol but no protocol at all for
-a repository that has no file of its own.
+the default in every role document; both broadcast the layer the model reserves for Lead. The
+room now follows the document: Lead is the only standing reader, Supervisor reads a repository
+file only under a Human mandate, Peer receives neither the protocol path nor any workspace
+section, and Lead quotes what bears on an assignment into the brief (§3). Shipping an in-force
+default to Lead is not the broadcast the model warns about — the alternative on offer was not a
+narrower protocol but no protocol at all for a repository that has no file of its own.

@@ -105,7 +105,7 @@ This initiative first makes the role contract a maintainable, semantically struc
 
 ## 8. Boundaries and Dependencies
 
-- **Depends on:** Existing role and workspace semantics in [orchestration-model.md](../orchestration-model.md), implementation rationale in [design.md](../design.md), Node.js 22+, tsup/npm packaging, Vitest, and the documented additive prompt contracts of Codex, Claude Code, and Pi.
+- **Depends on:** Existing role and workspace semantics in [demonthorn-agent-orchestration-deep-dive.md](../demonthorn-agent-orchestration-deep-dive.md), implementation rationale in [design.md](../design.md), Node.js 22+, tsup/npm packaging, Vitest, and the documented additive prompt contracts of Codex, Claude Code, and Pi.
 - **Plugin feasibility additionally depends on:** Paseo's current public plugin and SDK contracts, an explicitly plugin-enabled test daemon, and a version matrix that includes the intended minimum release.
 - **Does NOT own:** Paseo plugin API stability; Paseo core provider implementation; vendor base prompts; operator-authored global prompts; vendor authentication; OS-level sandboxing; project-specific root `WORKSPACE_PROTOCOL.md`; changes to the underlying Supervisor/Lead/Peer authority model.
 - **Compatibility boundary:** Generated wording and headings may change intentionally, causing expected managed-file drift. CLI commands, room layout, role identity, authority semantics, provider/profile linkage, and credential ownership must remain compatible in Phase 1.

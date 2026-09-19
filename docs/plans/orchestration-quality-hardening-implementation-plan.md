@@ -6,7 +6,7 @@
 | Plan-ready | PASS — 2026-09-18 — Repository owner |
 | Owner | Repository owner |
 | Routing decision | [Technical Design routing decision](../design/orchestration-quality-hardening.md#routing-decision): brownfield; contract and capability-boundary risks; plan → converter |
-| Source PRD / requirements | [`ORCHESTRATION_REVIEW.md`](../../ORCHESTRATION_REVIEW.md) plus repository-owner implementation direction; no PRD amendment required because product intent is unchanged |
+| Source PRD / requirements | the 2026-09-18 repository orchestration review (since removed from the tree) plus repository-owner implementation direction; no PRD amendment required because product intent is unchanged |
 | Source Technical Design | [Orchestration Quality Hardening](../design/orchestration-quality-hardening.md) |
 | Related ADRs | N/A — no ADR directory or governing ADR exists |
 | Phase | Phase 1 MVP — contract and capability hardening |
@@ -75,7 +75,7 @@ Scope is frozen. New vendor surfaces or unrelated review findings require a delt
 - **Requirement / AC coverage:** C3 documentation, C6 divergence, C12, C13, D1 clarification.
 - **Design refs:** Technical Design Boundaries, Decisions, Compatibility, Open Questions.
 - **Prerequisites:** WP-001 through WP-005 so documentation reflects final behavior.
-- **Sequencing:** update `docs/design.md` first, then shorten duplicated README procedure to links/summaries, and keep `docs/orchestration-model.md` conceptual rather than implementation-specific.
+- **Sequencing:** update `docs/design.md` first, then shorten duplicated README procedure to links/summaries, and keep the reference-model document conceptual rather than implementation-specific.
 - **Exit condition:** no active documentation claims skill/MCP hygiene is a sandbox; no detailed Lead-discovery procedure is duplicated outside the canonical contract; Claude's weak carrier and unsupported stronger surface are stated; catalog generated-copy semantics and rerun/restart requirements are explicit; links resolve.
 
 ## 3. Dependencies

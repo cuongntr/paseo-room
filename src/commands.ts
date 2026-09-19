@@ -80,7 +80,7 @@ async function buildDesired(
   build: BuildOptions = {},
 ): Promise<Desired> {
   // Template, not linked into any seat: each repo owns its own root WORKSPACE_PROTOCOL.md.
-  // Named exactly as Workspace Protocol Precedence names it, so a copy needs no rename.
+  // Named exactly as Lead's Workspace Protocol section names it, so a copy needs no rename.
   const entries: Entry[] = [
     { kind: 'dir', path: layout.roomHome },
     { kind: 'dir', path: sharedRoom(layout) },

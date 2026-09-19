@@ -4,8 +4,8 @@
 
 `paseo-room` is a small CLI that generates Codex/Claude/Pi role homes under `$HOME` and
 registers them with a local Paseo daemon. [README.md](README.md) describes the behaviour,
-[docs/orchestration-model.md](docs/orchestration-model.md) is the reference model it
-implements, and [docs/design.md](docs/design.md) explains why each override exists. **Read
+[docs/demonthorn-agent-orchestration-deep-dive.md](docs/demonthorn-agent-orchestration-deep-dive.md)
+is the reference model it implements, and [docs/design.md](docs/design.md) explains why each override exists. **Read
 the design notes before changing an override, an overlay key, or a provider field** — most
 of them are counter-intuitive and exist because of a specific failure.
 
@@ -51,13 +51,19 @@ That design is in git history before the `v2` rewrite. Do not reintroduce it.
   of that rule, and it must stay a single call site. Peer's narrower resource set follows from
   the same principle and lives in `src/agents/resources.ts`; it is capability hygiene, not
   containment, and must never be documented as a sandbox.
-- **Peer reads one brief, not the organisation manual.** Peer receives no workspace protocol
-  sections and is never told to read a repository's `WORKSPACE_PROTOCOL.md`; Lead quotes the
-  constraints that bear on an assignment into the brief. Keep the contract invariant that a
-  repository cannot enlarge or weaken Peer authority, and route conflicts to Lead. What a Peer
-  needs unconditionally lives in a Peer contract section, not in the workspace layer: house-style
-  and no-unrequested-additions restraint in `bounded-outcome.md`, faithful reporting and the
-  unrun-gate bar in `reproducible-handoff.md`.
+- **Lead is the only standing protocol reader.** Lead carries the default workspace layer and
+  resolves the repository root to read `WORKSPACE_PROTOCOL.md` in full before orchestration.
+  Supervisor carries no default and reads a repository's protocol only under an explicit Human
+  audit, update, or maintenance mandate; it may propose a change with causal evidence but never
+  impose one.
+- **Peer reads one brief, not the organisation manual.** Peer receives no workspace layer and
+  is never told the protocol filename; Lead quotes the constraints that bear on an assignment
+  into the brief. The `Authority Floor` section of `contract/shared-authority.md` keeps the
+  invariant that repository or workspace instructions cannot enlarge or weaken contract
+  authority and routes conflicts to Lead. What a Peer needs unconditionally lives in its own
+  contract body, not in the workspace layer: house-style and no-unrequested-additions restraint
+  under `Bounded Outcome`, faithful reporting and the unrun-gate bar under
+  `Reproducible Handoff`.
 - **Own a managed path by shape, and only the shape you write.** A managed file or link may
   replace only an absent path or the same shape, and is renamed in from a temporary sibling. A
   path declared absent is deleted only when it is a regular file the room would otherwise have
@@ -81,7 +87,7 @@ src/
   room/instructions.ts                      # semantic role/protocol composition
   room/prompts.ts  room/prompts/             # typed registry + canonical Markdown assets
 test/                                       # one file per area, real temp $HOME fixtures
-docs/orchestration-model.md                 # the model; changes here are conceptual
+docs/demonthorn-agent-orchestration-deep-dive.md  # the model; changes here are conceptual
 docs/design.md                              # this tool's rationale; keep current with code
 ```
 
@@ -106,24 +112,40 @@ docs/design.md                              # this tool's rationale; keep curren
 
 ## Working on the role contract
 
-`src/room/prompts/` is the canonical model-facing prose. Contract sections under
-`prompts/contract/` are the role-profile layer of [the model](docs/orchestration-model.md)
-§3, so they carry identity, authority, and invariants — never repository tactics or task
-detail. Document heads live under `prompts/documents/`; Pi-only additive capsules live under
-`prompts/pi/`. Do not duplicate their authoritative prose in TypeScript or documentation.
+`src/room/prompts/` is the canonical model-facing prose. The contract assets under
+`prompts/contract/` are the role-profile layer of
+[the model](docs/demonthorn-agent-orchestration-deep-dive.md) §3, so they carry identity,
+authority, and invariants — never repository tactics or task detail. Document heads live under
+`prompts/documents/`; Pi-only additive capsules live under `prompts/pi/`. Do not duplicate
+their authoritative prose in TypeScript or documentation.
 
-Contract and workspace section files use ordinary wrapped prose: blank lines separate
-statements, and line breaks inside a statement collapse when rendered. Changing a contract
-section changes what at least one seat is told, so state the authority it grants or removes
-in the commit message. `instructionKeys()` in `src/room/instructions.ts` defines the shared
-and role-specific semantic section sequence.
+Assets are files by independent distribution, not one file per heading:
 
-The Markdown files under `prompts/workspace/` are the default *workspace* layer, appended to
-the Lead and Supervisor documents and written out whole as `room/WORKSPACE_PROTOCOL.md`.
-`protocolKeys()` in `src/room/instructions.ts` decides which semantic sections each seat
-receives, and Peer receives none of them: Lead quotes what bears on an assignment into the
-brief instead. Adding a workspace section therefore adds nothing to Peer's document, and
-anything Peer must know belongs in a contract section or in the brief.
+```text
+contract/shared-authority.md      every role
+contract/shared-seat-identity.md  Supervisor + Lead
+contract/challenge-signals.md     Lead + Peer
+contract/{supervisor,lead,peer}.md  exactly one role each
+workspace/default.md              Lead only, and the room copy
+```
+
+All of them use ordinary wrapped prose: blank lines separate statements, and line breaks
+inside a statement collapse when rendered. A role body and the workspace document may hold
+several H2 sections; the workspace document also has one H1 and a hard-wrapped preface that
+survives rendering verbatim. Changing a contract asset changes what at least one seat is told,
+so state the authority it grants or removes in the commit message. `instructionKeys()` in
+`src/room/instructions.ts` defines each role's layer sequence and gives every role exactly one
+role body.
+
+`prompts/workspace/default.md` is the default *workspace* layer: repository workflow policy —
+task classes and topology, the Engineer/Architect/Reviewer/Scout catalog, model and effort
+routing principles, ownership and candidate rhythm, review triggers, verification, escalation,
+repository conventions, project anti-patterns, and protocol evolution. It is appended to the
+Lead document and written out whole as `room/WORKSPACE_PROTOCOL.md`. `protocolKeys()` in
+`src/room/instructions.ts` gives it to Lead alone: Supervisor reads a repository's own file
+only under a Human mandate, and Peer receives none of it because Lead quotes what bears on an
+assignment into the brief. Adding a workspace section therefore adds nothing to the Supervisor
+or Peer document, and anything either must know belongs in its contract body or in the brief.
 
 Every workspace statement must be workflow and must be new. Authority belongs in the
 contract sections: restating it in the workspace layer teaches the seat nothing and blurs the

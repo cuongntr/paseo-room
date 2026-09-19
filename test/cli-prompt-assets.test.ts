@@ -17,7 +17,11 @@ vi.mock('node:fs', async () => {
       if (!url.pathname.includes('/room/prompts/')) return actual.readFileSync(url, 'utf8');
       promptFs.reads += 1;
       if (promptFs.failure === 'missing') throw new Error('ENOENT synthetic missing asset');
-      if (promptFs.failure === 'malformed') return '# Wrong heading level\n';
+      // Only the role bodies are corrupted, so the failure surfaces from the multi-section
+      // shape rather than from the first asset the renderer happens to touch.
+      if (promptFs.failure === 'malformed' && url.pathname.includes('/contract/')) {
+        return '# Wrong heading level\n';
+      }
       return actual.readFileSync(url, 'utf8');
     },
   };
@@ -66,7 +70,7 @@ describe('CLI prompt-asset failure containment', () => {
 
     expect(result.code).toBe(1);
     expect(result.err).toBe('');
-    expect(result.out).toContain('documents.workspace');
+    expect(result.out).toContain('workspace.default');
     expect(result.out).toContain('Reinstall paseo-room');
     expect(result.out).not.toContain('Check that Paseo is running and reachable');
     expect(result.out).toContain('setup: failed');
@@ -86,7 +90,7 @@ describe('CLI prompt-asset failure containment', () => {
 
     expect(result.code).toBe(1);
     expect(result.err).toBe('');
-    expect(result.out).toContain('workspace.topology');
+    expect(result.out).toContain('contract.sharedAuthority');
     expect(result.out).toContain('Reinstall paseo-room');
     expect(result.out).not.toContain('Check that Paseo is running and reachable');
     expect(result.out).toContain('setup: failed');

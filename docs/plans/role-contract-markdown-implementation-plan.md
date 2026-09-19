@@ -59,7 +59,7 @@ After activation, this scope is frozen. Any change to contract wording, authorit
 - **Design refs:** Technical Design §3.3, §6–§8.
 - **Prerequisites:** WP-001 for final semantic names/paths; WP-003 for the final verification command and package behavior.
 - **Sequencing:** Documentation reflects implemented names and commands rather than anticipated ones. The Technical Design traceability table remains the sole legacy-ID inventory.
-- **Risk boundaries / decomposition hints:** Keep conceptual authority in `docs/orchestration-model.md`, implementation rationale in `docs/design.md`, contributor procedure in `AGENTS.md`, and operator/release guidance in README; do not duplicate the contract prose into documentation.
+- **Risk boundaries / decomposition hints:** Keep conceptual authority in the reference-model document, implementation rationale in `docs/design.md`, contributor procedure in `AGENTS.md`, and operator/release guidance in README; do not duplicate the contract prose into documentation.
 - **Exit condition:** A reviewed repository sweep finds no active citation/use of any exact legacy identifier enumerated in Technical Design §7, no old composite headings such as `WP-01 Topology`, and no references to deleted prose maps or symbols (`src/room/clauses.ts`, `src/room/workspace.ts`, `instructionIds`, `protocolIds`). The Technical Design traceability table is the sole exact-ID inventory; generic pattern descriptions in the accepted PRD/plan and plan work-package labels are not legacy citations. Active docs describe the expanded verification chain and exact upgrade/rollback procedure; links resolve.
 
 ## 3. Dependencies

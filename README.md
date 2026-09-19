@@ -89,7 +89,7 @@ starts, its exit code is preserved; a signal is returned using the conventional
 ~/.paseo-room/
   room.json                       # what this CLI created; verify and remove read it
   AUTHENTICATION.md               # exact per-role login commands; contains no secrets
-  room/WORKSPACE_PROTOCOL.md      # the default protocol Lead and Supervisor carry, as one readable file
+  room/WORKSPACE_PROTOCOL.md      # the default protocol Lead carries, as one readable file
   plugin/                         # Claude only: trusted creation-time system-prompt append carrier
     paseo-plugin.json             # accepts Paseo >=0.8.0 <0.9.0
     index.server.ts, server/      # exact provider map + generated role contracts
@@ -349,18 +349,18 @@ the operator.
 Names are not identity. A matching cwd, title, or provider label does not make an existing
 agent a room Lead or Peer. The exact eligibility procedure is model-facing wording and lives
 in the contract itself —
-[Lead Discovery and Recovery](src/room/prompts/contract/supervisor/lead-discovery-and-recovery.md)
-for Supervisor and
-[Peer Seat Lifecycle](src/room/prompts/contract/lead/peer-seat-lifecycle.md) for Lead — rather
-than being restated here. In outline: the seat's evidence is the current live configuration.
-Supervisor reads the exact current `room-<agent>-lead` profile from `list_profiles` and
-materializes every field it defines (agent creation takes no profile id), uses `list_agents(cwd)`
-only to find candidates, then inspects each one's full status for the profile's provider, the
-intended workspace and its mode. For `room-<agent>-peer`, Lead copies provider, mode and
-features exactly, keeps the profile's model unless the root workspace protocol routes models,
-chooses the thinking effort for the brief, and additionally
-requires the live seat's daemon-added `paseo.parent-agent-id` to name itself. Ownership must be
-corroborated by parentage or known Human-opened history; an ambiguous candidate goes to
+the shared [Room Seat Identity](src/room/prompts/contract/shared-seat-identity.md) evidence,
+with the role-specific procedures in
+[the Supervisor contract](src/room/prompts/contract/supervisor.md) and
+[the Lead contract](src/room/prompts/contract/lead.md) — rather than being restated here. In
+outline: the seat's evidence is the current live configuration. Both seats read the exact current
+`room-<agent>-<role>` profile from `list_profiles`, materialize every field it defines (agent
+creation takes no profile id), then inspect the live seat's provider, workspace and mode.
+Supervisor additionally uses `list_agents(cwd)` for discovery and corroborates Lead ownership by
+parentage or known Human-opened history. For `room-<agent>-peer`, Lead copies provider, mode and
+features exactly, keeps the profile's model unless the workspace protocol in force routes models,
+chooses the thinking effort under that protocol's policy, and requires the live seat's
+daemon-added `paseo.parent-agent-id` to name itself. An ambiguous Lead candidate goes to
 duplicate recovery and Human escalation instead of being adopted.
 
 Current Paseo agent sessions do not retain `profileId`. A direct launch with the exact
@@ -422,8 +422,8 @@ There are three separate evidence boundaries:
 - `setup --apply` and `verify`, backed by regression tests, prove the generated/live
   configuration chain: each room profile points to its exact role provider and owned mode,
   each provider points to the exact role home, and each provider-selected role home carries
-  the exact prompt input with the applicable role contract and default workspace-protocol
-  sections.
+  the exact prompt input with the applicable role contract, plus the default workspace protocol
+  for Lead.
 - Delivery of those files and arguments into a newly launched model context relies on the
   documented Codex, Claude Code and Pi configuration contracts for
   `developer_instructions`, `CLAUDE.md`, and `--append-system-prompt`.
@@ -446,8 +446,11 @@ command again.
 ## The role contract
 
 The exact model-facing wording every seat reads lives in the canonical Markdown under
-[`src/room/prompts/`](src/room/prompts/). TypeScript selects those semantic sections with
-`instructionKeys()` and `protocolKeys()`; it does not duplicate their prose. In short:
+[`src/room/prompts/`](src/room/prompts/), organised by who reads it: one shared authority body
+for every role, shared room-seat identity evidence for Supervisor and Lead, the shared challenge
+vocabulary for Lead and Peer, exactly one body per role, and the default workspace document for
+Lead. TypeScript selects those layers with `instructionKeys()` and `protocolKeys()`; it does not
+duplicate their prose. In short:
 
 - **Supervisor** routes Human directives to Lead and observes. Before opening a seat it checks
   for and reuses the project's existing Lead, including an idle or resumable Lead. It observes
@@ -485,20 +488,29 @@ Two further limits are deliberately conservative. **One writable Peer per projec
 per moving scope: the room gives you no writer isolation, so separate scopes are not evidence
 of separate working trees, and no workspace protocol relaxes the limit. Concurrent writable
 Peers in isolated worktrees are a deferred decision, not an oversight. And a seat's **model and
-reasoning effort are not one knob**: the model stays the profile's default unless the root
-`WORKSPACE_PROTOCOL.md` explicitly supplies model routing, while the thinking effort is Lead's
+reasoning effort are not one knob**: the model stays the profile's default unless the workspace
+protocol in force explicitly supplies model routing, while the thinking effort is Lead's
 per-brief choice on task risk, uncertainty, context size and verification burden — lowest that
 reliably answers the task, higher for architecture-sensitive or weakly observable work, only an
 option the live Paseo and provider context establishes as supported, and never up to a tier
 advertising automatic delegation. Provider, mode, workspace, parent and feature values are
 eligibility evidence and copied exactly.
 
-Every seat that owns workflow also carries a **default workspace protocol** — topology by
-difficulty, verification, review, repository conventions — so a project has that layer without
-doing anything. It goes to Lead and Supervisor, not to Peer: Lead reads the protocol and quotes
-what bears on an assignment into the brief, including the exact verification command, so a Peer
-spends its attention on one brief rather than on deciding which repository rules apply. A
-repository that needs different rules writes `WORKSPACE_PROTOCOL.md` at its root, which wins
+The room also ships a **default workspace protocol** — topology by difficulty, the four
+disposition mandates, model and effort routing principles, ownership and candidate rhythm,
+review triggers, verification, escalation, repository conventions, project anti-patterns and
+protocol evolution — so a project has that layer without doing anything. It goes to **Lead
+alone**, because Lead is the only standing reader of workflow policy: Lead resolves the
+repository root, reads `WORKSPACE_PROTOCOL.md` in full when the repository ships one, and quotes
+what bears on an assignment into the brief, including the exact verification command. Supervisor
+carries no copy and reads a repository's protocol only under an explicit Human audit, update or
+maintenance mandate; ordinary routing and observation need none of it, and it may propose a
+change with causal evidence but never impose one. Peer is never told the filename at all, so it
+spends its attention on one brief rather than on deciding which repository rules apply — what it
+needs unconditionally is in its own contract, including the floor that no repository or workspace
+instruction can enlarge or weaken its authority, with conflicts routed to Lead.
+
+A repository that needs different rules writes `WORKSPACE_PROTOCOL.md` at its root, which wins
 wherever it speaks while the default holds wherever it is silent — the root, because it is
 agent guidance rather than project documentation. `~/.paseo-room/room/WORKSPACE_PROTOCOL.md` is
 the whole default as one file, so you can read what is in force and start from it. The CLI
@@ -541,9 +553,9 @@ that review; Supervisor must route the request to Lead rather than opening a fre
 
 ## Documentation
 
-- [docs/orchestration-model.md](docs/orchestration-model.md) — the reference model this
-  tool implements: roles, authority, instruction layers, invariants, anti-patterns and
-  operating checklists. Tool-agnostic; useful on its own.
+- [docs/demonthorn-agent-orchestration-deep-dive.md](docs/demonthorn-agent-orchestration-deep-dive.md)
+  — the reference model this tool implements: roles, authority, instruction layers, invariants,
+  anti-patterns and operating checklists. Tool-agnostic; useful on its own.
 - [docs/design.md](docs/design.md) — how and why this tool implements that model, and what
   it deliberately does not do. Read this before changing an override.
 - [AGENTS.md](AGENTS.md) — working rules for contributors and coding agents.

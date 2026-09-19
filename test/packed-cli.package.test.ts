@@ -150,11 +150,11 @@ describe('packed CLI prompt rendering', { concurrent: false }, () => {
     expect(complete.stdout).not.toContain('Reinstall paseo-room');
     expect(complete.stderr).toBe('');
 
-    const missingAsset = join(installedRoot, 'dist', 'prompts', 'contract', 'lead', 'technical-acceptance.md');
+    const missingAsset = join(installedRoot, 'dist', 'prompts', 'contract', 'lead.md');
     await rm(missingAsset);
     const incomplete = await runCli(installedEntry, installedRoot, env);
     expect(incomplete.code).not.toBe(0);
-    expect(incomplete.stdout).toContain('contract.technicalAcceptance');
+    expect(incomplete.stdout).toContain('contract.lead');
     expect(incomplete.stdout).toContain('Reinstall paseo-room');
     expect(incomplete.stdout).not.toContain('Transport closed');
     expect(incomplete.stdout).not.toContain('Check that Paseo is running and reachable');

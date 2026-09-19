@@ -5,37 +5,17 @@ export const PROMPT_ASSETS = {
     supervisor: { path: 'documents/supervisor.md', kind: 'head' },
     lead: { path: 'documents/lead.md', kind: 'head' },
     peer: { path: 'documents/peer.md', kind: 'head' },
-    workspace: { path: 'documents/workspace.md', kind: 'head' },
   },
   contract: {
-    humanAuthority: { path: 'contract/shared/human-authority.md', kind: 'section' },
-    workspaceProtocolPrecedence: { path: 'contract/shared-supervisor-lead/workspace-protocol-precedence.md', kind: 'section' },
-    evidenceAndEventWaiting: { path: 'contract/shared/evidence-and-event-waiting.md', kind: 'section' },
-    scopeAndUnrelatedWork: { path: 'contract/shared/scope-and-unrelated-work.md', kind: 'section' },
-    directiveIntegrity: { path: 'contract/supervisor/directive-integrity.md', kind: 'section' },
-    technicalNonInterference: { path: 'contract/supervisor/technical-non-interference.md', kind: 'section' },
-    leadDiscoveryAndRecovery: { path: 'contract/supervisor/lead-discovery-and-recovery.md', kind: 'section' },
-    observationAndAdvice: { path: 'contract/supervisor/observation-and-advice.md', kind: 'section' },
-    escalationBoundaries: { path: 'contract/supervisor/escalation-boundaries.md', kind: 'section' },
-    projectTechnicalOwnership: { path: 'contract/lead/project-technical-ownership.md', kind: 'section' },
-    movingWriteOwnership: { path: 'contract/lead/moving-write-ownership.md', kind: 'section' },
-    completePeerBrief: { path: 'contract/lead/complete-peer-brief.md', kind: 'section' },
-    challengeSignals: { path: 'contract/shared-lead-peer/challenge-signals.md', kind: 'section' },
-    technicalAcceptance: { path: 'contract/lead/technical-acceptance.md', kind: 'section' },
-    independentReview: { path: 'contract/lead/independent-review.md', kind: 'section' },
-    peerSeatLifecycle: { path: 'contract/lead/peer-seat-lifecycle.md', kind: 'section' },
-    boundedOutcome: { path: 'contract/peer/bounded-outcome.md', kind: 'section' },
-    independentJudgment: { path: 'contract/peer/independent-judgment.md', kind: 'section' },
-    assignmentScope: { path: 'contract/peer/assignment-scope.md', kind: 'section' },
-    noOrchestration: { path: 'contract/peer/no-orchestration.md', kind: 'section' },
-    reproducibleHandoff: { path: 'contract/peer/reproducible-handoff.md', kind: 'section' },
-    noSelfAcceptance: { path: 'contract/peer/no-self-acceptance.md', kind: 'section' },
+    sharedAuthority: { path: 'contract/shared-authority.md', kind: 'body' },
+    sharedSeatIdentity: { path: 'contract/shared-seat-identity.md', kind: 'section' },
+    challengeSignals: { path: 'contract/challenge-signals.md', kind: 'section' },
+    supervisor: { path: 'contract/supervisor.md', kind: 'body' },
+    lead: { path: 'contract/lead.md', kind: 'body' },
+    peer: { path: 'contract/peer.md', kind: 'body' },
   },
   workspace: {
-    topology: { path: 'workspace/topology.md', kind: 'section' },
-    verification: { path: 'workspace/verification.md', kind: 'section' },
-    review: { path: 'workspace/review.md', kind: 'section' },
-    repositoryConventions: { path: 'workspace/repository-conventions.md', kind: 'section' },
+    default: { path: 'workspace/default.md', kind: 'document' },
   },
   pi: {
     communicationStyle: { path: 'pi/communication-style.md', kind: 'capsule' },
@@ -50,7 +30,7 @@ export type WorkspaceKey = PromptAssetKey<'workspace'>;
 export type DocumentKey = PromptAssetKey<'documents'>;
 export type PiPromptKey = PromptAssetKey<'pi'>;
 
-type PromptAssetKind = 'head' | 'section' | 'capsule';
+type PromptAssetKind = 'head' | 'section' | 'body' | 'document' | 'capsule';
 interface PromptAssetDefinition {
   readonly path: string;
   readonly kind: PromptAssetKind;
@@ -95,18 +75,15 @@ function validateHeadOrCapsule(source: string, kind: 'head' | 'capsule'): string
   return trimmed;
 }
 
-function validateSection(source: string): string {
-  const trimmed = source.trimEnd();
-  if (!trimmed.trim()) throw new Error('is empty.');
-  const lines = trimmed.split('\n');
-  const heading = lines.shift() ?? '';
-  if (!/^## \S.*$/.test(heading) || headingCount(trimmed, 2) !== 1) {
-    throw new Error('section must begin with exactly one H2 heading.');
-  }
-  if (lines.some(line => /^#{1,6}\s/.test(line))) {
+/**
+ * Renders one H2 section: the heading verbatim, then each blank-line-delimited statement
+ * collapsed onto a single bullet, so authoring line wrapping never reaches a model.
+ */
+function renderSection(heading: string, bodyLines: readonly string[]): string {
+  if (bodyLines.some(line => /^#{1,6}\s/.test(line))) {
     throw new Error('section must not contain additional Markdown headings.');
   }
-  const body = lines.join('\n').trim();
+  const body = bodyLines.join('\n').trim();
   if (!body) throw new Error('section must contain at least one non-empty statement.');
   const statements = body.split(/\n\s*\n/).map(statement =>
     statement.split('\n').map(line => line.trim()).join(' '),
@@ -115,6 +92,70 @@ function validateSection(source: string): string {
     throw new Error('section must contain only non-empty statements.');
   }
   return `${heading}\n${statements.map(statement => `- ${statement}`).join('\n')}`;
+}
+
+function validateSection(source: string): string {
+  const trimmed = source.trimEnd();
+  if (!trimmed.trim()) throw new Error('is empty.');
+  const lines = trimmed.split('\n');
+  const heading = lines.shift() ?? '';
+  if (!/^## \S.*$/.test(heading) || headingCount(trimmed, 2) !== 1) {
+    throw new Error('section must begin with exactly one H2 heading.');
+  }
+  return renderSection(heading, lines);
+}
+
+interface SplitSections {
+  readonly preface: readonly string[];
+  readonly sections: readonly { readonly heading: string; readonly lines: readonly string[] }[];
+}
+
+/** Splits a multi-section asset at its H2 headings, keeping anything before the first one. */
+function splitSections(lines: readonly string[]): SplitSections {
+  const preface: string[] = [];
+  const sections: { heading: string; lines: string[] }[] = [];
+  for (const line of lines) {
+    if (/^## \S.*$/.test(line)) {
+      sections.push({ heading: line, lines: [] });
+      continue;
+    }
+    const current = sections.at(-1);
+    if (current === undefined) preface.push(line);
+    else current.lines.push(line);
+  }
+  return { preface, sections };
+}
+
+/** A role body: one or more H2 sections and nothing above the first of them. */
+function validateBody(source: string): string {
+  const trimmed = source.trimEnd();
+  if (!trimmed.trim()) throw new Error('is empty.');
+  const { preface, sections } = splitSections(trimmed.split('\n'));
+  if (sections.length === 0) throw new Error('role body must contain at least one H2 section.');
+  if (preface.some(line => line.trim())) {
+    throw new Error('role body must not contain content above its first H2 heading.');
+  }
+  return sections.map(section => renderSection(section.heading, section.lines)).join('\n\n');
+}
+
+/**
+ * A complete workspace document: one H1 plus a hard-wrapped preface, then H2 sections. The
+ * preface keeps its authored line breaks because it is read as a document, not as a clause
+ * list; every section below it normalizes like any other.
+ */
+function validateDocument(source: string): string {
+  const trimmed = source.trimEnd();
+  if (!trimmed.trim()) throw new Error('is empty.');
+  const lines = trimmed.split('\n');
+  const title = lines.shift() ?? '';
+  if (!/^# \S.*$/.test(title) || headingCount(trimmed, 1) !== 1) {
+    throw new Error('workspace document must begin with exactly one H1 heading.');
+  }
+  const { preface, sections } = splitSections(lines);
+  if (sections.length === 0) throw new Error('workspace document must contain at least one H2 section.');
+  const head = [title, ...preface].join('\n').trimEnd();
+  const rendered = sections.map(section => renderSection(section.heading, section.lines));
+  return [head, ...rendered].join('\n\n');
 }
 
 export function loadPromptAsset<Group extends PromptAssetGroup>(
@@ -130,14 +171,21 @@ export function loadPromptAsset<Group extends PromptAssetGroup>(
   try {
     const source = readFileSync(assetUrl, 'utf8');
     if (source.includes('\uFFFD')) throw new Error('is not valid UTF-8 text.');
-    const validated = asset.kind === 'section'
-      ? validateSection(source)
-      : validateHeadOrCapsule(source, asset.kind);
+    const validated = validate(source, asset.kind);
     cache.set(logicalAsset, validated);
     return validated;
   } catch (error) {
     if (error instanceof PromptAssetError) throw error;
     const detail = error instanceof Error ? error.message : 'could not be read.';
     throw new PromptAssetError(logicalAsset, assetUrl, detail, { cause: error });
+  }
+}
+
+function validate(source: string, kind: PromptAssetKind): string {
+  switch (kind) {
+    case 'section': return validateSection(source);
+    case 'body': return validateBody(source);
+    case 'document': return validateDocument(source);
+    default: return validateHeadOrCapsule(source, kind);
   }
 }

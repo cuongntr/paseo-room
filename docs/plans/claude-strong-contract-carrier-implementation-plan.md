@@ -105,7 +105,7 @@ delta-change rather than an added bead.
 - **Design refs:** Technical Design §2.1, §6, §8.5, §11; existing `docs/design.md` §5c, §6, §7.
 - **Prerequisites:** WP-001 for the final manifest bound and carrier shape; WP-002 for the final
   diagnostics, commands, and verified behaviour.
-- **Risk boundaries / decomposition hints:** Keep conceptual authority in `docs/orchestration-model.md`
+- **Risk boundaries / decomposition hints:** Keep conceptual authority in the reference-model document
   (untouched here), implementation rationale in `docs/design.md`, contributor procedure in `AGENTS.md`,
   and operator guidance in `README.md`. Do not duplicate contract prose into documentation. `docs/design.md`
   §6 must be **amended, not replaced**: its refusal of every replace-the-prompt path still stands, and

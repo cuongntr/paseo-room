@@ -8,7 +8,7 @@ import { runCli } from '../src/cli.js';
 import metadata from '../package.json' with { type: 'json' };
 import { renderMarker } from '../src/room.js';
 import { contractDigest, protocolKeys, renderInstructions } from '../src/room/instructions.js';
-import { loadPromptAsset, type WorkspaceKey } from '../src/room/prompts.js';
+import { loadPromptAsset } from '../src/room/prompts.js';
 import type { AgentId, Role } from '../src/roles.js';
 import { emptyDaemon, fakeClient, makeFixture, RUNNING_STATUS, script, type FakeDaemon } from './helpers.js';
 
@@ -24,16 +24,29 @@ async function run(argv: readonly string[], env: NodeJS.ProcessEnv, daemon: Fake
 
 const version = metadata.version;
 
-const PROTOCOL_HEADINGS = ['Topology', 'Verification', 'Review', 'Repository Conventions'] as const;
+const WORKSPACE_HEADINGS = [
+  'Status and Readers',
+  'Topology',
+  'Dispositions',
+  'Routing',
+  'Ownership and Candidates',
+  'Review',
+  'Verification',
+  'Escalation',
+  'Repository Conventions',
+  'Anti-Patterns',
+  'Protocol Evolution',
+] as const;
 
-function protocolHeadings(document: string): string[] {
+function workspaceHeadings(document: string): string[] {
   return [...document.matchAll(/^## (.+)$/gm)]
     .map(match => match[1] ?? '')
-    .filter(heading => PROTOCOL_HEADINGS.includes(heading as typeof PROTOCOL_HEADINGS[number]));
+    .filter(heading => WORKSPACE_HEADINGS.includes(heading as typeof WORKSPACE_HEADINGS[number]));
 }
 
-function protocolHeading(key: WorkspaceKey): string {
-  return loadPromptAsset('workspace', key).split('\n', 1)[0]?.slice(3) ?? '';
+/** The headings a role's registered workspace layer contributes, in asset order. */
+function expectedWorkspaceHeadings(role: Role): string[] {
+  return protocolKeys(role).flatMap(key => workspaceHeadings(loadPromptAsset('workspace', key)));
 }
 
 describe('paseo-room CLI', () => {
@@ -164,13 +177,13 @@ describe('paseo-room CLI', () => {
           expect(flag).toBeGreaterThan(-1);
           expect(provider.command[flag + 1]).toBe(appendPath);
         }
-        expect(protocolHeadings(delivered)).toEqual(protocolKeys(role).map(protocolHeading));
+        expect(workspaceHeadings(delivered)).toEqual(expectedWorkspaceHeadings(role));
       }
     }
 
     const workspace = await readFile(join(fixture.roomHome, 'room/WORKSPACE_PROTOCOL.md'), 'utf8');
     expect(workspace).toBe(renderInstructions('workspace'));
-    expect(protocolHeadings(workspace)).toEqual(PROTOCOL_HEADINGS);
+    expect(workspaceHeadings(workspace)).toEqual([...WORKSPACE_HEADINGS]);
   });
 
   it('is idempotent: a second run plans no changes and verify passes', async () => {

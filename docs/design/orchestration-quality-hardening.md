@@ -4,7 +4,7 @@
 |---|---|
 | Status | Active |
 | Owner | Repository owner |
-| Requirements source | [`ORCHESTRATION_REVIEW.md`](../../ORCHESTRATION_REVIEW.md), independently challenged by Oracle and accepted for implementation by the repository owner |
+| Requirements source | The 2026-09-18 repository orchestration review (since removed from the tree), independently challenged by Oracle and accepted for implementation by the repository owner |
 | Related ADRs | N/A — no ADR directory or governing ADR exists |
 | Routing decision | Brownfield; role authority and control-plane capability boundaries change; Technical Design → Implementation Plan → Beads; decided 2026-09-18 by repository owner |
 
@@ -16,7 +16,7 @@
 - **Execution path:** plan → converter → implementation.
 - **Exceptions:** vendor behavior that remains unproven is documented rather than enforced as fact.
 - **Decided:** 2026-09-18 — Repository owner.
-- **Supersedes:** none.
+- **Supersedes:** none. Partly superseded: the workspace-reader and prompt-granularity decisions below are replaced by [`workspace-protocol-prompt-simplification.md`](workspace-protocol-prompt-simplification.md); the runtime capability decisions in this document remain active.
 
 ## 1. Boundaries
 
@@ -78,8 +78,8 @@ A custom catalog replaces Codex's built-in catalog. The room must preserve its i
 
 The combined model/effort default above was later split asymmetrically, and the Peer brief gained an explicit disposition mandate. The rest of D5 stands as decided.
 
-- The model stays the exact current Peer profile default unless the root `WORKSPACE_PROTOCOL.md` explicitly supplies model routing. Thinking effort is Lead's per-brief choice on task risk, uncertainty, context size/complexity, and verification burden: the lowest effort that can reliably answer the task, raised for architecture-sensitive, high-consequence, or weakly observable work, and restricted to an option the live Paseo/provider context establishes as supported so no identifier is invented. Disposition is one signal and never a fixed tier per disposition. Tiers advertising automatic delegation remain excluded, material-cost decisions remain Human's, and the eligibility evidence above is unchanged.
-- Every Peer brief names exactly one disposition — Engineer, Architect, Reviewer, or Scout — with its mode and return contract. One Peer profile remains; the disposition is an assignment mandate, not seat identity. Reviewer returns approval evidence or findings and never a technical acceptance.
+- The model stays the exact current Peer profile default unless the workspace protocol in force explicitly supplies model routing. Thinking effort is Lead's per-brief choice on task risk, uncertainty, context size/complexity, and verification burden: the lowest effort that can reliably answer the task, raised for architecture-sensitive, high-consequence, or weakly observable work, and restricted to an option the live Paseo/provider context establishes as supported so no identifier is invented. Disposition is one signal and never a fixed tier per disposition. Tiers advertising automatic delegation remain excluded, material-cost decisions remain Human's, and the eligibility evidence above is unchanged. (Superseded in placement: the risk/uncertainty/context/verification criteria now live in the default Workspace Protocol; Lead's durable contract keeps the profile-model restriction, supported-option requirement, automatic-delegation ban, and Human cost boundary.)
+- Every Peer brief names exactly one disposition — Engineer, Architect, Reviewer, or Scout — with its mode and return contract. One Peer profile remains; the disposition is an assignment mandate, not seat identity. Reviewer returns approval evidence or findings and never a technical acceptance. (Superseded in part: the four disposition definitions now live in the default Workspace Protocol; Lead's contract keeps only the requirement that a brief select exactly one.)
 - Package behavior is unchanged: `thinkingOptionId` is still seeded once and profile configuration stays operator-owned. This governs Lead's per-created-Peer launch configuration only.
 
 ### D6 — Runtime-owned Claude state is inspected narrowly
@@ -159,3 +159,4 @@ No open question blocks the bounded implementation selected above.
 |---|---|---|
 | 2026-09-18 | Bytes | Created and activated after repository review, independent Oracle challenge, vendor-source spikes, and design-ready self-review. |
 | 2026-09-18 | Bytes | Added D5.1: explicit Peer disposition mandate in the brief, and asymmetric model-vs-thinking-effort policy superseding the last D5 bullet. |
+| 2026-09-19 | Bytes | Recorded partial supersession by `workspace-protocol-prompt-simplification.md`: Lead is now the only standing workspace-protocol reader, Supervisor's is mandate-bound, disposition definitions moved to the workspace default, and prompt assets are cut by distribution. Runtime capability decisions unchanged. |

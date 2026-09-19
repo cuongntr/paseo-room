@@ -8,99 +8,48 @@ import {
 
 export type InstructionKind = Role | 'workspace';
 
-// Every role carries the same authority contract; Workspace Protocol Precedence is not part
-// of it. That layer reaches only the seats that read a repository's protocol: the model gives
-// it to Lead, and to Supervisor when auditing, while Peer receives the constraints that bear
-// on its brief quoted into the brief. Telling Peer about the file is the broadcast the model
-// exists to avoid.
-const AUTHORITY_KEYS = [
-  'humanAuthority',
-  'evidenceAndEventWaiting',
-  'scopeAndUnrelatedWork',
-] as const satisfies readonly ContractKey[];
-
-const PROTOCOL_READER_KEYS = [
-  'humanAuthority',
-  'workspaceProtocolPrecedence',
-  'evidenceAndEventWaiting',
-  'scopeAndUnrelatedWork',
-] as const satisfies readonly ContractKey[];
-
+// Every role carries the same authority floor. The layers above it reach only the seats they
+// belong to: room-seat identity evidence reaches the two seats that open seats, and the
+// challenge vocabulary reaches the two seats that use it. Broadcasting either one is the
+// attention cost the model exists to avoid.
 const SHARED_KEYS = {
-  supervisor: PROTOCOL_READER_KEYS,
-  lead: PROTOCOL_READER_KEYS,
-  peer: AUTHORITY_KEYS,
+  supervisor: ['sharedAuthority', 'sharedSeatIdentity'],
+  lead: ['sharedAuthority', 'sharedSeatIdentity', 'challengeSignals'],
+  peer: ['sharedAuthority', 'challengeSignals'],
 } as const satisfies Record<Role, readonly ContractKey[]>;
 
+// Exactly one role body per role: the body is the review unit, so the composition cannot
+// silently drop or duplicate a role's own obligations.
 const ROLE_KEYS = {
-  supervisor: [
-    'directiveIntegrity',
-    'technicalNonInterference',
-    'leadDiscoveryAndRecovery',
-    'observationAndAdvice',
-    'escalationBoundaries',
-  ],
-  lead: [
-    'projectTechnicalOwnership',
-    'movingWriteOwnership',
-    'completePeerBrief',
-    'challengeSignals',
-    'technicalAcceptance',
-    'independentReview',
-    'peerSeatLifecycle',
-  ],
-  // Peer needs Challenge Signals as well as its own obligations.
-  peer: [
-    'challengeSignals',
-    'boundedOutcome',
-    'independentJudgment',
-    'assignmentScope',
-    'noOrchestration',
-    'reproducibleHandoff',
-    'noSelfAcceptance',
-  ],
-} as const satisfies Record<Role, readonly ContractKey[]>;
+  supervisor: 'supervisor',
+  lead: 'lead',
+  peer: 'peer',
+} as const satisfies Record<Role, ContractKey>;
 
-const ALL_PROTOCOL_KEYS = [
-  'topology',
-  'verification',
-  'review',
-  'repositoryConventions',
-] as const satisfies readonly WorkspaceKey[];
-
-// The workspace layer belongs to the seats that own workflow: Lead decides it and
-// Supervisor audits it. Peer receives none of it, so its attention stays on one brief and
-// the brief remains the only channel for repository-local constraints.
+// The workspace layer belongs to the only standing protocol reader. Supervisor reads a
+// repository's protocol under a Human mandate and carries no default with it; Peer receives
+// none of it, so its attention stays on one brief and the brief remains the only channel for
+// repository-local constraints.
 const PROTOCOL_KEYS = {
-  supervisor: ALL_PROTOCOL_KEYS,
-  lead: ALL_PROTOCOL_KEYS,
+  supervisor: [],
+  lead: ['default'],
   peer: [],
 } as const satisfies Record<Role, readonly WorkspaceKey[]>;
 
 export function instructionKeys(role: Role): readonly ContractKey[] {
-  // Every role carries the shared authority contract plus its own obligations.
-  return [...SHARED_KEYS[role], ...ROLE_KEYS[role]];
+  return [...SHARED_KEYS[role], ROLE_KEYS[role]];
 }
 
 export function protocolKeys(role: Role): readonly WorkspaceKey[] {
   return PROTOCOL_KEYS[role];
 }
 
-function protocol(keys: readonly WorkspaceKey[]): string[] {
-  // A preface introducing sections that follow is noise when none of them do.
-  if (keys.length === 0) return [];
-  return [
-    loadPromptAsset('documents', 'workspace'),
-    ...keys.map(key => loadPromptAsset('workspace', key)),
-  ];
-}
-
 export function renderInstructions(kind: InstructionKind): string {
-  if (kind === 'workspace') return protocol(ALL_PROTOCOL_KEYS).join('\n\n') + '\n';
+  if (kind === 'workspace') return loadPromptAsset('workspace', 'default') + '\n';
   return [
     loadPromptAsset('documents', kind),
     ...instructionKeys(kind).map(key => loadPromptAsset('contract', key)),
-    ...protocol(protocolKeys(kind)),
+    ...protocolKeys(kind).map(key => loadPromptAsset('workspace', key)),
   ].join('\n\n') + '\n';
 }
 

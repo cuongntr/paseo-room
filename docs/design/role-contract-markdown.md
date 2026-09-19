@@ -75,7 +75,7 @@ This invariant depends on the current single root-level tsup entry with `splitti
 
 Each independently distributed semantic section is one Markdown file. This is the smallest granularity that preserves the existing composition rules: shared sections go to all seats, Challenge Signals goes to both Lead and Peer at different positions, and Peer omits Workspace Topology.
 
-The layout and distribution below record the state at this migration. Both have since changed — see the note under the traceability table in §7 — and `src/room/instructions.ts` with `src/room/prompts.ts` are current.
+The layout and distribution below record the state at this migration. Both have since changed — the one-file-per-heading rule was replaced by one file per independently distributed review unit in [`workspace-protocol-prompt-simplification.md`](workspace-protocol-prompt-simplification.md); see the note under the traceability table in §7 — and `src/room/instructions.ts` with `src/room/prompts.ts` are current.
 
 ```text
 src/room/prompts/
@@ -335,10 +335,16 @@ This table is the sole retained use of the retired numeric identifiers. Every ex
 | WP-03 | `review` | Review | All roles and workspace copy |
 | WP-04 | `repositoryConventions` | Repository Conventions | All roles and workspace copy |
 
-The table records the state at this package's migration. Distribution, one key and two
-directory names have since changed: the workspace layer and Workspace Protocol Precedence
-now reach Supervisor and Lead only, `writingAndReviewScope` became `assignmentScope`, and
-the shared contract directory split into `shared/` and `shared-supervisor-lead/`.
+The table records the state at this package's migration. Distribution, keys and file
+boundaries have since changed twice. First, the workspace layer and Workspace Protocol
+Precedence narrowed to Supervisor and Lead, and `writingAndReviewScope` became
+`assignmentScope`. Then
+[`workspace-protocol-prompt-simplification.md`](workspace-protocol-prompt-simplification.md)
+consolidated the tree into review units — `contract/shared-authority.md`,
+`contract/shared-seat-identity.md`, `contract/challenge-signals.md`, one
+`contract/<role>.md` body per role, and one complete `workspace/default.md` — gave the
+workspace layer to Lead alone, made Supervisor's protocol reading mandate-bound, and moved
+repository workflow policy out of Lead's durable contract into the workspace default. Only
 `src/room/instructions.ts` and `src/room/prompts.ts` are current.
 
 The non-numbered inventory also migrates one-to-one:
@@ -348,7 +354,7 @@ The non-numbered inventory also migrates one-to-one:
 | Supervisor title and preface | `documents/supervisor.md` |
 | Lead title and preface | `documents/lead.md` |
 | Peer title and preface | `documents/peer.md` |
-| Workspace title and preface | `documents/workspace.md` |
+| Workspace title and preface | `documents/workspace.md`, since merged into `workspace/default.md` |
 | Pi communication capsule | `pi/communication-style.md` |
 | Pi runtime capsule | `pi/runtime.md` |
 
@@ -357,8 +363,8 @@ The non-numbered inventory also migrates one-to-one:
 Active documentation replaces numeric citations and deleted prose-map paths with the semantic names and canonical Markdown location above:
 
 - `AGENTS.md` updates its layout and role-contract guidance to `src/room/prompts/`, `instructionKeys()`, and `protocolKeys()`, while retaining the authority-vs-workflow layer rule; its verification chain includes the packed-package test.
-- `README.md` and `docs/orchestration-model.md` replace links to `src/room/clauses.ts` with the canonical Markdown tree; README's verification description includes the packed-package test.
-- `docs/design.md` replaces references to `src/room/clauses.ts` and `src/room/workspace.ts`, and cites Workspace Protocol Precedence, No Orchestration, Lead Discovery and Recovery, Independent Review, and Peer Seat Lifecycle by name.
+- `README.md` and the reference-model document replace links to `src/room/clauses.ts` with the canonical Markdown tree; README's verification description includes the packed-package test.
+- `docs/design.md` replaces references to `src/room/clauses.ts` and `src/room/workspace.ts`, and cites the contract sections it relies on by name. (Workspace Protocol Precedence has since been replaced by Lead's Workspace Protocol section and Supervisor's Workspace Protocol Mandate.)
 - Code and test comments use semantic names; numeric identifiers remain only in the traceability table in this document.
 
 Release guidance states that changed headings cause one-time expected drift, requires `setup --apply`, and requires restarting affected seats. It distinguishes generated configuration from already-running model context.
