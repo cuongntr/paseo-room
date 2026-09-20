@@ -9,36 +9,25 @@ import { leadSkillProjection, ROOM_SKILL_NAME, roomSkillSource } from '../src/ro
 import { makeFixture } from './helpers.js';
 
 describe('renderRoleSettings', () => {
-  it('keeps operator hooks and env, tags the role, and refuses cross-session input', () => {
-    const settings = JSON.parse(renderRoleSettings(JSON.stringify({
+  it('renders only deterministic room policy for the selected role', () => {
+    expect(JSON.parse(renderRoleSettings('peer', '/room/roles/claude/peer'))).toEqual({
       env: {
-        FOO: '1',
-        CLAUDE_CODE_DISABLE_AGENT_VIEW: '0',
-        CLAUDE_CODE_DISABLE_WORKFLOWS: '0',
-        CLAUDE_SECURESTORAGE_CONFIG_DIR: '/operator/shared-auth',
+        CLAUDE_CODE_DISABLE_AGENT_VIEW: '1',
+        CLAUDE_CODE_DISABLE_WORKFLOWS: '1',
+        PASEO_ROOM_ROLE: 'peer',
+        CLAUDE_SECURESTORAGE_CONFIG_DIR: '/room/roles/claude/peer',
       },
-      hooks: { SessionStart: [] },
-      crossSessionInbound: 'auto',
-      disableAgentView: false,
-      disableWorkflows: false,
-    }), 'peer', '/room/roles/claude/peer')) as {
-      env: Record<string, string>; hooks: unknown; crossSessionInbound: string;
-      disableAgentView: boolean; disableWorkflows: boolean;
-    };
-    expect(settings.env.FOO).toBe('1');
-    expect(settings.env.PASEO_ROOM_ROLE).toBe('peer');
-    expect(settings.env.CLAUDE_CODE_DISABLE_AGENT_VIEW).toBe('1');
-    expect(settings.env.CLAUDE_CODE_DISABLE_WORKFLOWS).toBe('1');
-    expect(settings.env.CLAUDE_SECURESTORAGE_CONFIG_DIR).toBe('/room/roles/claude/peer');
-    expect(settings.hooks).toBeDefined();
-    expect(settings.crossSessionInbound).toBe('refuse');
-    expect(settings.disableAgentView).toBe(true);
-    expect(settings.disableWorkflows).toBe(true);
+      permissions: { deny: claudeAgent.pins.disallowedTools },
+      disableAgentView: true,
+      disableWorkflows: true,
+      crossSessionInbound: 'refuse',
+    });
   });
 
-  it('survives a missing or corrupt source', () => {
-    expect(JSON.parse(renderRoleSettings(undefined, 'lead'))).toBeTypeOf('object');
-    expect(JSON.parse(renderRoleSettings('{not json', 'lead'))).toBeTypeOf('object');
+  it('omits only the optional secure-storage key when no role path is supplied', () => {
+    const settings = JSON.parse(renderRoleSettings('lead')) as { env: Record<string, string> };
+    expect(settings.env.PASEO_ROOM_ROLE).toBe('lead');
+    expect(settings.env.CLAUDE_SECURESTORAGE_CONFIG_DIR).toBeUndefined();
   });
 });
 
@@ -81,6 +70,11 @@ describe('claudeAgent.build', () => {
     await mkdir(join(fixture.home, '.claude', 'rules'));
     await writeFile(join(fixture.home, '.claude', '.credentials.json'), '{"key":"k"}');
     await writeFile(join(fixture.home, '.claude', 'CLAUDE.md'), '# Keep this preference\n');
+    const operatorSettings = JSON.stringify({
+      env: { OPERATOR_ONLY: 'secret' }, hooks: { SessionStart: [] }, apiKeyHelper: 'operator-helper',
+      permissions: { allow: ['Agent'], deny: ['Bash(rm *)'] },
+    });
+    await writeFile(join(fixture.home, '.claude', 'settings.json'), operatorSettings);
     await writeFile(join(fixture.home, '.claude', 'rules', 'operator.md'), '# Keep this rule\n');
     await writeFile(join(fixture.home, '.claude', 'keybindings.json'), '{"bindings":[]}');
     const layout = resolveLayout({}, fixture.env);
@@ -94,6 +88,14 @@ describe('claudeAgent.build', () => {
     expect(await readFile(join(layout.agentHome.claude, '.credentials.json'), 'utf8')).toBe('{"key":"k"}');
     expect(await readFile(join(peer, 'rules/operator.md'), 'utf8')).toBe('# Keep this rule\n');
     expect(await readFile(join(peer, 'keybindings.json'), 'utf8')).toBe('{"bindings":[]}');
+    const settings = JSON.parse(await readFile(join(peer, 'settings.json'), 'utf8')) as Record<string, unknown>;
+    expect(Object.keys(settings).sort()).toEqual([
+      'crossSessionInbound', 'disableAgentView', 'disableWorkflows', 'env', 'permissions',
+    ]);
+    expect(JSON.stringify(settings)).not.toContain('OPERATOR_ONLY');
+    expect(JSON.stringify(settings)).not.toContain('operator-helper');
+    expect(JSON.stringify(settings)).not.toContain('Bash(rm *)');
+    expect(await readFile(join(fixture.home, '.claude', 'settings.json'), 'utf8')).toBe(operatorSettings);
     expect(plan.binary).toContain('claude');
     expect(plan.credentials).toHaveLength(3);
   });

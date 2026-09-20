@@ -54,7 +54,7 @@ After
     + small visible assignment vocabulary and operating baseline
     + optional root WORKSPACE_PROTOCOL.md as the complete repository workflow policy
   Lead skills symlink -> room/skill-projections/<agent>/lead/
-    + links to every operator skill except a same-name collision
+    + links to every operator skill except a case-insensitive room-skill-name collision
     + link to room-owned paseo-project-onboarding
   room/skills/paseo-project-onboarding/
     SKILL.md
@@ -100,9 +100,9 @@ Lead's role-home `skills` path remains a symlink and is retargeted to a room-own
 
 - one link per current operator skill, preserving all existing operator skills;
 - one room-owned `paseo-project-onboarding` link; and
-- adapter-declared runtime-owned names such as Claude's `synced` bucket as reserved children that are neither linked nor reconciled.
+- adapter-declared runtime-owned names such as Claude's `synced` bucket as reserved children: case-insensitive operator-name matches are not linked, and the declared runtime child is not reconciled.
 
-A same-name operator skill is not linked into Lead; the room-owned skill owns that name inside the aggregate, while the operator copy remains untouched. The aggregate is an exact managed directory. Keeping the role path as a symlink lets both this package and the previous package replace it by the same shape during upgrade or rollback; neither package traverses or modifies the old target.
+An operator skill whose name collides case-insensitively with the room skill is not linked into Lead; the room-owned skill owns that name inside the aggregate, while the operator copy remains untouched. Case-insensitive comparison prevents duplicate logical children on default macOS filesystems. The aggregate is an exact managed directory. Setup and verify reject symlinks at every room-owned skill-source and projection directory layer before planning can traverse them. Keeping the role path as a symlink lets both this package and the previous package replace it by the same shape during upgrade or rollback; neither package traverses or modifies the old target.
 
 The shared skill source under `~/.paseo-room/room/skills/` is composed from package assets and managed by exact file/directory shape. The old room protocol template is declared absent so setup removes it only when it is the regular file the room formerly generated.
 
@@ -121,7 +121,8 @@ Rollback is package-level. The previous package can recreate its default prompt/
 - Assert Supervisor and Peer remain unaware of the root protocol path except for the authority floor's path-free conflict rule.
 - Assert the skill source has valid Agent Skill frontmatter and contains proposal/apply, evidence, authority, and no-guess safeguards.
 - Assert Lead receives all operator skills plus the room-owned skill across Codex, Claude, and Pi; Supervisor remains aliased; Peer receives neither room nor operator `paseo*` skills.
-- Assert legacy Lead skill symlinks retarget without touching prior targets or operator homes, remain replaceable by the prior package, reserve Claude runtime state, and select the room-owned link on same-name collisions.
+- Assert legacy Lead skill symlinks retarget without touching prior targets or operator homes, remain replaceable by the prior package, reserve Claude runtime state, and select the room-owned link on case-insensitive name collisions.
+- Assert every room-owned skill-source and projection directory layer refuses a symlink before setup or verify can plan through it, while explicit room removal unlinks nested symlinks without following their targets.
 - Assert setup removes the old generated protocol file, detects skill drift, and stabilizes on a second run.
 - Assert the packed package contains every skill asset and reports an actionable reinstall failure when one is missing.
 - Run `npm run verify` in the repository-defined order.
@@ -135,3 +136,4 @@ None. The Human has selected the minimal-fallback plus onboarding-skill architec
 | Date | Author | Change |
 |---|---|---|
 | 2026-09-19 | Bytes | Activated the removal of the always-on default and the Lead-only project onboarding skill with managed resource migration. |
+| 2026-09-19 | Bytes | Fresh-eyes hardening: made room-skill collisions and runtime-reserved names portable across case-insensitive filesystems, and extended pre-plan path safety to every new nested managed directory. |

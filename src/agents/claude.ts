@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
-  ambientNamesCheck, configuredByNamesCheck, inspectCredentialPath, presentNames, preservedCredentialCheck,
+  ambientNamesCheck, inspectCredentialPath, presentNames, preservedCredentialCheck,
   roleCommand, type CredentialDiagnostic,
 } from '../credentials.js';
 import type { Layout } from '../layout.js';
@@ -40,6 +40,12 @@ const CONTROL_PLANE_ENV = {
   CLAUDE_CODE_DISABLE_AGENT_VIEW: '1',
   CLAUDE_CODE_DISABLE_WORKFLOWS: '1',
 } as const;
+/** One native-orchestration deny list, emitted into both Claude and Paseo enforcement surfaces. */
+const DISALLOWED_TOOLS = [
+  'Task', 'Agent', 'Workflow', 'ListAgents', 'SendMessage', 'TeamCreate', 'TeamDelete',
+  'TaskCreate', 'TaskGet', 'TaskList', 'TaskUpdate',
+  'CronCreate', 'CronDelete', 'CronList',
+] as const;
 const SECURE_STORAGE_ENV = 'CLAUDE_SECURESTORAGE_CONFIG_DIR';
 /** Copied once so a fresh role home does not re-run interactive onboarding. */
 const SEEDED_KEYS = ['hasCompletedOnboarding', 'theme', 'installMethod', 'userID', MCP_KEY] as const;
@@ -47,6 +53,7 @@ const SEEDED_KEYS = ['hasCompletedOnboarding', 'theme', 'installMethod', 'userID
 function asObject(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? { ...value } : {};
 }
+
 /** Any unreadable or non-object source is simply an empty starting point. */
 function readObject(source: string | undefined): Record<string, unknown> {
   try { return asObject(source === undefined ? {} : JSON.parse(source)); } catch { return {}; }
@@ -60,21 +67,22 @@ async function readStateIfPresent(path: string): Promise<string | undefined> {
   }
 }
 
-/** Keep operator configuration while closing non-Paseo inbound coordination. */
-export function renderRoleSettings(source: string | undefined, role: Role, secureStorageDir?: string): string {
-  const settings = readObject(source);
-  // Claude applies settings.env after the launch environment, so repeat these
-  // provider pins here after operator values to make them effective.
-  settings.env = {
-    ...asObject(settings.env),
-    ...CONTROL_PLANE_ENV,
-    PASEO_ROOM_ROLE: role,
-    ...(secureStorageDir === undefined ? {} : { [SECURE_STORAGE_ENV]: secureStorageDir }),
+/** Render only room-owned policy; operator settings are intentionally not imported. */
+export function renderRoleSettings(role: Role, secureStorageDir?: string): string {
+  const settings = {
+    // Claude applies settings.env after the launch environment, so repeat provider closures here.
+    env: {
+      ...CONTROL_PLANE_ENV,
+      PASEO_ROOM_ROLE: role,
+      ...(secureStorageDir === undefined ? {} : { [SECURE_STORAGE_ENV]: secureStorageDir }),
+    },
+    // Provider disallowedTools is not sufficient alone; the isolated home carries the same list.
+    permissions: { deny: DISALLOWED_TOOLS },
+    // These restrictive settings cannot be weakened by another settings scope.
+    disableAgentView: true,
+    disableWorkflows: true,
+    crossSessionInbound: 'refuse',
   };
-  // These restrictive settings cannot be weakened by another settings scope.
-  settings.disableAgentView = true;
-  settings.disableWorkflows = true;
-  settings.crossSessionInbound = 'refuse';
   return JSON.stringify(settings, null, 2) + '\n';
 }
 
@@ -98,20 +106,9 @@ export function renderRoleMemory(source: string | undefined, role: Role, contrac
   return operator ? `${operator}\n\n${renderInstructions(role)}` : renderInstructions(role);
 }
 
-/** Detect only configuration names; never inspect environment or settings values. */
-export function claudeAuthMethodNames(settingsSource: string | undefined, envNames: ReadonlySet<string>): string[] {
-  const settings = readObject(settingsSource);
-  const settingsEnv = asObject(settings.env);
-  const names = new Set(presentNames(envNames, AUTH_ENV));
-  for (const name of AUTH_ENV) if (Object.hasOwn(settingsEnv, name)) names.add(name);
-  if (Object.hasOwn(settings, 'apiKeyHelper')) names.add('apiKeyHelper');
-  return [...names];
-}
-
 export async function claudeCredentialDiagnostic(
   layout: Layout,
   role: Role,
-  settingsSource: string | undefined,
   platform: NodeJS.Platform = process.platform,
   binary = 'claude',
 ): Promise<CredentialDiagnostic> {
@@ -125,8 +122,6 @@ export async function claudeCredentialDiagnostic(
   if (state.kind !== 'missing') {
     return { path, checks: [preservedCredentialCheck({ id, agent: 'Claude', role, path, state, login, status })] };
   }
-  const configured = claudeAuthMethodNames(settingsSource, new Set());
-  if (configured.length > 0) return { path, checks: [configuredByNamesCheck(id, 'Claude', role, configured)] };
   const ambient = presentNames(layout.envNames, AUTH_ENV);
   if (ambient.length > 0) return { path, checks: [ambientNamesCheck(id, 'Claude', role, ambient)] };
   if (platform === 'darwin') {
@@ -138,7 +133,7 @@ export async function claudeCredentialDiagnostic(
   }
   return { path, checks: [{
     id: `${id}.login-required`, status: 'warn',
-    message: `Claude ${role} auth: login-required; no role-owned .credentials.json or configured environment/static auth method was detected. Authentication was not attempted.`,
+    message: `Claude ${role} auth: login-required; no role-owned .credentials.json or supported ambient auth environment name was detected. Authentication was not attempted.`,
     fix: `Authenticate this role with: ${login}. If that subcommand is unavailable, launch ${roleCommand(roleEnvironment, binary)} and run /login. Check status with: ${status}.`,
   }] };
 }
@@ -170,13 +165,7 @@ export const claudeAgent: Agent = {
   // Keep the legacy Task name and block current native orchestration,
   // shared task/cron coordination, and cross-session paths. Paseo alone owns
   // agent lifecycle and coordination.
-  pins: {
-    disallowedTools: [
-      'Task', 'Agent', 'Workflow', 'ListAgents', 'SendMessage', 'TeamCreate', 'TeamDelete',
-      'TaskCreate', 'TaskGet', 'TaskList', 'TaskUpdate',
-      'CronCreate', 'CronDelete', 'CronList',
-    ],
-  },
+  pins: { disallowedTools: DISALLOWED_TOOLS },
   async build(layout: Layout, roles: readonly Role[], options: BuildOptions = {}): Promise<AgentPlan> {
     const home = layout.agentHome.claude;
     const binary = await which(layout.bin.claude, layout.searchPath);
@@ -188,7 +177,6 @@ export const claudeAgent: Agent = {
     }
     const checks: Check[] = [pass('claude.home', `Claude Code found at ${binary} using ${home}.`)];
 
-    const settingsSource = await readIfPresent(join(home, 'settings.json'));
     const memorySource = await readIfPresent(join(home, 'CLAUDE.md'));
     let stateSource: string | undefined;
     let operatorServers: Record<string, unknown>;
@@ -240,14 +228,14 @@ export const claudeAgent: Agent = {
       entries.push(memory === undefined
         ? { kind: 'absent', path: memoryPath }
         : { kind: 'file', path: memoryPath, content: memory });
-      entries.push({ kind: 'file', path: join(target, 'settings.json'), content: renderRoleSettings(settingsSource, role, target) });
+      entries.push({ kind: 'file', path: join(target, 'settings.json'), content: renderRoleSettings(role, target) });
       entries.push({ kind: 'file', path: statePath, content: renderRoleState(stateSource), once: true });
       entries.push(...await roleResourceEntries({
         role, target, home, names: SHARED, shared, executable: EXECUTABLE,
         reservedSkills: RUNTIME_SKILLS, roomSkill,
         leadSkillProjection: leadSkillProjection(layout, 'claude'),
       }));
-      credentials.push(await claudeCredentialDiagnostic(layout, role, settingsSource, process.platform, binary));
+      credentials.push(await claudeCredentialDiagnostic(layout, role, process.platform, binary));
       providerEnv[role] = { [SECURE_STORAGE_ENV]: target };
     }
     return { entries, credentials, checks: [...checks, ...drift], binary, providerEnv };

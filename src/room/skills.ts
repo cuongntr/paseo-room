@@ -76,9 +76,19 @@ export function roomSkillSource(layout: Layout): string {
   return join(sharedRoom(layout), 'skills', ROOM_SKILL_NAME);
 }
 
+/** Parent of every per-agent room-owned skill projection. */
+export function skillProjectionRoot(layout: Layout): string {
+  return join(sharedRoom(layout), 'skill-projections');
+}
+
+/** Parent of one agent's room-owned skill projections. */
+export function agentSkillProjectionRoot(layout: Layout, agent: AgentId): string {
+  return join(skillProjectionRoot(layout), agent);
+}
+
 /** A room-owned aggregate that lets the role path remain a rollback-compatible symlink. */
 export function leadSkillProjection(layout: Layout, agent: AgentId): string {
-  return join(sharedRoom(layout), 'skill-projections', agent, 'lead');
+  return join(agentSkillProjectionRoot(layout, agent), 'lead');
 }
 
 /**
@@ -86,10 +96,12 @@ export function leadSkillProjection(layout: Layout, agent: AgentId): string {
  * builds the desired state rather than per adapter, so three seated agents do not declare the
  * same managed paths three times.
  */
-export function roomSkillEntries(layout: Layout): Entry[] {
+export function roomSkillEntries(layout: Layout, agents: readonly AgentId[]): Entry[] {
   const root = roomSkillSource(layout);
   return [
     { kind: 'dir', path: join(sharedRoom(layout), 'skills') },
+    { kind: 'dir', path: skillProjectionRoot(layout) },
+    ...agents.map(agent => ({ kind: 'dir' as const, path: agentSkillProjectionRoot(layout, agent) })),
     { kind: 'managed-dir', path: root, children: ['SKILL.md', ...SKILL_DIRECTORIES] },
     {
       kind: 'managed-dir', path: join(root, 'references'),

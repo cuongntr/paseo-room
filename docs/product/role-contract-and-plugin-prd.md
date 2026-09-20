@@ -2,11 +2,18 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted |
+| Status | Accepted; workspace-default portions superseded |
 | Owner | Repository owner |
 | Created | 2026-09-16 |
 | Related product PRD | [Historical Paseo Room PRD](paseo-room-prd.md) — historical context only; current behavior is defined by the README and design notes |
 | Routing decision | Brownfield; contract/packaging compatibility, trusted-plugin security boundary, new Paseo plugin dependency, multi-phase delivery; PRD → Technical Design → Implementation Plan → Beads; decided 2026-09-16 by Repository owner |
+| Superseded by | [Lead Project Onboarding Skill design](../design/lead-project-onboarding-skill.md) for the default workspace document, workspace carrier, and workspace-digest requirements only |
+
+> **Supersession note.** This PRD remains the accepted source for Markdown role ownership,
+> semantic headings, additive carriers, asset validation, packaging, and the plugin track. Its
+> requirements to preserve and package a room-owned default workspace protocol are historical:
+> the later repository-owner decision removes that default and its generated room carrier, keeps
+> repository workflow optional and Lead-read, and ships a Lead-only onboarding skill instead.
 
 ## Routing Decision
 
@@ -86,7 +93,7 @@ This initiative first makes the role contract a maintainable, semantically struc
 | REQ-009 | Retire numeric contract identifiers and update contributor and design documentation to use semantic section names. | P1 | `RC-*` and `WP-*` remain only in the one-time migration traceability map; active code, tests, README, contributor guidance, orchestration model, and design notes neither use them as authoring/citation keys nor direct maintainers to removed TypeScript prose maps. |
 | REQ-010 | Provide complete migration traceability while preserving existing statement text and rendered order. | P1 | A reviewed map accounts for every existing `RC-*` clause and `WP-*` protocol section exactly once. Structural merge/split may regroup semantic headings with an explicit rationale, but statement text and its order in each rendered role/workspace document remain byte-identical; any wording, authority, or statement-order change is reviewed separately after Phase 1. |
 | REQ-011 | Conduct a bounded Paseo plugin feasibility evaluation before committing to a supported plugin product. | P1 | The evaluation records results for prompt/config mutation, session environment mutation, duplicate-Lead prevention, creator/parent evidence, plugin ordering, disable/reload behavior, version compatibility, UI/RPC viability, and behavior with no app connected; feasibility artifacts are labeled unsupported and excluded from the published `paseo-room` package. |
-| REQ-012 | Keep the CLI and generated provider configuration as the enforcement and recovery floor throughout feasibility and initial plugin delivery. | P1 | With the plugin absent or disabled, these baseline guarantees remain true: native multi-agent paths stay closed, Peer receives no Paseo tools, each seat retains isolated role homes and credentials, prompt delivery remains additive, and CLI setup/verify/auth/remove behavior remains available under the compatibility claims in the accepted README, `docs/design.md`, and `AGENTS.md`. |
+| REQ-012 | Keep the CLI-generated role and provider configuration as the enforcement and recovery floor throughout feasibility and initial plugin delivery. | P1 | With the plugin absent or disabled, these baseline guarantees remain true: native multi-agent paths stay closed through every required agent and provider surface, Peer receives no Paseo tools, each seat retains isolated role homes and credentials, prompt delivery remains additive, and CLI setup/verify/auth/remove behavior remains available under the compatibility claims in the accepted README, `docs/design.md`, and `AGENTS.md`. |
 | REQ-013 | Produce an explicit plugin go/no-go decision with bounded claims. | P1 | The decision names which conditions can be prevented before creation, which can only be detected/remediated afterward, which remain procedural, the minimum supported Paseo range, and the consequences of plugin disablement. |
 | REQ-014 | If approved, provide an optional room-health and runtime-guard plugin without duplicating the canonical role contract. | P2 | The plugin identifies itself as optional, exposes only verified checks/actions, labels evidence boundaries, and consumes a versioned shared contract artifact or avoids injecting contract text; it does not maintain an independent prose copy. |
 | REQ-015 | If approved, make plugin lifecycle failure visible and safe. | P2 | Install/reload/disable/incompatibility states are visible; hook failures do not silently claim enforcement; disabling or removing the plugin leaves durable CLI-managed controls intact. |

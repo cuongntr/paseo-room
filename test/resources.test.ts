@@ -24,7 +24,7 @@ describe('roleResourceEntries', () => {
     const shared = [join(home, 'skills'), join(home, 'plugins')];
     expect(await roleResourceEntries({
       role: 'supervisor', target: '/room/supervisor', home, names: NAMES, shared,
-      executable: ['plugins'], roomSkill: ROOM_SKILL,
+      executable: ['plugins'], roomSkill: ROOM_SKILL, leadSkillProjection: LEAD_PROJECTION,
     })).toEqual([
       { kind: 'link', path: '/room/supervisor/skills', target: join(home, 'skills') },
       { kind: 'link', path: '/room/supervisor/plugins', target: join(home, 'plugins') },
@@ -53,31 +53,41 @@ describe('roleResourceEntries', () => {
 
   // The room-owned copy owns that name inside the Lead aggregate; the operator's own skill
   // stays exactly where it is, unlinked and unmodified.
-  it('links the room-owned skill rather than an operator skill of the same name', async () => {
-    const home = await operatorHome();
-    await mkdir(join(home, 'skills', ROOM_SKILL_NAME), { recursive: true });
-    const entries = await roleResourceEntries({
-      role: 'lead', target: '/room/lead', home, names: ['skills'], shared: [join(home, 'skills')],
-      executable: [], roomSkill: ROOM_SKILL, leadSkillProjection: LEAD_PROJECTION,
-    });
-    const collision = join(LEAD_PROJECTION, ROOM_SKILL_NAME);
-    expect(entries.filter(entry => entry.path === collision)).toEqual([
-      { kind: 'link', path: collision, target: ROOM_SKILL.source },
-    ]);
-  });
-
-  it('reserves an agent runtime skill bucket for Lead as well as Peer', async () => {
-    const home = await operatorHome();
-    for (const role of ['lead', 'peer'] as const) {
+  it.each([ROOM_SKILL_NAME, 'PASEO-PROJECT-ONBOARDING'])(
+    'links the room-owned skill rather than a case-insensitively colliding operator skill named %s',
+    async operatorName => {
+      const home = await operatorHome();
+      await mkdir(join(home, 'skills', operatorName), { recursive: true });
       const entries = await roleResourceEntries({
-        role, target: `/room/${role}`, home, names: ['skills'], shared: [join(home, 'skills')],
-        executable: [], reservedSkills: ['synced'], roomSkill: ROOM_SKILL,
-        leadSkillProjection: LEAD_PROJECTION,
+        role: 'lead', target: '/room/lead', home, names: ['skills'], shared: [join(home, 'skills')],
+        executable: [], roomSkill: ROOM_SKILL, leadSkillProjection: LEAD_PROJECTION,
       });
-      expect(entries[0]).toMatchObject({ kind: 'managed-dir', reserved: ['synced'] });
-      expect(entries.some(entry => entry.path.endsWith('/synced'))).toBe(false);
-    }
-  });
+      const collision = join(LEAD_PROJECTION, ROOM_SKILL_NAME);
+      expect(entries.filter(entry => entry.path === collision)).toEqual([
+        { kind: 'link', path: collision, target: ROOM_SKILL.source },
+      ]);
+      expect(entries.some(entry => entry.path === join(LEAD_PROJECTION, operatorName)
+        && entry.path !== collision)).toBe(false);
+    },
+  );
+
+  it.each(['synced', 'Synced'])(
+    'reserves an agent runtime skill bucket case-insensitively from operator skill %s',
+    async operatorName => {
+      const home = await operatorHome();
+      await mkdir(join(home, 'skills', operatorName), { recursive: true });
+      for (const role of ['lead', 'peer'] as const) {
+        const entries = await roleResourceEntries({
+          role, target: `/room/${role}`, home, names: ['skills'], shared: [join(home, 'skills')],
+          executable: [], reservedSkills: ['synced'], roomSkill: ROOM_SKILL,
+          leadSkillProjection: LEAD_PROJECTION,
+        });
+        expect(entries[0]).toMatchObject({ kind: 'managed-dir', reserved: ['synced'] });
+        expect(entries.some(entry => entry.kind === 'link'
+          && entry.path.toLowerCase().endsWith('/synced'))).toBe(false);
+      }
+    },
+  );
 
   it('gives Peer an exact non-paseo skills projection, no room skill, and no executable resource', async () => {
     const home = await operatorHome();
@@ -89,6 +99,7 @@ describe('roleResourceEntries', () => {
       shared: [join(home, 'skills'), join(home, 'plugins')],
       executable: ['plugins'],
       roomSkill: ROOM_SKILL,
+      leadSkillProjection: LEAD_PROJECTION,
     });
     expect(entries).toEqual([
       { kind: 'managed-dir', path: '/room/peer/skills', children: ['formatting'], legacyLink: join(home, 'skills') },
@@ -101,7 +112,7 @@ describe('roleResourceEntries', () => {
     await mkdir(join(home, 'skills', 'paseo-help'), { recursive: true });
     expect(await roleResourceEntries({
       role: 'peer', target: '/room/peer', home, names: ['skills'], shared: [join(home, 'skills')], executable: [],
-      roomSkill: ROOM_SKILL,
+      roomSkill: ROOM_SKILL, leadSkillProjection: LEAD_PROJECTION,
     })).toEqual([
       { kind: 'managed-dir', path: '/room/peer/skills', children: [], legacyLink: join(home, 'skills') },
     ]);
@@ -116,7 +127,7 @@ describe('roleResourceEntries', () => {
     expect(shared).toEqual([join(home, 'plugins')]);
     expect(await roleResourceEntries({
       role: 'peer', target: '/room/peer', home, names: NAMES, shared, executable: ['plugins'],
-      roomSkill: ROOM_SKILL,
+      roomSkill: ROOM_SKILL, leadSkillProjection: LEAD_PROJECTION,
     })).toEqual([
       { kind: 'managed-dir', path: '/room/peer/skills', children: [], legacyLink: join(home, 'skills') },
     ]);
@@ -138,7 +149,7 @@ describe('roleResourceEntries', () => {
     const shared = await existingPaths(home, NAMES);
     expect(await roleResourceEntries({
       role: 'supervisor', target: '/room/supervisor', home, names: NAMES, shared, executable: [],
-      roomSkill: ROOM_SKILL,
+      roomSkill: ROOM_SKILL, leadSkillProjection: LEAD_PROJECTION,
     })).toEqual([
       { kind: 'link', path: '/room/supervisor/plugins', target: join(home, 'plugins') },
     ]);

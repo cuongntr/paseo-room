@@ -91,6 +91,7 @@ starts, its exit code is preserved; a signal is returned using the conventional
   AUTHENTICATION.md               # exact per-role login commands; contains no secrets
   room/skills/paseo-project-onboarding/   # Lead-only Agent Skill: draft a repository protocol
     SKILL.md, references/         # procedure plus a scaffold loaded only when the skill runs
+  room/skill-projections/<agent>/lead/     # exact Lead skill aggregate for each seated agent
   plugin/                         # Claude only: trusted creation-time system-prompt append carrier
     paseo-plugin.json             # accepts Paseo >=0.8.0 <0.9.0
     index.server.ts, server/      # exact provider map + generated role contracts
@@ -102,7 +103,7 @@ starts, its exit code is preserved; a signal is returned using the conventional
     AGENTS.md, skills, plugins, hooks.json              → shared resources (Lead/Peer: see below)
   roles/claude/<role>/
     CLAUDE.md                     # your global memory + role instructions (contract omitted with --no-claude-memory-contract)
-    settings.json                 # your settings.json + PASEO_ROOM_ROLE
+    settings.json                 # minimal room-owned env, deny and control-plane policy
     .claude.json                  # seeded once from yours, then owned by Claude
     .credentials.json                # created and owned by Claude after role login, if file-backed
     skills, plugins, commands, hooks, rules, output-styles,
@@ -129,10 +130,11 @@ recursively on your behalf.
 ### How Lead and Peer receive skills
 
 Lead's `skills` remains a symlink, but now points to a room-owned managed aggregate containing
-links to every operator skill plus the room-owned `paseo-project-onboarding` skill. This adds the
-room skill without writing into your agent home, while keeping the role path replaceable by an
-older package during rollback. A same-name operator skill remains untouched but is shadowed in
-the aggregate by the room-owned copy.
+links to every noncolliding operator skill plus the room-owned `paseo-project-onboarding` skill.
+This adds the room skill without writing into your agent home, while keeping the role path
+replaceable by an older package during rollback. An operator skill whose name collides
+case-insensitively remains untouched but is shadowed in the aggregate by the room-owned copy,
+avoiding duplicate names on case-insensitive filesystems.
 
 Peer has no room tools, so the room also stops handing it orchestration surfaces:
 
@@ -177,8 +179,8 @@ and environment-variable names. They never read credential contents, query a key
 a token over the network, or claim OAuth freshness. Authentication findings are warnings and
 do not turn an otherwise valid setup or verify into a failure:
 
-- **configured structurally** — a regular role credential file or supported auth configuration
-  name exists; validity and freshness were not checked;
+- **configured structurally** — a regular role credential file exists; validity and freshness
+  were not checked;
 - **login-required** — no role credential artifact or safely recognizable alternative exists;
 - **legacy-shared-risk** — an older room has a credential symlink, including one whose target
   may now be missing; only its stored link text is read, it is preserved, and the output gives
@@ -213,12 +215,12 @@ argv. No login path reads, copies, links, replaces, validates, or deletes a cred
 
 Codex diagnostics recognize an explicit `cli_auth_credentials_store` of `file`, `ephemeral`,
 `auto`, or `keyring`. An `OPENAI_API_KEY` name in the setup shell does not count as stored role
-auth; Codex's API-key login must create that role's native store. Claude recognizes the
-documented cloud selectors, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY`,
-`CLAUDE_CODE_OAUTH_TOKEN`, and `apiKeyHelper` by name. Pi recognizes a bounded list of built-in
-provider API-key environment names. Names found only in the setup process are ambient and
-unverifiable because their values are not copied into Paseo providers; other ambient provider
-authentication may exist but is not validated.
+auth; Codex's API-key login must create that role's native store. Claude role settings do not
+import operator auth helpers; diagnostics recognize only ambient documented cloud selectors,
+`ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY`, and `CLAUDE_CODE_OAUTH_TOKEN` by name. Pi recognizes a
+bounded list of built-in provider API-key environment names. Names found only in the setup process
+are ambient and unverifiable because their values are not copied into Paseo providers; other
+ambient provider authentication may exist but is not validated.
 
 ## What the room changes
 
@@ -293,13 +295,13 @@ attribute `/mcp` to `source: "extension"` at that same canonical path. Missing, 
 path-escaped or wrongly attributed adapters fail closed. The probe and setup do not write the
 operator or planned role homes.
 
-Each seat is also pinned at the Paseo provider level, because a provider entry outranks the
-agent's own configuration:
+Each seat combines generated agent configuration with Paseo provider pins. Provider fields are
+still required where Paseo launch state outranks the agent's own configuration:
 
 | Pin | Applies to | Why |
 |---|---|---|
 | `params: {sandbox_mode, approval_policy}` | Codex | Without it Paseo sends its own mode preset (default `auto-review`) to the Codex app-server, and that outranks the generated `config.toml`. |
-| `disallowedTools` for `Task`, `Agent`, `Workflow`, coordination, task-list, cron and team tools | Claude | Blocks legacy/current subagents, dynamic workflows, cross-session coordination and agent teams. |
+| provider `disallowedTools` + role `permissions.deny` for `Task`, `Agent`, `Workflow`, coordination, task-list, cron and team tools | Claude | Blocks legacy/current subagents, dynamic workflows, cross-session coordination and agent teams at both Paseo and Claude's role settings. |
 | `disableAgentView: true` + `CLAUDE_CODE_DISABLE_AGENT_VIEW=1` | Claude | Disables Claude's separate background-agent control plane across settings scopes and at launch. |
 | `disableWorkflows: true` + `CLAUDE_CODE_DISABLE_WORKFLOWS=1` | Claude | Disables dynamic workflows through every entry point, beyond denying the `Workflow` tool. |
 | `crossSessionInbound: "refuse"` | Claude | Prevents another Claude session from injecting a turn into a room seat. |
@@ -309,7 +311,8 @@ agent's own configuration:
 `verify` compares each provider's `command`, `env`, `paseoTools` and pins against what the
 room would write, and fails if one has been dropped — a pin that can be silently removed is
 not a guarantee. The `env` map is compared whole rather than as a subset, because an added key
-can re-enable exactly what a pin closes. Unrelated top-level provider fields stay yours.
+can re-enable exactly what a pin closes. Unrelated top-level provider fields stay yours. Claude
+role `settings.json` is compared separately as a managed file, including `permissions.deny`.
 
 It also saves one **agent profile** per seat, which is what the Paseo picker lists under
 Profiles. A profile is a preset, not a constraint: it decides where a seat *starts*.
@@ -339,10 +342,12 @@ stale room-owned value from an existing Pi profile. Pi has no sandbox or approva
 its permissive runtime is necessary for headless operation but grants no additional authority.
 
 Claude starts in Paseo's `bypassPermissions` mode, while Codex starts in its equivalent
-`full-access` mode. Claude deny rules still apply in bypass mode, so native orchestration
-stays unavailable. The room does not write `permissions.defaultMode` to `settings.json`:
-Paseo passes the profile's mode as a command-line session setting, which outranks that file.
-The two Claude disable environment keys are pinned in both the provider and generated
+`full-access` mode. Claude deny rules still apply in bypass mode, so the canonical native-tool
+list is written to both provider `disallowedTools` and every role's `settings.json` under
+`permissions.deny`. The role file is minimal, deterministic room policy: it does not copy operator
+env, hooks, permissions, or auth helpers. The room does not write `permissions.defaultMode`:
+Paseo passes the profile's mode as a command-line session setting, which outranks that file. The two
+Claude disable environment keys are likewise pinned in both the provider and generated
 `settings.json`, because Claude applies settings-file environment values after launch values.
 The generated top-level `disableAgentView` and `disableWorkflows` settings are also forced to
 `true`; their restrictive value cannot be weakened by another ordinary settings scope.
@@ -377,9 +382,10 @@ provider ids or claim that the daemon enforces this procedural eligibility check
 
 ## Keeping the room current
 
-Role homes are generated once, at `setup` time. After you edit `~/.codex/config.toml`,
-`~/.claude/settings.json`, or Pi's `settings.json` / `APPEND_SYSTEM.md`, run setup again to
-fold the change into every seat. The same applies after upgrading `paseo-room`; a release
+Role homes are generated once, at `setup` time. After you edit `~/.codex/config.toml` or Pi's
+`settings.json` / `APPEND_SYSTEM.md`, run setup again to fold the change into every seat. Claude's
+operator `settings.json` is not an input to its minimal room settings. The same applies after
+upgrading `paseo-room`; a release
 that changes generated headings or prompt assets produces expected one-time managed-file
 drift.
 
@@ -469,8 +475,9 @@ vocabulary for Lead and Peer, and exactly one body per role. TypeScript selects 
 - **Lead** is the durable owner of one project across turns. It owns framing, decomposition,
   routing, integration and technical acceptance. A brief states the outcome and the evidence
   that settles it rather than pre-solving the work; any plan or file list in it is provisional.
-  One moving write scope has exactly one owner, and at most one Peer is writable at a time.
-  Room tools: on.
+  One moving write scope has exactly one owner, and at most one Peer is writable at a time. It
+  explicitly requests native Paseo completion/error/permission notification for Peer creation and
+  every background follow-up, then waits for events rather than polling. Room tools: on.
 - **Peer** owns one bounded assignment — writable inside an assigned scope, or read-only
   against a named candidate, question or area — under exactly one disposition Lead names in the
   brief (Engineer, Architect, Reviewer or Scout), forms its own technical position from the code
@@ -545,8 +552,9 @@ is a scaffold loaded while the skill runs, never appended to a session.
 
 Lead's visible skill inventory is therefore an exact room-owned aggregate behind the role-home
 symlink: one link per skill in your own agent home, plus a link to the room's skill. Your own home
-is never modified, and an operator skill named `paseo-project-onboarding` is left exactly where
-it is — the room-owned copy owns that name inside the aggregate only.
+is never modified, and an operator skill whose name matches `paseo-project-onboarding` under a
+case-insensitive comparison is left exactly where it is — the room-owned copy owns that name
+inside the aggregate only.
 
 ## Working the room
 

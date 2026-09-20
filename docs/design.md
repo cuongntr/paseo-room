@@ -27,7 +27,7 @@ a task, a workspace or a correction. Every native path is therefore closed, per 
 | Agent | Mechanism |
 |---|---|
 | Codex | `[agents].enabled = false`, `features.multi_agent = false`, `features.multi_agent_v2 = false` — in the top-level table **and** in an active profile, which outranks it — **and** a generated model catalog with `multi_agent_version` nulled |
-| Claude | provider-level `disallowedTools` blocks legacy `Task`, current `Agent`, `Workflow`, cross-session, shared task-list, cron and team tools; environment pins close background Agent View and dynamic workflows; `crossSessionInbound: "refuse"` rejects messages from other Claude sessions; the operator's `agents/` and `workflows/` directories are *not* linked into a seat |
+| Claude | one canonical deny list is written to provider `disallowedTools` and each role's `permissions.deny`, blocking legacy `Task`, current `Agent`, `Workflow`, cross-session, shared task-list, cron and team tools; environment pins close background Agent View and dynamic workflows; `crossSessionInbound: "refuse"` rejects messages from other Claude sessions; the operator's `agents/` and `workflows/` directories are *not* linked into a seat |
 | Pi | `--no-extensions` disables extension discovery, `--extension` loads only the canonical operator-installed MCP adapter in addition to Paseo's own temporary integration extension, and `--no-approve` suppresses project-local executable resources; the appended runtime capsule forbids spawning or managing agents through Pi, shell or extensions |
 
 The catalog scrub is not redundant with the feature flags: bundled model metadata can still
@@ -88,8 +88,8 @@ Resources whose contents *execute* are not shared with Peer at all: Codex `plugi
 `hooks.json`, Claude `plugins`, `commands` and `hooks`, and Pi `prompts` (Pi's slash
 commands). A plugin does not only add a command — it can contribute subagents, MCP servers
 and hooks — and whether every plugin-contributed subagent path is stopped by Claude's
-`disallowedTools` is unproven. The resource is withheld rather than the question answered,
-because Peer has no room tools and no use for any of it.
+provider and role-settings deny rules is unproven. The resource is withheld rather than the
+question answered, because Peer has no room tools and no use for any of it.
 
 `skills` is the one resource projected child by child instead of aliased, for two different
 reasons. For **Peer**, the projection is a filter: its children are symlinks to each operator
@@ -101,9 +101,11 @@ aggregate, plus one link to the `paseo-project-onboarding` source under
 the operator directory could not carry the extra child without writing into the operator's own
 home, which the room never does.
 
-The single exception in Lead's projection is an exact name collision: an operator skill also
-called `paseo-project-onboarding` is not linked, because the room-owned copy owns that name
-inside the aggregate. The operator's own skill is untouched where it lives.
+The single exception in Lead's projection is a case-insensitive name collision: an operator
+skill whose name matches `paseo-project-onboarding` under that comparison is not linked, because
+the room-owned copy owns that name inside the aggregate. The operator's own skill is untouched
+where it lives. The case-insensitive comparison prevents duplicate logical children on default
+macOS filesystems.
 
 Exactness is the point of making each projection directory a path the room owns by name — adding
 or deleting an operator skill is drift `verify` reports and `setup --apply` reconciles, instead
@@ -116,8 +118,8 @@ permits on disk, which is deliberately very little.
 One class of name inside that directory is reserved rather than projected: a name the agent's
 own runtime writes there. Claude downloads its skill bucket into `skills/synced` of whichever
 home it runs with, so in every projected directory, Lead's as well as Peer's, the room both
-skips it when projecting — a link would alias the role's state onto the operator's — and
-excludes it from reconciliation, because an exactly owned
+skips a case-insensitive match when projecting — a link would alias the role's state onto the
+operator's — and excludes the reserved name from reconciliation, because an exactly owned
 directory would otherwise see the agent's own state as a stale child. The room refuses to
 delete a child directory it did not generate, so before this was reserved a seat that had run
 Claude once made every later `setup --apply` fail on that path.
@@ -207,9 +209,10 @@ directly instead.
 
 The old generated `~/.paseo-room/room/WORKSPACE_PROTOCOL.md` is declared **absent**, so an
 upgrade removes it — and only when it is the regular file the room formerly wrote. Anything else
-at that path is refused rather than deleted (§4a). Nothing is ever written into a repository,
-`AGENTS.md` included, and task briefs are Lead's job at dispatch time rather than this tool's
-concern.
+at that path is refused rather than deleted (§4a). The CLI itself never writes into a repository,
+`AGENTS.md` included. Only Lead executing the onboarding skill under an explicit Human apply
+instruction may write the root protocol; task briefs remain Lead's job at dispatch time rather
+than this tool's concern.
 
 ## 4. Why a separate home per seat
 
@@ -279,17 +282,23 @@ subagent definitions into every seat and reopen §2. `workflows/` is absent for 
 reason. Claude's current built-in tool name is `Agent`, while older releases used `Task`;
 both names stay denied. Current Claude also exposes `Workflow` for scripts that orchestrate
 many subagents; cross-session and agent-team tools are denied too, including every shared
-task-list and cron tool that teammates retain. Agent View and dynamic workflows also have
-entry points beyond model tool calls, so the room pins the documented
+task-list and cron tool that teammates retain. The same canonical bare-name list is emitted as
+Paseo provider `disallowedTools` and as `permissions.deny` in every generated Claude role
+`settings.json`; neither carrier substitutes for the other. That settings file is deliberately
+minimal room policy rather than a copy of the operator's file: operator env, hooks, permissions,
+and auth helpers are not imported. Agent View and dynamic workflows also have entry points beyond
+model tool calls, so the room pins the documented
 `CLAUDE_CODE_DISABLE_AGENT_VIEW=1` and `CLAUDE_CODE_DISABLE_WORKFLOWS=1` environment controls
 in both the provider launch environment and generated `settings.env`. The duplication is
-intentional: Claude applies settings-file environment values after inherited launch values,
-so an operator value of `0` would otherwise undo the provider pin. Generated settings also
+intentional: Claude applies settings-file environment values after inherited launch values, so
+the isolated home must carry the agent-native closure even though no operator env is imported.
+Generated settings also
 force `disableAgentView: true` and `disableWorkflows: true`. Anthropic defines these disable
 values as restrictive: another ordinary settings scope or paired enable value cannot turn
 the feature back on. That closes the higher-precedence project/local-settings case too.
-Bare-name deny entries remove tools from Claude's context and still apply under
-`bypassPermissions`.
+Claude evaluates deny before ask or allow. Bare-name deny entries remove tools from Claude's
+context and still apply under `bypassPermissions`. Managed settings bytes and provider fields are
+both compared by `verify`, so dropping either deny carrier is drift.
 
 Cross-session messaging is bidirectional. Denying `ListAgents` and `SendMessage` stops a room
 seat sending, but does not stop another Claude session delivering a message to it; in bypass
@@ -306,9 +315,10 @@ separate secure-storage location override, so each generated settings file and p
 operator and daemon ambient values. Because that override is not yet in Anthropic's stable
 documentation, diagnostics still classify Keychain state as unverifiable rather than claiming
 isolation or compatibility with older runtimes. The room does not query, copy or re-key those
-secrets. It recognizes only safely inferable auth method names:
-the documented cloud-provider selectors, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY`,
-`CLAUDE_CODE_OAUTH_TOKEN`, and `apiKeyHelper`. Operators use one of those methods or run
+secrets. Because role settings do not import operator auth helpers, diagnostics recognize only
+safely inferable ambient auth method names: the documented cloud-provider selectors,
+`ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY`, and `CLAUDE_CODE_OAUTH_TOKEN`. Their values are never
+read or copied. Operators use one of those methods or run
 `CLAUDE_CONFIG_DIR=<role-home> CLAUDE_SECURESTORAGE_CONFIG_DIR=<role-home> claude auth login`
 per role, directly from the guide or through `paseo-room auth login claude <role>`.
 Authentication status and token validity are never probed automatically.
@@ -341,9 +351,13 @@ operator-supplied binary override.
 
 Before reading role credential metadata or planning managed writes, setup and verify use
 `lstat` on each existing room-relative directory ancestor. A symlink or non-directory at the
-room root, shared directory, roles directory, agent directory, or role home fails structural
-safety without traversing it. This prevents a pre-existing alias from redirecting generated
-configuration or a role credential pathname outside the room.
+room root, shared directory, room skill source or references directory, skill-projection root,
+agent projection directory, Lead aggregate, roles directory, agent directory, or role home fails
+structural safety without traversing it. This prevents a pre-existing alias from redirecting
+generated configuration, skill projection, or a role credential pathname outside the room.
+Explicit `remove` retains its existing top-level path guard but skips these nested generated-path
+checks: recursive removal unlinks a nested symlink rather than following it, so a broken room
+remains removable without touching the link target.
 
 Pi's role `settings.json` keeps operator preferences but removes top-level `packages` and
 `extensions`. A role must not auto-install packages into its generated home or discover an
@@ -573,6 +587,13 @@ workspace, mode or parent is not eligible for a brief. The Peer remains one fres
 one brief and has no room tools or orchestration path. The brief also names exactly one
 disposition — Engineer, Architect, Reviewer or Scout — which is an assignment mandate, not a
 second profile or a seat identity.
+
+Lead explicitly sets `notifyOnFinish: true` on every agent-scoped Peer creation and every
+background follow-up. Paseo notification subscriptions are per prompt: setting the option on one
+prompt does not subscribe Lead to later prompts sent to that Peer. This preserves event-driven
+waiting for completion, error, and permission events without a persistent wake plugin, broad opt-in labels,
+or polling. The native notification carries evidence only; it does not perform technical
+acceptance or change either seat's authority.
 
 Paseo currently does not retain `profileId` on an agent session; compact `list_agents`
 results also omit `workspaceId` and `currentModeId`, which is why status inspection is a

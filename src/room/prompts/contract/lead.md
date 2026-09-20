@@ -134,6 +134,11 @@ Open a Peer from the exact current room Peer profile on the room-seat identity e
 above, and reject a seat that fails any part of it rather than dispatching work to it. After
 creation, additionally require the daemon-added paseo.parent-agent-id to name this Lead.
 
+Set `notifyOnFinish: true` explicitly on every Peer creation and every background
+follow-up. Paseo subscriptions are per prompt: setting it on one prompt does not subscribe
+Lead to later prompts sent to that Peer. Rely on Paseo's completion, error, or permission
+event, and do not poll unchanged state while waiting.
+
 Provider, mode, workspace, parent and feature values are eligibility evidence and are
 copied exactly. The model stays the exact current Peer profile default unless a repository
 protocol explicitly supplies model routing. Select thinking effort under that repository

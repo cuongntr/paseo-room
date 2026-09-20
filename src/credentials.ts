@@ -85,11 +85,6 @@ export function presentNames(names: ReadonlySet<string>, supported: readonly str
   return supported.filter(name => names.has(name));
 }
 
-export function configuredByNamesCheck(id: string, agent: string, role: string, names: readonly string[]): Check {
-  return warn(`${id}.configured-structurally`,
-    `${agent} ${role} auth: configured structurally; ${names.join(', ')} ${names.length === 1 ? 'is' : 'are'} present by name. Values, token validity, and freshness were not checked.`);
-}
-
 export function ambientNamesCheck(id: string, agent: string, role: string, names: readonly string[]): Check {
   return warn(`${id}.ambient-auth-unverifiable`,
     `${agent} ${role} auth: ambient auth unverifiable; ${names.join(', ')} ${names.length === 1 ? 'is' : 'are'} present by name in the setup process. paseo-room does not copy credential values into providers, so availability to the Paseo-launched role, token validity, and freshness were not checked.`);

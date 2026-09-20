@@ -1,8 +1,12 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { runInNewContext } from 'node:vm';
 import { describe, expect, it } from 'vitest';
+import { DiagnosticCategory, ModuleKind, ScriptTarget, transpileModule } from 'typescript';
 import { remove, setup, verify } from '../src/commands.js';
-import { CLAUDE_CARRIER_PLUGIN_ID, renderClaudeCarrierContract } from '../src/plugin.js';
+import {
+  CLAUDE_CARRIER_PLUGIN_ID, renderClaudeCarrierContract, typescriptTemplateLiteral,
+} from '../src/plugin.js';
 import { contractDigest, renderInstructions } from '../src/room/instructions.js';
 import { transformAgentCreate } from '../src/plugin-assets/index.server.js';
 import { composeSystemPrompt, contractMarker } from '../src/plugin-assets/server/carrier.js';
@@ -18,15 +22,27 @@ describe('Claude contract carrier composition', () => {
     );
   });
 
-  it('generates exact per-role documents from the canonical renderer', async () => {
+  it('generates readable exact per-role documents from the canonical renderer', async () => {
     const source = renderClaudeCarrierContract(['lead', 'peer']);
     expect(source).toContain(`export const GENERATION = ${JSON.stringify(contractDigest())}`);
-    expect(source).toContain(JSON.stringify('claude-lead'));
-    expect(source).toContain(JSON.stringify(renderInstructions('lead')));
-    expect(source).toContain(JSON.stringify('claude-peer'));
-    expect(source).toContain(JSON.stringify(renderInstructions('peer')));
+    expect(source).toContain(`${JSON.stringify('claude-lead')}: ${typescriptTemplateLiteral(renderInstructions('lead'))}`);
+    expect(source).toContain(`${JSON.stringify('claude-peer')}: ${typescriptTemplateLiteral(renderInstructions('peer'))}`);
+    expect(source).toContain('`# Lead role instructions\n');
+    expect(source).not.toContain(JSON.stringify(renderInstructions('lead')));
     expect(source).not.toContain('claude-supervisor');
 
+    const escaped = typescriptTemplateLiteral('path\\name `code` ${value}\nnext');
+    expect(escaped).toContain('path\\\\name');
+    expect(escaped).toContain('\\`code\\`');
+    expect(escaped).toContain('\\${value}');
+    expect(escaped).toContain('\nnext');
+    expect(runInNewContext(escaped)).toBe('path\\name `code` ${value}\nnext');
+
+    const diagnostics = transpileModule(source, {
+      compilerOptions: { module: ModuleKind.NodeNext, target: ScriptTarget.ES2022 },
+      reportDiagnostics: true,
+    }).diagnostics ?? [];
+    expect(diagnostics.filter(diagnostic => diagnostic.category === DiagnosticCategory.Error)).toEqual([]);
     for (const path of ['index.server.ts', 'server/carrier.ts', 'server/contract.ts']) {
       const asset = await readFile(join(import.meta.dirname, '../src/plugin-assets', path), 'utf8');
       const imports = [...asset.matchAll(/from\s+['"]([^'"]+)['"]/g)].map(match => match[1]);
@@ -71,7 +87,7 @@ describe('Claude contract carrier lifecycle', () => {
       requirements: { paseo: '>=0.8.0 <0.9.0' },
     });
     await expect(readFile(join(fixture.roomHome, 'plugin/server/contract.ts'), 'utf8'))
-      .resolves.toContain(JSON.stringify(renderInstructions('lead')));
+      .resolves.toContain(typescriptTemplateLiteral(renderInstructions('lead')));
     expect((await verify({ env: fixture.env, factory: fakeClient(daemon) })).outcome).toBe('ok');
 
     const plugin = daemon.plugins?.[0];
@@ -101,7 +117,7 @@ describe('Claude contract carrier lifecycle', () => {
     expect(fileDrift.checks.some(check => check.id === 'room.files' && check.status === 'fail')).toBe(true);
     expect((await setup(options)).outcome).toBe('ok');
     expect(daemon.pluginReloads).toBe(1);
-    await expect(readFile(contractPath, 'utf8')).resolves.toContain(JSON.stringify(renderInstructions('lead')));
+    await expect(readFile(contractPath, 'utf8')).resolves.toContain(typescriptTemplateLiteral(renderInstructions('lead')));
 
     daemon.failNextPluginRemove = true;
     await expect(setup({ ...options, agents: ['codex'] })).rejects.toThrow('synthetic plugin remove failure');
@@ -175,7 +191,7 @@ describe('Claude memory carrier selection', () => {
     expect(suppressed.checks.some(check => check.id === 'claude.memory-contract' && check.status === 'warn')).toBe(true);
     // The plugin is still the strong carrier and still carries the full contract.
     await expect(readFile(join(fixture.roomHome, 'plugin/server/contract.ts'), 'utf8'))
-      .resolves.toContain(JSON.stringify(renderInstructions('lead')));
+      .resolves.toContain(typescriptTemplateLiteral(renderInstructions('lead')));
 
     // The choice is recorded, so verify compares against it without being told again.
     const marker = JSON.parse(await readFile(join(fixture.roomHome, 'room.json'), 'utf8')) as {

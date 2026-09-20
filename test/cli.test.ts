@@ -1,5 +1,5 @@
 import { lstat, mkdir, readdir, readFile, readlink, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { parse } from 'smol-toml';
 import { describe, expect, it } from 'vitest';
 import { renderRoleMemory } from '../src/agents/claude.js';
@@ -441,9 +441,12 @@ describe('Pi rooms', () => {
 
   it('pins Claude secure storage to each role home despite operator and ambient overrides', async () => {
     const fixture = await makeFixture();
-    await writeFile(join(fixture.home, '.claude/settings.json'), JSON.stringify({
-      env: { CLAUDE_SECURESTORAGE_CONFIG_DIR: '/operator/shared-auth' },
-    }));
+    const operatorSettings = JSON.stringify({
+      env: { CLAUDE_SECURESTORAGE_CONFIG_DIR: '/operator/shared-auth', OPERATOR_ONLY: '1' },
+      hooks: { SessionStart: [] }, apiKeyHelper: 'operator-helper',
+      permissions: { allow: ['Agent'], deny: ['Bash(rm *)'] },
+    });
+    await writeFile(join(fixture.home, '.claude/settings.json'), operatorSettings);
     const daemon = emptyDaemon();
     await run(['setup', '--agent', 'claude', '--apply'], {
       ...fixture.env, CLAUDE_SECURESTORAGE_CONFIG_DIR: '/ambient/shared-auth',
@@ -453,10 +456,22 @@ describe('Pi rooms', () => {
       const provider = daemon.providers[`claude-${role}`] as { env: Record<string, string> };
       expect(provider.env.CLAUDE_SECURESTORAGE_CONFIG_DIR).toBe(home);
       const settings = JSON.parse(await readFile(join(home, 'settings.json'), 'utf8')) as {
-        env: Record<string, string>;
+        env: Record<string, string>; permissions: { deny: string[] };
       };
-      expect(settings.env.CLAUDE_SECURESTORAGE_CONFIG_DIR).toBe(home);
+      expect(Object.keys(settings).sort()).toEqual([
+        'crossSessionInbound', 'disableAgentView', 'disableWorkflows', 'env', 'permissions',
+      ]);
+      expect(settings.env).toEqual({
+        CLAUDE_CODE_DISABLE_AGENT_VIEW: '1',
+        CLAUDE_CODE_DISABLE_WORKFLOWS: '1',
+        PASEO_ROOM_ROLE: role,
+        CLAUDE_SECURESTORAGE_CONFIG_DIR: home,
+      });
+      expect(settings.permissions).toEqual({
+        deny: (daemon.providers[`claude-${role}`] as { disallowedTools: string[] }).disallowedTools,
+      });
     }
+    expect(await readFile(join(fixture.home, '.claude/settings.json'), 'utf8')).toBe(operatorSettings);
   });
 
   it('removes a stale owned modeId from Pi profiles while preserving operator tuning', async () => {
@@ -572,6 +587,53 @@ describe('remove safety', () => {
     }
   });
 
+  it('fails before traversing a symlink at any room-skill directory layer', async () => {
+    const seams = [
+      'room/skills',
+      `room/skills/${ROOM_SKILL_NAME}`,
+      `room/skills/${ROOM_SKILL_NAME}/references`,
+      'room/skill-projections',
+      'room/skill-projections/codex',
+      'room/skill-projections/codex/lead',
+    ] as const;
+    for (const [index, seam] of seams.entries()) {
+      const fixture = await makeFixture();
+      const external = join(fixture.home, `external-room-skill-${String(index)}`);
+      const path = join(fixture.roomHome, seam);
+      await mkdir(external, { recursive: true });
+      await writeFile(join(external, 'sentinel'), seam);
+      await mkdir(dirname(path), { recursive: true });
+      await symlink(external, path);
+
+      const result = await run(['setup', '--apply'], fixture.env, emptyDaemon());
+
+      expect(result.code).toBe(1);
+      expect(result.out).toContain(`Refusing to traverse ${path}`);
+      expect(result.out).toContain('every existing room directory ancestor must be a real directory');
+      expect(await readdir(external)).toEqual(['sentinel']);
+      expect(await readFile(join(external, 'sentinel'), 'utf8')).toBe(seam);
+    }
+  });
+
+  it('removes a broken room without following a nested skill-source symlink', async () => {
+    const fixture = await makeFixture();
+    const daemon = emptyDaemon();
+    expect((await run(['setup', '--apply'], fixture.env, daemon)).code).toBe(0);
+    const source = join(fixture.roomHome, 'room/skills', ROOM_SKILL_NAME);
+    const external = join(fixture.home, 'external-remove-target');
+    await rm(source, { recursive: true });
+    await mkdir(external, { recursive: true });
+    await writeFile(join(external, 'sentinel'), 'keep');
+    await symlink(external, source);
+
+    const result = await run(['remove', '--apply'], fixture.env, daemon);
+
+    expect(result.code).toBe(0);
+    await expect(stat(fixture.roomHome)).rejects.toThrow();
+    expect(await readdir(external)).toEqual(['sentinel']);
+    expect(await readFile(join(external, 'sentinel'), 'utf8')).toBe('keep');
+  });
+
   it('refuses to delete a room home that contains the user home', async () => {
     const fixture = await makeFixture();
     const daemon = emptyDaemon();
@@ -585,7 +647,7 @@ describe('remove safety', () => {
   });
 });
 
-describe('provider-level pins', () => {
+describe('runtime enforcement pins', () => {
   it('pins Codex sandbox and approval so Paseo mode presets cannot outrank the config', async () => {
     const fixture = await makeFixture();
     const daemon = emptyDaemon();
@@ -595,22 +657,27 @@ describe('provider-level pins', () => {
     }
   });
 
-  it('denies Claude native orchestration tools so Paseo stays the only control plane', async () => {
+  it('denies Claude native orchestration tools in both role settings and Paseo providers', async () => {
     const fixture = await makeFixture();
     const daemon = emptyDaemon();
+    const denied = [
+      'Task', 'Agent', 'Workflow', 'ListAgents', 'SendMessage', 'TeamCreate', 'TeamDelete',
+      'TaskCreate', 'TaskGet', 'TaskList', 'TaskUpdate',
+      'CronCreate', 'CronDelete', 'CronList',
+    ];
     await run(['setup', '--agent', 'claude', '--apply'], fixture.env, daemon);
-    for (const id of ['claude-supervisor', 'claude-lead', 'claude-peer']) {
-      expect(daemon.providers[id]).toMatchObject({
+    for (const role of ['supervisor', 'lead', 'peer']) {
+      expect(daemon.providers[`claude-${role}`]).toMatchObject({
         env: {
           CLAUDE_CODE_DISABLE_AGENT_VIEW: '1',
           CLAUDE_CODE_DISABLE_WORKFLOWS: '1',
         },
-        disallowedTools: [
-          'Task', 'Agent', 'Workflow', 'ListAgents', 'SendMessage', 'TeamCreate', 'TeamDelete',
-          'TaskCreate', 'TaskGet', 'TaskList', 'TaskUpdate',
-          'CronCreate', 'CronDelete', 'CronList',
-        ],
+        disallowedTools: denied,
       });
+      const settings = JSON.parse(await readFile(
+        join(fixture.roomHome, `roles/claude/${role}/settings.json`), 'utf8',
+      )) as { permissions: { deny: string[] } };
+      expect(settings.permissions.deny).toEqual(denied);
     }
   });
 
@@ -635,6 +702,40 @@ describe('provider-level pins', () => {
     const verified = await run(['verify'], fixture.env, daemon);
     expect(verified.code).toBe(1);
     expect(verified.out).toContain('Paseo providers are missing or differ');
+  });
+
+  it('verify detects either Claude deny drift and setup restores minimal role settings', async () => {
+    const fixture = await makeFixture();
+    const daemon = emptyDaemon();
+    await run(['setup', '--agent', 'claude', '--apply'], fixture.env, daemon);
+    const path = join(fixture.roomHome, 'roles/claude/lead/settings.json');
+    const settings = JSON.parse(await readFile(path, 'utf8')) as {
+      env: Record<string, string>; permissions: { deny: string[]; allow?: string[] }; hooks?: unknown;
+    };
+    settings.permissions.deny = settings.permissions.deny.filter(tool => tool !== 'Agent');
+    settings.permissions.allow = ['Agent'];
+    settings.env.OPERATOR_ONLY = '1';
+    settings.hooks = { SessionStart: [] };
+    await writeFile(path, JSON.stringify(settings, null, 2) + '\n');
+
+    const verified = await run(['verify'], fixture.env, daemon);
+    expect(verified.code).toBe(1);
+    expect(verified.out).toContain('managed role file is missing or outdated');
+
+    expect((await run(['setup', '--agent', 'claude', '--apply'], fixture.env, daemon)).code).toBe(0);
+    const repaired = JSON.parse(await readFile(path, 'utf8')) as {
+      env: Record<string, string>; permissions: { deny: string[]; allow?: string[] }; hooks?: unknown;
+    };
+    expect(repaired.permissions.deny).toContain('Agent');
+    expect(repaired.permissions.allow).toBeUndefined();
+    expect(repaired.env.OPERATOR_ONLY).toBeUndefined();
+    expect(repaired.hooks).toBeUndefined();
+
+    const provider = daemon.providers['claude-lead'] as { disallowedTools: string[] };
+    provider.disallowedTools = provider.disallowedTools.filter(tool => tool !== 'Agent');
+    const providerVerified = await run(['verify'], fixture.env, daemon);
+    expect(providerVerified.code).toBe(1);
+    expect(providerVerified.out).toContain('Paseo providers are missing or differ');
   });
 
   it('verify detects each vendor role-home environment drifting from its generated home', async () => {
@@ -843,18 +944,21 @@ describe('role resource projection', () => {
       .toContain('already up to date');
   });
 
-  // The same-name collision resolves to the room-owned copy, and the operator copy is untouched.
-  it('links the room-owned skill over an operator skill of the same name', async () => {
+  // A case-insensitive collision resolves to the room-owned copy, and the operator copy is untouched.
+  it('links the room-owned skill over a case-insensitively colliding operator skill', async () => {
     const fixture = await makeFixture();
     await operatorResources(fixture.home);
-    const operatorCopy = join(fixture.home, '.codex/skills', ROOM_SKILL_NAME);
+    const operatorName = 'PASEO-PROJECT-ONBOARDING';
+    const operatorCopy = join(fixture.home, '.codex/skills', operatorName);
     await mkdir(operatorCopy, { recursive: true });
     await writeFile(join(operatorCopy, 'SKILL.md'), '# operator copy\n');
     const daemon = emptyDaemon();
 
     expect((await run(['setup', '--apply'], fixture.env, daemon)).code).toBe(0);
-    const link = join(fixture.roomHome, 'roles/codex/lead/skills', ROOM_SKILL_NAME);
+    const skills = join(fixture.roomHome, 'roles/codex/lead/skills');
+    const link = join(skills, ROOM_SKILL_NAME);
     expect(await readlink(link)).toBe(join(fixture.roomHome, 'room/skills', ROOM_SKILL_NAME));
+    expect(await readdir(skills)).not.toContain(operatorName);
     expect(await readFile(join(link, 'SKILL.md'), 'utf8')).not.toContain('operator copy');
     expect(await readFile(join(operatorCopy, 'SKILL.md'), 'utf8')).toBe('# operator copy\n');
     expect((await run(['verify', '--json'], fixture.env, daemon)).code).toBe(0);

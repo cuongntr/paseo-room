@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { parse } from 'smol-toml';
 import { describe, expect, it } from 'vitest';
 import { codexAgent, codexCredentialStore } from '../src/agents/codex.js';
-import { claudeAuthMethodNames, claudeCredentialDiagnostic } from '../src/agents/claude.js';
+import { claudeCredentialDiagnostic } from '../src/agents/claude.js';
 import { piCredentialDiagnostic } from '../src/agents/pi.js';
 import { inspectCredentialPath, roleCommand } from '../src/credentials.js';
 import { resolveLayout, roleHome } from '../src/layout.js';
@@ -85,33 +85,24 @@ describe('Codex credential diagnostics', () => {
 });
 
 describe('Claude credential diagnostics', () => {
-  it('recognizes supported environment and settings names only', () => {
-    const names = claudeAuthMethodNames(JSON.stringify({
-      apiKeyHelper: 'secret-command', env: { CLAUDE_CODE_USE_BEDROCK: '1', ANTHROPIC_API_KEY: 'secret' },
-    }), new Set(['CLAUDE_CODE_OAUTH_TOKEN']));
-    expect(names).toEqual(expect.arrayContaining([
-      'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_USE_BEDROCK', 'ANTHROPIC_API_KEY', 'apiKeyHelper',
-    ]));
-    expect(names).not.toContain('secret-command');
-    expect(names).not.toContain('secret');
-  });
-
   it('reports file, macOS keychain, and environment states conservatively', async () => {
     const fixture = await makeFixture();
     const layout = resolveLayout({}, fixture.env);
     const home = roleHome(layout, 'claude', 'lead');
     await mkdir(home, { recursive: true });
     await writeFile(join(home, '.credentials.json'), '{not-json');
-    expect((await claudeCredentialDiagnostic(layout, 'lead', undefined, 'linux')).checks[0]?.id)
+    expect((await claudeCredentialDiagnostic(layout, 'lead', 'linux')).checks[0]?.id)
       .toContain('diverged-file-preserve');
 
     const missingFixture = await makeFixture();
     const missingLayout = resolveLayout({}, missingFixture.env);
-    expect((await claudeCredentialDiagnostic(missingLayout, 'peer', undefined, 'darwin')).checks[0]?.id)
+    expect((await claudeCredentialDiagnostic(missingLayout, 'peer', 'darwin')).checks[0]?.id)
       .toContain('native-keyring-unverifiable');
+    expect((await claudeCredentialDiagnostic(missingLayout, 'peer', 'linux')).checks[0]?.id)
+      .toContain('login-required');
 
     const envLayout = resolveLayout({}, { ...missingFixture.env, ANTHROPIC_AUTH_TOKEN: 'dummy-never-read' });
-    const envCheck = (await claudeCredentialDiagnostic(envLayout, 'peer', undefined, 'linux')).checks[0];
+    const envCheck = (await claudeCredentialDiagnostic(envLayout, 'peer', 'linux')).checks[0];
     expect(envCheck?.id).toContain('ambient-auth-unverifiable');
     expect(envCheck?.message).toContain('ANTHROPIC_AUTH_TOKEN');
     expect(envCheck?.message).not.toContain('dummy-never-read');

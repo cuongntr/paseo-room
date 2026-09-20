@@ -127,13 +127,20 @@ describe('role instructions', () => {
     expect(supervisor).not.toContain(ROOM_SKILL_NAME);
   });
 
-  it('keeps Lead project ownership, hard writer limits, and technical acceptance durable', () => {
+  it('keeps Lead project ownership, hard writer limits, event-driven Peer wake, and technical acceptance durable', () => {
     const lead = renderInstructions('lead');
     expect(lead).toContain('Lead owns one project across turns');
     expect(lead).toContain('at most one active writable Peer across the project at a time');
     expect(lead).toContain('No workspace protocol relaxes the limit');
     expect(lead).toContain('Among agents, Lead alone accepts; Human retains override authority');
     expect(lead).toContain('Lead opens Peer seats and no others');
+    expect(lead).toContain('Set `notifyOnFinish: true` explicitly on every Peer creation');
+    expect(lead).toContain('every background follow-up');
+    expect(lead).toContain('Paseo subscriptions are per prompt');
+    expect(lead).toContain('does not subscribe Lead to later prompts sent to that Peer');
+    expect(lead).toContain("Rely on Paseo's completion, error, or permission event");
+    expect(lead).not.toContain('notifyOnFinish: false');
+    expect(lead).not.toContain('parent-wake');
   });
 
   it('keeps Peer bounded, independent, non-orchestrating, and reproducible', () => {

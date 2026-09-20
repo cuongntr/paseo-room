@@ -2,11 +2,17 @@
 
 | Field | Value |
 |---|---|
-| Status | Active |
+| Status | Partially superseded |
 | Owner | Repository owner |
 | Requirements source | [Role Contract Maintainability and Paseo Runtime Guard PRD](../product/role-contract-and-plugin-prd.md) |
 | Related ADRs | N/A — no ADR directory or governing ADR exists |
 | Routing decision | [Accepted PRD routing decision](../product/role-contract-and-plugin-prd.md#routing-decision): brownfield, generated-contract and packaging compatibility risk; Technical Design → Implementation Plan → Beads; Phase 1 only |
+| Superseded by | [Lead Project Onboarding Skill design](lead-project-onboarding-skill.md) for the default workspace asset, document loader kind, room copy, and contract-digest membership only |
+
+> **Supersession note.** The Markdown role sources, semantic composition, validation, packaging,
+> and additive carrier decisions below remain active. Descriptions of `workspace/default.md`,
+> `protocolKeys()`, `room/WORKSPACE_PROTOCOL.md`, workspace rendering, and workspace inclusion in
+> the contract digest are historical; the superseding design removes all of them.
 
 ## 1. Boundaries
 

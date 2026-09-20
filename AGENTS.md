@@ -16,8 +16,9 @@ That design is in git history before the `v2` rewrite. Do not reintroduce it.
 
 ## Design rules
 
-- **Everything stays in `$HOME`.** Only `~/.paseo-room` is written. Agent homes are read,
-  never modified.
+- **CLI writes stay in `$HOME`.** The CLI writes only `~/.paseo-room`; agent homes are read,
+  never modified. The Lead-only onboarding skill may write a repository protocol only under its
+  separate explicit-Human-apply contract.
 - **Dry run by default.** Mutation happens only under `--apply` or an explicit wizard
   confirmation.
 - **No transaction machinery.** A failed `setup` is fixed by running `setup` again. Explicit
@@ -25,9 +26,11 @@ That design is in git history before the `v2` rewrite. Do not reintroduce it.
 - **Compatibility is one check.** `paseo daemon status --json` must report a running daemon,
   matching CLI and daemon versions, and `>= 0.8.0-beta.1`; a selection containing Claude or Pi
   raises that floor to `>= 0.8.0`.
-- **Copy the operator's config, override the minimum.** Never rewrite someone's model, MCP
-  servers, or hooks. Pi role settings omit package and extension declarations so startup
-  cannot install packages or discover unrelated extensions.
+- **Copy operator config only where the adapter contract requires it.** Never rewrite an operator
+  home. Codex copies configuration and overrides the minimum; Pi omits package and extension
+  declarations so startup cannot install or discover them. Claude role `settings.json` is instead
+  a deterministic minimal room policy: do not import operator env, hooks, permissions, or auth
+  helpers into it.
 - **Add to a base prompt, never replace it.** `model_instructions_file` (Codex) and
   `--system-prompt` (Claude) replace the vendor prompt and would force us to vendor a copy.
   Role text goes in `developer_instructions`, Claude's room plugin `config.systemPrompt` append
@@ -37,11 +40,12 @@ That design is in git history before the `v2` rewrite. Do not reintroduce it.
   retains `CLAUDE.md` as degraded/resume fallback. Require `pluginsEnabled`; never set or infer it.
   `--no-claude-memory-contract` drops only the contract half of `CLAUDE.md`, never the operator's
   own memory, and is recorded in the marker so `verify` compares against the room's own choice.
-- **Pin at the provider level whatever the agent's own config cannot guarantee.** A Paseo
-  provider entry outranks the agent config: `params` for Codex sandbox/approval,
-  `disallowedTools` and environment pins for Claude's native agent surfaces.
-  `providerMatches` compares these, so `verify` catches their removal — a pin that can be
-  silently dropped is not a guarantee.
+- **Use every required enforcement surface.** A Paseo provider entry outranks the agent config,
+  so Codex sandbox/approval stays in provider `params`. Claude's canonical native-orchestration
+  deny list must appear in both provider `disallowedTools` and each minimal generated role
+  `settings.json` under `permissions.deny`; its environment closures likewise stay in provider
+  launch state and role settings. `providerMatches` and managed-file comparison must detect the
+  loss of either copy — a closure that can be silently dropped is not a guarantee.
 - **Paseo is the only control plane.** Every native multi-agent path stays closed. If you
   add an agent adapter, close its equivalent before shipping it.
 - **Pi adapters are explicit and authenticated.** Resolve only the operator Pi home's global
@@ -52,9 +56,10 @@ That design is in git history before the `v2` rewrite. Do not reintroduce it.
   the same principle and lives in `src/agents/resources.ts`; it is capability hygiene, not
   containment, and must never be documented as a sandbox. `roleResourceEntries` decides both
   projections generically: Supervisor keeps whole-directory aliases, Lead's role-home `skills`
-  stays a symlink to an exact room-owned aggregate of every operator skill plus the room-owned
-  one, and Peer's is an exact role-home projection of the non-`paseo*` operator skills. No
-  projection ever writes into an operator home.
+  stays a symlink to an exact room-owned aggregate of every operator skill except a
+  case-insensitively colliding room-skill name, plus the room-owned skill, and Peer's is an exact
+  role-home projection of the non-`paseo*` operator skills. No projection ever writes into an
+  operator home.
 - **The room ships no default workspace protocol.** A repository's root
   `WORKSPACE_PROTOCOL.md` is optional and, where it exists, complete: there is no room default
   behind it and no point-by-point merge. Lead resolves the repository root and reads it in full
@@ -71,13 +76,13 @@ That design is in git history before the `v2` rewrite. Do not reintroduce it.
   It reaches Lead through the projected `skills` directory and no other seat. Its bundled
   template is a scaffold loaded while the skill runs, never a runtime default.
 - **Peer reads one brief, not the organisation manual.** Peer receives no workspace layer, no
-  room skill, and is never told the protocol filename; Lead quotes the constraints that bear on an assignment
-  into the brief. The `Authority Floor` section of `contract/shared-authority.md` keeps the
-  invariant that repository or workspace instructions cannot enlarge or weaken contract
-  authority and routes conflicts to Lead. What a Peer needs unconditionally lives in its own
-  contract body, not in the workspace layer: house-style and no-unrequested-additions restraint
-  under `Bounded Outcome`, faithful reporting and the unrun-gate bar under
-  `Reproducible Handoff`.
+  room skill, and is never told the protocol filename; Lead quotes the constraints that bear on
+  an assignment into the brief. The `Authority Floor` section of
+  `contract/shared-authority.md` keeps the invariant that repository or workspace instructions
+  cannot enlarge or weaken contract authority and routes conflicts to Lead. What a Peer needs
+  unconditionally lives in its own contract body, not in the workspace layer: house-style and
+  no-unrequested-additions restraint under `Bounded Outcome`, faithful reporting and the unrun-gate
+  bar under `Reproducible Handoff`.
 - **Own a managed path by shape, and only the shape you write.** A managed file or link may
   replace only an absent path or the same shape, and is renamed in from a temporary sibling. A
   path declared absent is deleted only when it is a regular file the room would otherwise have
@@ -151,10 +156,11 @@ message. `instructionKeys()` in `src/room/instructions.ts` defines each role's l
 gives every role exactly one role body.
 
 Anything true of only one project belongs in that project's own root `WORKSPACE_PROTOCOL.md`,
-which the room never writes: only `~/.paseo-room` is written. Do not add a room-wide workflow
-document to compensate — that is exactly what this design removed. If Lead demonstrably cannot
-act without some statement in the absence of a repository protocol, it belongs in Lead's
-`Assignment Vocabulary and Operating Baseline` section, kept minimal, and nowhere else.
+which the CLI never writes; only the onboarding skill may write it under an explicit Human apply
+instruction. Do not add a room-wide workflow document to compensate — that is exactly what this
+design removed. If Lead demonstrably cannot act without some statement in the absence of a
+repository protocol, it belongs in Lead's `Assignment Vocabulary and Operating Baseline` section,
+kept minimal, and nowhere else.
 
 `src/room/skills/` is model-facing too, and read the same way: `SKILL.md` follows Agent Skill
 frontmatter (`name`, a precise triggering `description`), and the `references/` template is a

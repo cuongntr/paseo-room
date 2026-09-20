@@ -34,7 +34,7 @@ async function skillNames(
   keep: (name: string) => boolean,
 ): Promise<string[]> {
   try {
-    return (await readdir(path)).filter(name => keep(name) && !reserved.has(name)).sort();
+    return (await readdir(path)).filter(name => keep(name) && !reserved.has(name.toLowerCase())).sort();
   } catch (error) {
     if (error !== null && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return [];
     throw error;
@@ -62,14 +62,15 @@ export interface RoleResourceInput {
   readonly executable: readonly string[];
   /**
    * Names inside the projected `skills` directory that the agent's own runtime writes and
-   * owns. They are neither linked nor reconciled: the agent creates its own copy inside the
-   * role home, so projecting one would alias runtime state and reconciling one would delete it.
+   * owns. A case-insensitive operator-name match is not linked, and the declared runtime name is
+   * not reconciled: the agent creates its own copy inside the role home, so projecting one would
+   * alias runtime state and reconciling one would delete it.
    */
   readonly reservedSkills?: readonly string[];
-  /** The room-owned skill, passed by every adapter; only the seats that need it receive it. */
-  readonly roomSkill?: RoomSkill;
-  /** Room-owned aggregate for Lead; the role-home `skills` path remains a replaceable symlink. */
-  readonly leadSkillProjection?: string;
+  /** The room-owned skill; required so an adapter cannot silently leave Lead without it. */
+  readonly roomSkill: RoomSkill;
+  /** Lead's room-owned aggregate; required even for calls whose current role does not consume it. */
+  readonly leadSkillProjection: string;
 }
 
 /**
@@ -77,9 +78,10 @@ export interface RoleResourceInput {
  * `undefined` for a role that keeps the whole-directory alias.
  *
  * Peer receives the non-`paseo*` operator skills and no room-owned skill. Lead receives every
- * operator skill plus the room-owned one; the single name that collides with it exactly is not
+ * operator skill plus the room-owned one; a name that collides with it case-insensitively is not
  * linked, because the room-owned copy owns that name inside the Lead aggregate while the
- * operator's own skill stays where it is, untouched.
+ * operator's own skill stays where it is, untouched. Case-insensitive comparison keeps the
+ * projection valid on the default macOS filesystem as well as on case-sensitive filesystems.
  *
  * The projection is declared even when the operator deleted the whole skills directory: an
  * empty managed directory is what lets a later run remove yesterday's child links. Peer's
@@ -97,13 +99,13 @@ async function skillsProjection(
   const roomSkill = receivesRoomSkill(input.role) ? input.roomSkill : undefined;
   const projectsChildren = !receivesExecutableResources(input.role) || roomSkill !== undefined;
   if (!projectsChildren) return undefined;
+  const reservedNames = new Set([...reserved].map(name => name.toLowerCase()));
   const keep = roomSkill === undefined
     ? (name: string): boolean => !isPaseoSkill(name)
-    : (name: string): boolean => name !== roomSkill.name;
-  const operator = present.has(path) ? await skillNames(path, reserved, keep) : [];
+    : (name: string): boolean => name.toLowerCase() !== roomSkill.name.toLowerCase();
+  const operator = present.has(path) ? await skillNames(path, reservedNames, keep) : [];
   const children = roomSkill === undefined ? operator : [...operator, roomSkill.name];
   const projection = input.role === 'lead' ? input.leadSkillProjection : alias;
-  if (projection === undefined) throw new Error('Lead skills require a room-owned projection path.');
   return [
     {
       kind: 'managed-dir', path: projection, children,

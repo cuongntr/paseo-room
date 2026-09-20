@@ -12,7 +12,9 @@ import { checkDaemon, mergeProfiles, minimumPaseoVersion, profileMatches, provid
 import { CLAUDE_CARRIER_PLUGIN_ID, claudeCarrierEntries, claudeCarrierPluginDir } from './plugin.js';
 import { fail, failed, hasFailure, pass, warn, type Check, type Operation, type Result } from './result.js';
 import { contractDigest } from './room/instructions.js';
-import { roomSkillEntries } from './room/skills.js';
+import {
+  agentSkillProjectionRoot, leadSkillProjection, roomSkillEntries, roomSkillSource, skillProjectionRoot,
+} from './room/skills.js';
 import { MARKER, readMarker, renderMarker, type Marker } from './room.js';
 import { DELEGATING_THINKING, profileId, providerId, providerLabel, ROLES, ROLE_COLOR, ROLE_ICON, ROLE_NOTES, ROLE_PASEO_TOOLS, ROLE_THINKING, type AgentId, type Role } from './roles.js';
 
@@ -88,7 +90,7 @@ async function buildDesired(
     // Earlier versions generated a default workspace protocol template here. The room ships no
     // default protocol now, so the old generated regular file is declared absent and removed.
     { kind: 'absent', path: join(sharedRoom(layout), 'WORKSPACE_PROTOCOL.md') },
-    ...roomSkillEntries(layout),
+    ...roomSkillEntries(layout, agents),
   ];
   const providers: Record<string, Provider> = {};
   const profiles: Profile[] = [];
@@ -221,7 +223,27 @@ async function safeDirectory(path: string, checks: Check[]): Promise<boolean> {
 async function roomPathSafety(layout: Layout, agents: readonly AgentId[], roles: readonly Role[]): Promise<Check[]> {
   const checks: Check[] = [];
   if (!await safeDirectory(layout.roomHome, checks)) return checks;
-  await safeDirectory(sharedRoom(layout), checks);
+
+  const room = sharedRoom(layout);
+  const roomIsSafe = await safeDirectory(room, checks);
+  // Calls with no agents are root-only checks used before marker discovery and by explicit remove.
+  // Recursive removal unlinks nested symlinks without following them, so it must remain able to
+  // delete a broken room; setup and verify make a later full pass with the affected agents.
+  if (roomIsSafe && agents.length > 0) {
+    const skills = join(room, 'skills');
+    if (await safeDirectory(skills, checks)) {
+      const source = roomSkillSource(layout);
+      if (await safeDirectory(source, checks)) await safeDirectory(join(source, 'references'), checks);
+    }
+    const projections = skillProjectionRoot(layout);
+    if (await safeDirectory(projections, checks)) {
+      for (const agent of agents) {
+        const agentRoot = agentSkillProjectionRoot(layout, agent);
+        if (await safeDirectory(agentRoot, checks)) await safeDirectory(leadSkillProjection(layout, agent), checks);
+      }
+    }
+  }
+
   const rolesHome = join(layout.roomHome, 'roles');
   if (!await safeDirectory(rolesHome, checks)) return checks;
   for (const agent of agents) {
