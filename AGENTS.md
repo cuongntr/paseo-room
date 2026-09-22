@@ -69,6 +69,14 @@ That design is in git history before the `v2` rewrite. Do not reintroduce it.
   assignment, Git and workspace facts. The CLI writes no reporting server from this flag; only an
   installed runtime plugin acts on it, for the exact provider it manages. Widening that pair is a
   contract change, not an implementation detail.
+- **Runtime coordination is a separate, opt-in plugin.** `paseo-room-runtime` lives in
+  `src/runtime-plugin/` and never shares an id, path or check with the Claude carrier. Its code may
+  import only what Paseo's plugin compiler supplies (`@getpaseo/plugin*`, `zod`, and on the client
+  `react`/`react-native`), and `server/bridge/bridge.mjs` only `node:` modules; the boundary test
+  enforces both. Only `server/paseo-port.ts` calls Paseo's agent SDK. The CLI writes the plugin
+  tree, the manifest and the locator, and only ever *reads* `runtime/`. Read
+  [docs/design/runtime-coordination.md](docs/design/runtime-coordination.md) before changing an
+  event type, a validation step or an authority rule: those are contract changes.
 - **The room ships no default workspace protocol.** A repository's root
   `WORKSPACE_PROTOCOL.md` is optional and, where it exists, complete: there is no room default
   behind it and no point-by-point merge. Lead resolves the repository root and reads it in full
@@ -112,6 +120,10 @@ src/
   agents/codex.ts  agents/claude.ts  agents/pi.ts   # per-agent role homes
   agents/resources.ts                       # per-role operator resource sharing and Peer projection
   agents/mcp.ts                             # bounded Paseo MCP recognition, shared by the adapters
+  runtime.ts  runtime-state.ts  export.ts   # runtime plugin provisioning, read-only state, export
+  runtime-plugin/                           # the opt-in runtime plugin (Paseo layout)
+    shared/  server/  client/               # contracts; controller, store, bridges; panel
+    server/bridge/bridge.mjs                # dependency-free stdio MCP bridge
   room/instructions.ts                      # semantic role document composition
   room/prompts.ts  room/prompts/             # typed registry + canonical Markdown assets
   room/skills.ts   room/skills/              # the room-owned Lead skill: loader + assets

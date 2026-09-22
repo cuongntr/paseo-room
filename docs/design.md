@@ -138,6 +138,39 @@ None of this filters or rewrites your configuration. Skills you keep are linked,
 skills stay in your own home untouched, and a withheld resource is simply absent from one
 role home.
 
+### 2c. Runtime coordination is a separate, opt-in plugin
+
+`setup --runtime` installs a second trusted plugin, `paseo-room-runtime`, from
+`~/.paseo-room/runtime-plugin`. It is separate from the Claude carrier so that a runtime fault can
+never remove or rewrite Claude's contract delivery, and so that Codex-only or Pi-only rooms can use
+it without pretending it is a Claude concern. Omitting the flag leaves the room byte-identical to
+one that never chose it. The reference is
+[docs/design/runtime-coordination.md](design/runtime-coordination.md); the choices below are the
+ones that surprise a reader of the code.
+
+- **Paseo stays the control plane.** The runtime creates, prompts and archives agents only through
+  Paseo, from one port module, and records intent and observed result. Recovery settles an
+  unresolved intent from live evidence — an exact labelled child, an exact message id in a
+  timeline, a closed live status, a published gate sidecar — and otherwise leaves it uncertain.
+  It never adopts an agent by title or cwd and never resends a prompt.
+- **Only runtime-dispatched Peers report.** Paseo's `agent.create` hook sees no labels or parent,
+  so the plugin cannot tell a Lead's native Peer from its own. It decorates only a create it
+  announced itself (exact provider plus a unique title). A Peer opened any other way is honestly
+  outside the record rather than guessed into it.
+- **A generated locator.** Paseo evaluates a plugin bundle from memory with no file path, so setup
+  writes `server/generated/location.ts` with the plugin directory and runtime root. The room
+  manifest still carries no path, credential, command or agent id.
+- **Reports are tool calls, never prose.** A Peer's `ask` or `handoff` is authoritative only once
+  the server has validated it in a fixed order and persisted it with its receipt; a retry replays
+  that receipt. The server derives the candidate commit and changed paths itself. Final-message
+  text, fenced JSON and turn completion are never parsed into a report.
+- **The CLI only reads runtime state.** Setup never plans, compares or deletes `runtime/`.
+  Deselection reads it through the plugin's own replay and refuses while anything is active or
+  uncertain; an unreadable ledger counts as not quiet. `export` writes under the room's own
+  `runtime/v1/exports` unless the operator names another destination explicitly.
+- **Not a sandbox.** Capabilities and bindings make every accepted report attributable and keep a
+  Peer to its own assignment; they do not stop a process running as the same OS user.
+
 ## 3. Where the instruction layers live
 
 `paseo-room` owns the model's first instruction layer outright: the role contract, in the

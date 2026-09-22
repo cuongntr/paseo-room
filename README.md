@@ -30,9 +30,11 @@ npx paseo-room auth login codex lead               # interactive login for exact
 npx paseo-room auth login claude peer
 npx paseo-room auth login pi supervisor            # minimal Pi login session; run /login, then exit
 npx paseo-room remove --apply                     # delete ~/.paseo-room (including role credentials) and providers
+npx paseo-room setup --runtime --apply            # opt in to runtime coordination (preview)
+npx paseo-room export --apply                     # copy runtime state out for review; no daemon needed
 ```
 
-`setup` and `remove` are dry runs unless you pass `--apply`. Running with no arguments in a
+`setup`, `remove` and `export` are dry runs unless you pass `--apply`. Running with no arguments in a
 terminal starts a short wizard: pick an action, pick the agents, review the plan, confirm.
 Setup and the wizard never start login. `auth login` is a separate explicit action, requires
 interactive stdin/stdout/stderr, and targets exactly one selected agent and role; it has no
@@ -46,6 +48,9 @@ interactive stdin/stdout/stderr, and targets exactly one selected agent and role
 | `--apply` | off | Actually write setup/remove changes; `auth login` does not use it. |
 | `--json` | off | One machine-readable document instead of text. |
 | `--no-claude-memory-contract` | off | Omit the role contract from Claude role `CLAUDE.md` files, leaving the room plugin as the only Claude carrier. Your global memory is still carried. `setup` only. |
+| `--runtime` | off | Opt in to [runtime coordination](#runtime-coordination-preview) (preview). A per-run `setup` choice recorded in the room marker; running setup without it deselects runtime. |
+| `--out <dir>` | a new directory under `~/.paseo-room/runtime/v1/exports` | `export` only: where to write the export. Must be new or empty. |
+| `--include-gate-output` | off | `export` only: also copy the bounded, best-effort-masked gate output tails. |
 | `--room-home <path>` | `~/.paseo-room` | Where role homes are written. |
 | `--codex-home <path>` | `~/.codex` | Source Codex configuration. |
 | `--claude-home <path>` | `~/.claude` | Source Claude Code configuration. |
@@ -591,6 +596,49 @@ reading a candidate is more independent than a fresh session of the family that 
 one project on one family and keep the other for the review seat. Ask the existing Lead for
 that review; Supervisor must route the request to Lead rather than opening a fresh Lead.
 
+## Runtime coordination (preview)
+
+An opt-in second plugin, `paseo-room-runtime`, gives the room a durable record of delegated work:
+typed assignments, one writer at a time, Peer questions and handoffs, commit-bound candidates, an
+optional independent gate rerun and Lead's acceptance — kept across daemon and plugin restarts.
+It is separate from the Claude contract carrier; a runtime fault never touches that plugin.
+
+```bash
+npx paseo-room setup --agent codex --agent claude --runtime            # dry run first
+npx paseo-room setup --agent codex --agent claude --runtime --apply
+npx paseo-room verify
+```
+
+- **Trust.** Like the carrier, the runtime is trusted, unsandboxed code running in your daemon.
+  Enable Paseo plugins yourself; `paseo-room` never does. It is not an operating-system sandbox and
+  cannot stop a process running as your user.
+- **Range.** Runtime requires Paseo `>=0.8.0 <0.9.0`. `0.8.0` is the only qualified point, so a
+  newer daemon is refused for runtime while the baseline room keeps working.
+- **Lead** gains room tools such as `assignment_create`, `assignment_dispatch`, `assignment_answer`,
+  `assignment_accept` and `gate_run`. **Supervisor** gains `room_status`, `runtime_findings` and
+  `message_lead`, and cannot change an assignment.
+- **A runtime-dispatched Peer** gets exactly two tools, `ask` and `handoff`, for its own assignment,
+  and still no Paseo room tools. A report exists only once one of those calls is accepted; its
+  final message is never read as a report. Claude asks for permission before a Peer's first call
+  to `mcp__paseo_room__ask` or `mcp__paseo_room__handoff`: approve it in Paseo, since the runtime
+  never answers a permission for a seat. Codex and Pi Peers do not ask.
+- **A Peer that Lead opens directly** with Paseo's own tools is not runtime-managed: it gets no
+  reporting tools and appears in no assignment. That is allowed; it is simply outside the record.
+- **Writable work** starts from a clean workspace at an exact base commit and is handed back as an
+  immutable commit. The runtime reads the commit and changed paths itself, never merges, resets,
+  cleans or stashes, and releases a writer only after Paseo proves the Peer archived.
+- **State** lives under `~/.paseo-room/runtime/v1` as append-only event files. Setup never edits it.
+  The **Room runtime** sidebar item and workspace panel show projects, assignments, writer
+  ownership and findings, each labelled with how it is known (enforced, detected, procedural,
+  unverifiable).
+
+To stop using it, finish, close or abandon the recorded work, then run setup **without**
+`--runtime`. Setup refuses while anything is still active or uncertain, and keeps the recorded
+state once it proceeds. `npx paseo-room export --apply` copies that state out; the export omits gate
+output unless you add `--include-gate-output`, and briefs or commands written by a seat cannot be
+proven secret-free. `remove --apply` warns about runtime history and then deletes it with the rest
+of the room.
+
 ## Documentation
 
 - [docs/demonthorn-agent-orchestration-deep-dive.md](docs/demonthorn-agent-orchestration-deep-dive.md)
@@ -599,6 +647,10 @@ that review; Supervisor must route the request to Lead rather than opening a fre
 - [docs/design.md](docs/design.md) — how and why this tool implements that model, and what
   it deliberately does not do. Read this before changing an override.
 - [AGENTS.md](AGENTS.md) — working rules for contributors and coding agents.
+- [docs/product/runtime-coordination-prd.md](docs/product/runtime-coordination-prd.md),
+  [docs/design/runtime-coordination.md](docs/design/runtime-coordination.md) and
+  [docs/plans/runtime-coordination-phase1-implementation-plan.md](docs/plans/runtime-coordination-phase1-implementation-plan.md)
+  — the runtime coordination preview: requirements, technical design and Phase 1 plan.
 - [docs/product/paseo-room-prd.md](docs/product/paseo-room-prd.md) — the original PRD, kept
   for history; the transactional-installer requirements in it were deliberately dropped.
 
