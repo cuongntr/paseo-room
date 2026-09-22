@@ -59,7 +59,16 @@ export async function runWizard(
     if (typeof carrier === 'symbol') return cancelled();
     claudeMemoryContract = carrier === 'both';
   }
-  const setupOptions = { ...options, agents, claudeMemoryContract };
+  // Runtime coordination is an explicit opt-in, never a default: it installs trusted plugin code.
+  const coordination = await prompts.select({
+    message: 'Runtime coordination (preview): track assignments, Peer reports and writer ownership through a trusted Paseo plugin?',
+    options: [
+      { value: 'off', label: 'No — keep the room as it is (default)' },
+      { value: 'runtime', label: 'Yes — install the paseo-room-runtime plugin (trusted, unsandboxed code)' },
+    ],
+  });
+  if (typeof coordination === 'symbol') return cancelled();
+  const setupOptions = { ...options, agents, claudeMemoryContract, ...(coordination === 'runtime' ? { runtime: true } : {}) };
   const preview = await setup(setupOptions);
   const status = emit(preview);
   if (preview.outcome !== 'changes-planned') return status;

@@ -20,6 +20,15 @@ export const PLUGIN_ASSET_PATHS = [
   'tsconfig.json',
 ] as const;
 
+/** Every file of the runtime plugin source tree, relative to its root; the build ships all of them. */
+export async function runtimePluginInventory(root: string): Promise<string[]> {
+  const entries = await readdir(root, { recursive: true, withFileTypes: true });
+  return entries
+    .filter(entry => entry.isFile())
+    .map(entry => relative(root, `${entry.parentPath}${sep}${entry.name}`).split(sep).join('/'))
+    .sort();
+}
+
 /** The exact files the room-owned skill ships, relative to its own directory. */
 export const SKILL_ASSET_PATHS = [
   'SKILL.md',

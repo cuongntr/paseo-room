@@ -10,8 +10,9 @@ import { probe, which } from './which.js';
 export const MINIMUM_VERSION = '0.8.0-beta.1';
 export const PI_MINIMUM_VERSION = '0.8.0';
 
-export function minimumPaseoVersion(agents: readonly AgentId[]): string {
-  return agents.includes('pi') || agents.includes('claude') ? PI_MINIMUM_VERSION : MINIMUM_VERSION;
+/** Claude and Pi need `0.8.0`; so does the runtime plugin, whose range the caller also checks. */
+export function minimumPaseoVersion(agents: readonly AgentId[], runtime = false): string {
+  return runtime || agents.includes('pi') || agents.includes('claude') ? PI_MINIMUM_VERSION : MINIMUM_VERSION;
 }
 
 const statusSchema = z.object({
@@ -146,7 +147,13 @@ export async function withSession<T>(
     const [{ createPaseoApi }, { DaemonClient }] = await Promise.all([
       import('@getpaseo/client'), import('@getpaseo/client/internal/daemon-client'),
     ]);
-    const raw = new DaemonClient({ ...clientConfig, clientId: `paseo-room-${String(process.pid)}`, clientType: 'cli' });
+    // The public config types `capabilities` as possibly undefined while DaemonClient's does not,
+    // so forward it only when present rather than spreading an explicit undefined.
+    const { capabilities, ...config } = clientConfig;
+    const raw = new DaemonClient({
+      ...config, ...(capabilities === undefined ? {} : { capabilities }),
+      clientId: `paseo-room-${String(process.pid)}`, clientType: 'cli',
+    });
     client = {
       ...createPaseoApi(raw),
       connect: () => raw.connect(), close: () => raw.close(),

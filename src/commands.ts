@@ -1,5 +1,6 @@
 import { join, sep } from 'node:path';
 import { lstat, rm } from 'node:fs/promises';
+import { satisfies } from 'semver';
 import metadata from '../package.json' with { type: 'json' };
 import { claudeAgent } from './agents/claude.js';
 import { codexAgent } from './agents/codex.js';
@@ -15,7 +16,11 @@ import { contractDigest } from './room/instructions.js';
 import {
   agentSkillProjectionRoot, leadSkillProjection, roomSkillEntries, roomSkillSource, skillProjectionRoot,
 } from './room/skills.js';
-import { MARKER, readMarker, renderMarker, type Marker } from './room.js';
+import { MARKER, readMarker, renderMarker, type Marker, type RuntimeMarker } from './room.js';
+import {
+  renderRuntimeManifest, RUNTIME_PASEO_RANGE, RUNTIME_PLUGIN_ID, runtimePluginDir, runtimePluginEntries,
+} from './runtime.js';
+import { describeBlockers, inspectRuntimeState } from './runtime-state.js';
 import { DELEGATING_THINKING, profileId, providerId, providerLabel, ROLES, ROLE_COLOR, ROLE_ICON, ROLE_NOTES, ROLE_PASEO_TOOLS, ROLE_THINKING, type AgentId, type Role } from './roles.js';
 
 export const AGENTS: Record<AgentId, Agent> = { codex: codexAgent, claude: claudeAgent, pi: piAgent };
@@ -29,6 +34,8 @@ export interface RunOptions extends Options {
    * is unproven, so the file fallback is only dropped when asked for.
    */
   readonly claudeMemoryContract?: boolean;
+  /** Opt in to runtime coordination (preview). A per-run setup choice, recorded in the marker. */
+  readonly runtime?: boolean;
   readonly env?: NodeJS.ProcessEnv;
   readonly factory?: ClientFactory;
 }
@@ -69,18 +76,53 @@ function roleProfiles(agent: Agent, roles: readonly Role[]): Profile[] {
   }));
 }
 
+/**
+ * A trusted Paseo plugin the room owns. The Claude carrier and the runtime are separate
+ * plugins with separate ids, paths and diagnostics, so a fault in one never names or touches the
+ * other (docs/design/runtime-coordination.md D1).
+ */
+interface PluginSpec {
+  readonly id: string;
+  readonly path: string;
+  /** Check id prefix: `<prefix>.enabled`, `<prefix>.path`, `<prefix>.runtime`. */
+  readonly check: string;
+  readonly running: string;
+  readonly enabledPass: string;
+  readonly enabledFail: string;
+}
+
+function carrierSpec(layout: Layout): PluginSpec {
+  return {
+    id: CLAUDE_CARRIER_PLUGIN_ID, path: claudeCarrierPluginDir(layout), check: 'claude.plugin',
+    running: 'Claude contract carrier plugin',
+    enabledPass: 'Paseo plugins are enabled for the required Claude contract carrier.',
+    enabledFail: 'Claude rooms require the paseo-room trusted server plugin, but Paseo plugins are disabled. Plugins are trusted, unsandboxed code with access to the daemon machine.',
+  };
+}
+
+function runtimeSpec(layout: Layout): PluginSpec {
+  return {
+    id: RUNTIME_PLUGIN_ID, path: runtimePluginDir(layout), check: 'runtime.plugin',
+    running: 'Runtime coordination plugin (preview)',
+    enabledPass: 'Paseo plugins are enabled for the runtime coordination plugin.',
+    enabledFail: 'Runtime coordination is a trusted server plugin, but Paseo plugins are disabled. Plugins are trusted, unsandboxed code with access to the daemon machine.',
+  };
+}
+
 interface Desired {
   readonly entries: readonly Entry[];
   readonly providers: Readonly<Record<string, Provider>>;
   readonly profiles: readonly Profile[];
   readonly checks: readonly Check[];
-  readonly pluginPath?: string;
+  /** Room plugins this selection requires, carrier first. */
+  readonly plugins: readonly PluginSpec[];
+  readonly runtime?: RuntimeMarker;
 }
 async function buildDesired(
   layout: Layout,
   agents: readonly AgentId[],
   roles: readonly Role[],
-  build: BuildOptions = {},
+  build: BuildOptions & { readonly runtime?: boolean } = {},
 ): Promise<Desired> {
   // The room-owned skill source is composed once here rather than per adapter, so three
   // seated agents cannot declare the same managed paths three times.
@@ -129,10 +171,19 @@ async function buildDesired(
       `Role authentication was not validated. Login instructions are managed at ${join(layout.roomHome, AUTHENTICATION_GUIDE)}.`,
       'After setup --apply, follow that guide or run: paseo-room auth login <agent> <role>'));
   }
-  const pluginPath = agents.includes('claude') ? claudeCarrierPluginDir(layout) : undefined;
-  if (pluginPath !== undefined) entries.push(...claudeCarrierEntries(layout, roles));
-  entries.push({ kind: 'file', path: join(layout.roomHome, MARKER), content: renderMarker(metadata.version, agents, roles, contractDigest(), markerMemoryContract(agents, build.memoryContract ?? true)) });
-  return { entries, providers, profiles, checks, ...(pluginPath === undefined ? {} : { pluginPath }) };
+  const plugins: PluginSpec[] = [];
+  if (agents.includes('claude')) {
+    plugins.push(carrierSpec(layout));
+    entries.push(...claudeCarrierEntries(layout, roles));
+  }
+  let runtime: RuntimeMarker | undefined;
+  if (build.runtime === true) {
+    plugins.push(runtimeSpec(layout));
+    entries.push(...runtimePluginEntries(layout, agents, roles));
+    runtime = { enabled: true, generation: renderRuntimeManifest(agents, roles).roomGeneration, schema: 1 };
+  }
+  entries.push({ kind: 'file', path: join(layout.roomHome, MARKER), content: renderMarker(metadata.version, agents, roles, contractDigest(), markerMemoryContract(agents, build.memoryContract ?? true), runtime) });
+  return { entries, providers, profiles, checks, plugins, ...(runtime === undefined ? {} : { runtime }) };
 }
 
 /**
@@ -197,11 +248,12 @@ function fileDriftDetail(targets: readonly string[]): string {
 interface Stale {
   readonly providerIds: readonly string[];
   readonly profileIds: readonly string[];
-  readonly removePlugin: boolean;
+  /** Room plugins a previous selection registered that this one does not. */
+  readonly removePlugins: readonly PluginSpec[];
   /** Role homes are retained during setup because runtime-owned credentials may be inside. */
   readonly retainedDirectories: readonly string[];
 }
-const NOTHING_STALE: Stale = { providerIds: [], profileIds: [], removePlugin: false, retainedDirectories: [] };
+const NOTHING_STALE: Stale = { providerIds: [], profileIds: [], removePlugins: [], retainedDirectories: [] };
 
 async function safeDirectory(path: string, checks: Check[]): Promise<boolean> {
   try {
@@ -255,7 +307,9 @@ async function roomPathSafety(layout: Layout, agents: readonly AgentId[], roles:
 }
 
 /** A previous setup may have seated agents or roles this one does not: drop those. */
-async function staleFrom(layout: Layout, previous: Marker | undefined, agents: readonly AgentId[], roles: readonly Role[]): Promise<Stale> {
+async function staleFrom(
+  layout: Layout, previous: Marker | undefined, agents: readonly AgentId[], roles: readonly Role[], runtime: boolean,
+): Promise<Stale> {
   if (!previous) return NOTHING_STALE;
   const kept = new Set(agents.flatMap(agent => roles.map(role => providerId(agent, role))));
   const providerIds: string[] = [];
@@ -273,7 +327,10 @@ async function staleFrom(layout: Layout, previous: Marker | undefined, agents: r
   return {
     providerIds,
     profileIds,
-    removePlugin: previous.agents.includes('claude') && !agents.includes('claude'),
+    removePlugins: [
+      ...(previous.agents.includes('claude') && !agents.includes('claude') ? [carrierSpec(layout)] : []),
+      ...(previous.runtime?.enabled === true && !runtime ? [runtimeSpec(layout)] : []),
+    ],
     retainedDirectories,
   };
 }
@@ -282,51 +339,54 @@ interface Plan {
   readonly operations: readonly Operation[];
   /** Carried out of the plan so apply rewrites the array it actually compared against. */
   readonly liveProfiles: readonly LiveProfile[];
-  readonly livePlugin?: LivePlugin;
+  readonly livePlugins: ReadonlyMap<string, LivePlugin>;
   readonly pluginChecks: readonly Check[];
 }
 
-function pluginPlan(desired: Desired, stale: Stale, plugins: readonly LivePlugin[], expectedPath: string): {
+function pluginPlan(spec: PluginSpec, wanted: boolean, plugins: readonly LivePlugin[]): {
   operation?: Operation; livePlugin?: LivePlugin; checks: Check[];
 } {
-  const livePlugin = plugins.find(plugin => plugin.id === CLAUDE_CARRIER_PLUGIN_ID);
-  const shouldManage = desired.pluginPath !== undefined || stale.removePlugin;
-  if (!shouldManage) return { checks: [] };
-  if (livePlugin !== undefined && livePlugin.path !== expectedPath) {
+  const livePlugin = plugins.find(plugin => plugin.id === spec.id);
+  if (livePlugin !== undefined && livePlugin.path !== spec.path) {
     return {
       livePlugin,
-      checks: [fail('claude.plugin.path',
-        `Plugin ${CLAUDE_CARRIER_PLUGIN_ID} is registered from ${livePlugin.path}, not the room-owned path ${expectedPath}.`,
+      checks: [fail(`${spec.check}.path`,
+        `Plugin ${spec.id} is registered from ${livePlugin.path}, not the room-owned path ${spec.path}.`,
         'Move or remove that conflicting plugin registration manually, then run setup again.')],
     };
   }
-  if (desired.pluginPath !== undefined) {
+  if (wanted) {
     const healthy = livePlugin?.enabled === true && livePlugin.status === 'running' && livePlugin.error === undefined;
     return {
       ...(livePlugin === undefined ? {} : { livePlugin }),
-      operation: { action: livePlugin === undefined ? 'create' : healthy ? 'noop' : 'update', kind: 'plugin', target: CLAUDE_CARRIER_PLUGIN_ID },
+      operation: { action: livePlugin === undefined ? 'create' : healthy ? 'noop' : 'update', kind: 'plugin', target: spec.id },
       checks: [],
     };
   }
   return {
     ...(livePlugin === undefined ? {} : { livePlugin }),
-    operation: { action: livePlugin === undefined ? 'noop' : 'remove', kind: 'plugin', target: CLAUDE_CARRIER_PLUGIN_ID },
+    operation: { action: livePlugin === undefined ? 'noop' : 'remove', kind: 'plugin', target: spec.id },
     checks: [],
   };
 }
 
 /** One definition of drift, shared by the command that fixes it and the one that reports it. */
-async function planRoom(session: Session, desired: Desired, stale: Stale, expectedPluginPath: string): Promise<Plan> {
-  const inspectPlugins = desired.pluginPath !== undefined || stale.removePlugin;
+async function planRoom(session: Session, desired: Desired, stale: Stale): Promise<Plan> {
+  const inspectPlugins = desired.plugins.length > 0 || stale.removePlugins.length > 0;
   const [live, liveProfiles, plugins] = await Promise.all([
     session.readProviders(), session.readProfiles(), inspectPlugins ? session.listPlugins() : Promise.resolve([]),
   ]);
   const byId = new Map(liveProfiles.map(entry => [String(entry.id), entry]));
-  const plugin = pluginPlan(desired, stale, plugins, expectedPluginPath);
+  const planned = [
+    ...desired.plugins.map(spec => pluginPlan(spec, true, plugins)),
+    ...stale.removePlugins.map(spec => pluginPlan(spec, false, plugins)),
+  ];
+  const livePlugins = new Map<string, LivePlugin>();
+  for (const plugin of planned) if (plugin.livePlugin !== undefined) livePlugins.set(plugin.livePlugin.id, plugin.livePlugin);
   return {
     liveProfiles,
-    ...(plugin.livePlugin === undefined ? {} : { livePlugin: plugin.livePlugin }),
-    pluginChecks: plugin.checks,
+    livePlugins,
+    pluginChecks: planned.flatMap(plugin => plugin.checks),
     operations: [
       ...await planEntries(desired.entries),
       ...Object.entries(desired.providers).map(([id, provider]) => ({
@@ -341,53 +401,92 @@ async function planRoom(session: Session, desired: Desired, stale: Stale, expect
       }) satisfies Operation),
       ...stale.providerIds.filter(id => id in live).map(id => ({ action: 'remove', kind: 'provider', target: id }) satisfies Operation),
       ...stale.profileIds.filter(id => byId.has(id)).map(id => ({ action: 'remove', kind: 'profile', target: id }) satisfies Operation),
-      ...(plugin.operation === undefined ? [] : [plugin.operation]),
+      ...planned.flatMap(plugin => (plugin.operation === undefined ? [] : [plugin.operation])),
     ],
   };
 }
 
-function pluginsEnabledCheck(enabled: boolean): Check {
+function pluginsEnabledCheck(spec: PluginSpec, enabled: boolean): Check {
   return enabled
-    ? pass('claude.plugin.enabled', 'Paseo plugins are enabled for the required Claude contract carrier.')
-    : fail('claude.plugin.enabled',
-      'Claude rooms require the paseo-room trusted server plugin, but Paseo plugins are disabled. Plugins are trusted, unsandboxed code with access to the daemon machine.',
+    ? pass(`${spec.check}.enabled`, spec.enabledPass)
+    : fail(`${spec.check}.enabled`, spec.enabledFail,
       'Review that trust boundary, enable plugins in Paseo Settings, reload Paseo, then run setup again.');
 }
 
-function pluginRuntimeCheck(plugin: LivePlugin | undefined, expectedPath: string): Check {
+function pluginRuntimeCheck(spec: PluginSpec, plugin: LivePlugin | undefined): Check {
   if (plugin === undefined) {
-    return fail('claude.plugin.runtime', `Plugin ${CLAUDE_CARRIER_PLUGIN_ID} is not registered.`, 'Run: paseo-room setup --apply');
+    return fail(`${spec.check}.runtime`, `Plugin ${spec.id} is not registered.`, 'Run: paseo-room setup --apply');
   }
-  if (plugin.path !== expectedPath) {
-    return fail('claude.plugin.runtime', `Plugin ${CLAUDE_CARRIER_PLUGIN_ID} is registered from ${plugin.path}, not ${expectedPath}.`,
+  if (plugin.path !== spec.path) {
+    return fail(`${spec.check}.runtime`, `Plugin ${spec.id} is registered from ${plugin.path}, not ${spec.path}.`,
       'Move or remove that conflicting plugin registration manually, then run setup again.');
   }
   if (!plugin.enabled || plugin.status !== 'running' || plugin.error !== undefined) {
     const detail = plugin.error === undefined ? `status ${plugin.status}` : `${plugin.status}: ${plugin.error}`;
-    return fail('claude.plugin.runtime', `Plugin ${CLAUDE_CARRIER_PLUGIN_ID} is not running (${detail}).`, 'Run: paseo-room setup --apply');
+    return fail(`${spec.check}.runtime`, `Plugin ${spec.id} is not running (${detail}).`, 'Run: paseo-room setup --apply');
   }
-  return pass('claude.plugin.runtime', `Claude contract carrier plugin is running from ${expectedPath}.`);
+  return pass(`${spec.check}.runtime`, `${spec.running} is running from ${spec.path}.`);
 }
 
-async function reconcilePlugin(
-  session: Session, desired: Desired, plan: Plan, pending: readonly Operation[], expectedPath: string,
-): Promise<Check[]> {
-  if (desired.pluginPath === undefined) {
-    if (plan.livePlugin !== undefined) await session.removePlugin(CLAUDE_CARRIER_PLUGIN_ID);
-    return [];
+async function reconcilePlugins(session: Session, desired: Desired, stale: Stale, plan: Plan, pending: readonly Operation[]): Promise<Check[]> {
+  for (const spec of stale.removePlugins) {
+    if (plan.livePlugins.has(spec.id)) await session.removePlugin(spec.id);
   }
-  let plugin = plan.livePlugin;
-  if (plugin === undefined) {
-    plugin = await session.installPlugin(expectedPath, CLAUDE_CARRIER_PLUGIN_ID);
-  } else {
-    if (!plugin.enabled) plugin = await session.enablePlugin(CLAUDE_CARRIER_PLUGIN_ID);
-    const filesChanged = pending.some(operation =>
-      (operation.kind === 'file' || operation.kind === 'dir') && operation.target.startsWith(`${expectedPath}${sep}`),
-    );
-    const needsReload = filesChanged || plugin.status !== 'running' || plugin.error !== undefined;
-    if (needsReload) plugin = await session.reloadPlugin(CLAUDE_CARRIER_PLUGIN_ID);
+  const checks: Check[] = [];
+  for (const spec of desired.plugins) {
+    let plugin = plan.livePlugins.get(spec.id);
+    if (plugin === undefined) {
+      plugin = await session.installPlugin(spec.path, spec.id);
+    } else {
+      if (!plugin.enabled) plugin = await session.enablePlugin(spec.id);
+      const filesChanged = pending.some(operation =>
+        (operation.kind === 'file' || operation.kind === 'dir') && operation.target.startsWith(`${spec.path}${sep}`),
+      );
+      const needsReload = filesChanged || plugin.status !== 'running' || plugin.error !== undefined;
+      if (needsReload) plugin = await session.reloadPlugin(spec.id);
+    }
+    checks.push(pluginRuntimeCheck(spec, plugin));
   }
-  return [pluginRuntimeCheck(plugin, expectedPath)];
+  return checks;
+}
+
+/**
+ * The runtime range is exact on both ends: `0.8.0` is the only live-qualified point and `0.9.0`
+ * is unqualified. Choosing runtime accepts that bound; omitting it never raises the baseline.
+ */
+function runtimeRangeCheck(version: string): Check {
+  return satisfies(version, RUNTIME_PASEO_RANGE)
+    ? pass('runtime.paseo-range', `Paseo ${version} is inside the runtime preview range ${RUNTIME_PASEO_RANGE}.`)
+    : fail('runtime.paseo-range', `Runtime coordination supports Paseo ${RUNTIME_PASEO_RANGE}; the running daemon is ${version}.`,
+      'Use a Paseo release inside that range, or run setup without --runtime.');
+}
+
+/**
+ * Deselecting runtime must not strand work it recorded: it is refused while any assignment,
+ * writer ownership, managed Peer archive, gate or delivery is active or uncertain. Once quiet,
+ * the plugin is unregistered and the recorded state is kept for export or a later re-enable.
+ */
+async function runtimeDeselectionCheck(layout: Layout): Promise<Check[]> {
+  const summary = await inspectRuntimeState(layout.roomHome);
+  if (summary.projects === 0) return [];
+  if (summary.blockers.length > 0) {
+    return [fail('runtime.deselect',
+      `Runtime coordination still has active or uncertain work: ${describeBlockers(summary)}.`,
+      'Keep --runtime and finish, close or abandon that work first; the runtime state is preserved either way.')];
+  }
+  return [warn('runtime.state-retained',
+    `Runtime coordination is quiet; its recorded state for ${String(summary.projects)} project(s) stays at ${summary.root}.`,
+    'Export it with: paseo-room export --out <dir>, or keep it for a later --runtime.')];
+}
+
+/** Whole-room removal keeps its destructive meaning, but says what runtime history it deletes. */
+async function runtimeRemovalWarning(layout: Layout): Promise<Check[]> {
+  const summary = await inspectRuntimeState(layout.roomHome).catch(() => undefined);
+  if (summary === undefined || summary.projects === 0) return [];
+  const active = summary.blockers.length > 0 ? ` It still has active or uncertain work: ${describeBlockers(summary)}.` : '';
+  return [warn('room.remove.runtime-state',
+    `Deleting ${layout.roomHome} also deletes runtime coordination history for ${String(summary.projects)} project(s).${active}`,
+    'Export it first with: paseo-room export --out <dir>')];
 }
 
 /**
@@ -426,26 +525,29 @@ export async function setup(options: RunOptions = {}): Promise<Result> {
   if (hasFailure(pathSafety)) return failed('setup', pathSafety);
   // Cleanup uses the APIs required by the old selection too (notably Claude's plugin API).
   const compatibilityAgents = [...new Set([...agents, ...(previous?.agents ?? [])])];
-  const daemon = await checkDaemon(layout, options.env, minimumPaseoVersion(compatibilityAgents));
+  const runtime = options.runtime === true;
+  const daemon = await checkDaemon(layout, options.env, minimumPaseoVersion(compatibilityAgents, runtime || previous?.runtime?.enabled === true));
   if (!daemon.daemon) return failed('setup', daemon.checks);
-  const desired = await buildDesired(layout, agents, ROLES, { memoryContract });
-  const stale = await staleFrom(layout, previous, agents, ROLES);
+  const desired = await buildDesired(layout, agents, ROLES, { memoryContract, runtime });
+  const stale = await staleFrom(layout, previous, agents, ROLES, runtime);
+  const runtimeChecks = [
+    ...(runtime ? [runtimeRangeCheck(daemon.daemon.version)] : []),
+    ...(stale.removePlugins.some(spec => spec.id === RUNTIME_PLUGIN_ID) ? await runtimeDeselectionCheck(layout) : []),
+  ];
   const retained = stale.retainedDirectories.length === 0 ? [] : [warn(
     'room.stale-role-homes-preserved',
     `Preserved ${String(stale.retainedDirectories.length)} deselected role homes because they may contain role-owned credentials or runtime state.`,
     `Use paseo-room remove --apply to delete the entire room after reviewing its credential warning, or remove deselected homes manually: ${stale.retainedDirectories.join(', ')}`,
   )];
-  const checks = [...daemon.checks, ...desired.checks, ...retained];
+  const checks = [...daemon.checks, ...runtimeChecks, ...desired.checks, ...retained];
   if (hasFailure(checks)) return failed('setup', checks);
 
   return withSession(daemon.daemon, async session => {
-    const expectedPluginPath = claudeCarrierPluginDir(layout);
-    const plan = await planRoom(session, desired, stale, expectedPluginPath);
+    const plan = await planRoom(session, desired, stale);
     const { operations, liveProfiles } = plan;
     const pending = operations.filter(operation => operation.action !== 'noop');
-    const pluginPreconditions = desired.pluginPath === undefined
-      ? plan.pluginChecks
-      : [pluginsEnabledCheck(await session.pluginsEnabled()), ...plan.pluginChecks];
+    const enabled = desired.plugins.length === 0 ? true : await session.pluginsEnabled();
+    const pluginPreconditions = [...desired.plugins.map(spec => pluginsEnabledCheck(spec, enabled)), ...plan.pluginChecks];
     // Diagnostics last: nothing above may be reached only through a warning.
     const preApplyDiagnostics = [...checks, ...pluginPreconditions, ...memoryContractDiagnostic(agents, memoryContract), ...contractProvenance(previous), ...thinkingDiagnostics(liveProfiles, desired.profiles)];
     if (hasFailure(preApplyDiagnostics) || !options.apply) {
@@ -471,11 +573,12 @@ export async function setup(options: RunOptions = {}): Promise<Result> {
       await session.writeProfiles(appliedProfiles);
     }
     await session.refresh(ids);
-    const pluginChecks = await reconcilePlugin(session, desired, plan, pending, expectedPluginPath);
+    const pluginChecks = await reconcilePlugins(session, desired, stale, plan, pending);
     await applyEntries(markerEntries);
     const appliedMarker: Marker = {
       version: metadata.version, agents: [...agents], roles: [...ROLES], contract: contractDigest(),
       ...(markerMemoryContract(agents, memoryContract) === false ? { claudeMemoryContract: false } : {}),
+      ...(desired.runtime === undefined ? {} : { runtime: desired.runtime }),
     };
     const appliedChecks = [...checks, ...pluginPreconditions, ...pluginChecks,
       pass('room.applied', `Room ready at ${layout.roomHome} with ${String(ids.length)} Paseo providers.`),
@@ -500,18 +603,25 @@ export async function verify(options: RunOptions = {}): Promise<Result> {
   if (invalid.length > 0) return failed('verify', invalid);
   const pathSafety = await roomPathSafety(layout, marker.agents, marker.roles);
   if (hasFailure(pathSafety)) return failed('verify', pathSafety);
-  const daemon = await checkDaemon(layout, options.env, minimumPaseoVersion(marker.agents));
+  const runtime = marker.runtime?.enabled === true;
+  const daemon = await checkDaemon(layout, options.env, minimumPaseoVersion(marker.agents, runtime));
   if (!daemon.daemon) return failed('verify', daemon.checks);
   const desired = await buildDesired(layout, marker.agents, marker.roles, {
-    // The room's own recorded choice, so verify compares against what setup wrote.
+    // The room's own recorded choices, so verify compares against what setup wrote.
     memoryContract: marker.claudeMemoryContract ?? true,
+    runtime,
   });
-  const checks = [...daemon.checks, ...desired.checks];
-  if (hasFailure(checks)) return failed('verify', checks);
+  const runtimeChecks = runtime ? [
+    runtimeRangeCheck(daemon.daemon.version),
+    marker.runtime?.generation === desired.runtime?.generation
+      ? pass('runtime.generation', `Runtime manifest generation ${String(desired.runtime?.generation)} matches this package.`)
+      : fail('runtime.generation', `This room was set up with runtime generation ${String(marker.runtime?.generation)}; this package generates ${String(desired.runtime?.generation)}.`, 'Run: paseo-room setup --runtime --apply'),
+  ] : [];
+  const checks = [...daemon.checks, ...runtimeChecks, ...desired.checks];
+  if (hasFailure(daemon.checks) || hasFailure(desired.checks)) return failed('verify', checks);
 
   return withSession(daemon.daemon, async session => {
-    const expectedPluginPath = claudeCarrierPluginDir(layout);
-    const plan = await planRoom(session, desired, NOTHING_STALE, expectedPluginPath);
+    const plan = await planRoom(session, desired, NOTHING_STALE);
     const { operations, liveProfiles } = plan;
     const drifted = operations.filter(operation => operation.action !== 'noop');
     const count = (kind: Operation['kind']): number => drifted.filter(operation => operation.kind === kind).length;
@@ -519,11 +629,12 @@ export async function verify(options: RunOptions = {}): Promise<Result> {
     const profiles = count('profile');
     const driftedFiles = drifted.filter(operation => !['provider', 'profile', 'plugin'].includes(operation.kind));
     const files = driftedFiles.length;
-    const pluginChecks = desired.pluginPath === undefined ? [] : [
-      pluginsEnabledCheck(await session.pluginsEnabled()),
-      ...plan.pluginChecks,
-      pluginRuntimeCheck(plan.livePlugin, expectedPluginPath),
-    ];
+    const enabled = desired.plugins.length === 0 ? true : await session.pluginsEnabled();
+    const pluginChecks = desired.plugins.flatMap(spec => [
+      pluginsEnabledCheck(spec, enabled),
+      ...plan.pluginChecks.filter(check => check.id.startsWith(`${spec.check}.`)),
+      pluginRuntimeCheck(spec, plan.livePlugins.get(spec.id)),
+    ]);
     const all: Check[] = [...checks,
       files === 0
         ? pass('room.files', 'Every managed role file matches the current definition.')
@@ -559,20 +670,24 @@ export async function remove(options: RunOptions = {}): Promise<Result> {
   if (invalid.length > 0) return failed('remove', invalid);
   const ids = marker.agents.flatMap(agent => marker.roles.map(role => providerId(agent, role)));
   const profiles = new Set(marker.agents.flatMap(agent => marker.roles.map(role => profileId(agent, role))));
-  const hasClaude = marker.agents.includes('claude');
+  const plugins = [
+    ...(marker.agents.includes('claude') ? [carrierSpec(layout)] : []),
+    ...(marker.runtime?.enabled === true ? [runtimeSpec(layout)] : []),
+  ];
   const operations: Operation[] = [
     ...ids.map(id => ({ action: 'remove', kind: 'provider', target: id }) satisfies Operation),
     ...[...profiles].map(id => ({ action: 'remove', kind: 'profile', target: id }) satisfies Operation),
-    ...(hasClaude ? [{ action: 'remove', kind: 'plugin', target: CLAUDE_CARRIER_PLUGIN_ID } satisfies Operation] : []),
+    ...plugins.map(spec => ({ action: 'remove', kind: 'plugin', target: spec.id }) satisfies Operation),
     { action: 'remove', kind: 'dir', target: layout.roomHome },
   ];
   const credentialWarning = warn('room.remove.credentials',
     `Deleting ${layout.roomHome} will delete role-owned credential files stored inside it. Native OS keyring entries are not inspected or deleted and may remain. Operator agent-home credentials are untouched.`);
+  const runtimeWarnings = await runtimeRemovalWarning(layout);
   if (!options.apply) {
-    return { command: 'remove', outcome: 'changes-planned', changed: false, checks: [credentialWarning], operations };
+    return { command: 'remove', outcome: 'changes-planned', changed: false, checks: [credentialWarning, ...runtimeWarnings], operations };
   }
   const daemon = await checkDaemon(layout, options.env);
-  const checks: Check[] = [credentialWarning];
+  const checks: Check[] = [credentialWarning, ...runtimeWarnings];
   if (!daemon.daemon) {
     return failed('remove', [
       credentialWarning,
@@ -586,13 +701,16 @@ export async function remove(options: RunOptions = {}): Promise<Result> {
   }
   try {
     await withSession(daemon.daemon, async session => {
-      if (hasClaude) {
-        const plugin = (await session.listPlugins()).find(entry => entry.id === CLAUDE_CARRIER_PLUGIN_ID);
-        const expectedPath = claudeCarrierPluginDir(layout);
-        if (plugin !== undefined && plugin.path !== expectedPath) {
-          throw new Error(`refusing to remove foreign plugin path ${plugin.path}`);
+      if (plugins.length > 0) {
+        const live = await session.listPlugins();
+        // Deregister before the room home is deleted, and never a registration from a foreign path.
+        for (const spec of plugins) {
+          const plugin = live.find(entry => entry.id === spec.id);
+          if (plugin !== undefined && plugin.path !== spec.path) throw new Error(`refusing to remove foreign plugin path ${plugin.path}`);
         }
-        if (plugin !== undefined) await session.removePlugin(CLAUDE_CARRIER_PLUGIN_ID);
+        for (const spec of plugins) {
+          if (live.some(entry => entry.id === spec.id)) await session.removePlugin(spec.id);
+        }
       }
       await session.removeProviders(ids);
       const live = await session.readProfiles();

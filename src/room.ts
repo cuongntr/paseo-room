@@ -22,8 +22,14 @@ const markerSchema = z.object({
    * written before the option existed keeps parsing and keeps its current behaviour.
    */
   claudeMemoryContract: z.boolean().optional(),
+  /**
+   * Present only when this room opted in to runtime coordination. Missing means disabled, so a
+   * marker written before runtime existed keeps parsing and keeps its behaviour.
+   */
+  runtime: z.strictObject({ enabled: z.literal(true), generation: z.string().min(1), schema: z.literal(1) }).optional(),
 });
 export type Marker = z.infer<typeof markerSchema>;
+export type RuntimeMarker = NonNullable<Marker['runtime']>;
 
 /** Deterministic on purpose: re-running setup must not show a phantom change. */
 export function renderMarker(
@@ -32,12 +38,14 @@ export function renderMarker(
   roles: readonly Role[],
   contract?: string,
   claudeMemoryContract?: boolean,
+  runtime?: RuntimeMarker,
 ): string {
   return JSON.stringify({
     version, agents: [...agents], roles: [...roles],
     ...(contract === undefined ? {} : { contract }),
     // Written only when it differs from the default, so an unchanged room's marker is unchanged.
     ...(claudeMemoryContract === false ? { claudeMemoryContract: false } : {}),
+    ...(runtime === undefined ? {} : { runtime }),
   } satisfies Marker, null, 2) + '\n';
 }
 

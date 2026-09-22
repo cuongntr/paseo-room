@@ -2,6 +2,7 @@ import { Command, CommanderError, InvalidArgumentError } from 'commander';
 import metadata from '../package.json' with { type: 'json' };
 import { loginRole, type LoginSpawner } from './auth.js';
 import { remove, setup, verify, type RunOptions } from './commands.js';
+import { exportRuntime } from './export.js';
 import { ManagedPathError } from './fsops.js';
 import { renderHuman, renderJson } from './render.js';
 import { exitCode, fail, failed, type Result } from './result.js';
@@ -42,6 +43,7 @@ function optionsFrom(raw: Record<string, unknown>, base: RunOptions): RunOptions
     ...base, ...paths, ...(agents ? { agents } : {}), ...(raw.apply === true ? { apply: true } : {}),
     // Commander defaults a --no- flag to true, so only an explicit opt-out is carried.
     ...(raw.claudeMemoryContract === false ? { claudeMemoryContract: false } : {}),
+    ...(raw.runtime === true ? { runtime: true } : {}),
   };
 }
 
@@ -109,13 +111,16 @@ export async function runCli(argv: readonly string[], output: Output, context: C
     .name('paseo-room')
     .description('Configure Codex/Claude/Pi role homes in $HOME and register them with your local Paseo daemon.')
     .version(metadata.version)
-    .usage('<setup|verify|remove> [options]\n       auth login <codex|claude|pi> <supervisor|lead|peer> [options]')
-    .argument('<command>', 'setup | verify | remove | auth')
+    .usage('<setup|verify|remove|export> [options]\n       auth login <codex|claude|pi> <supervisor|lead|peer> [options]')
+    .argument('<command>', 'setup | verify | remove | export | auth')
     .argument('[command-arguments...]', 'auth login <agent> <role>')
     .option('--agent <agent>', 'codex, claude, or pi; repeat to combine (default: codex)', collectAgent)
     .option('--apply', 'actually make the changes (default: dry run)')
     .option('--json', 'machine-readable output')
     .option('--no-claude-memory-contract', 'omit the role contract from Claude role CLAUDE.md files, leaving the room plugin as the only Claude carrier')
+    .option('--runtime', 'opt in to runtime coordination (preview): installs the trusted paseo-room-runtime plugin; omit it to deselect')
+    .option('--out <dir>', 'export: destination directory (default: a new directory under the room\'s runtime exports)')
+    .option('--include-gate-output', 'export: also copy bounded gate output tails (best-effort masked)')
     .option('--room-home <path>', 'where role homes are written (default: ~/.paseo-room)')
     .option('--codex-home <path>', 'source Codex config (default: ~/.codex)')
     .option('--claude-home <path>', 'source Claude Code config (default: ~/.claude)')
@@ -150,7 +155,19 @@ export async function runCli(argv: readonly string[], output: Output, context: C
       output.stderr(`paseo-room ${command}: --no-claude-memory-contract is a setup choice recorded in the room marker; ${command} reads it from there.\n`);
       return 2;
     }
+    if ((raw.out !== undefined || raw.includeGateOutput === true) && command !== 'export') {
+      output.stderr(`paseo-room ${command}: --out and --include-gate-output only apply to export.\n`);
+      return 2;
+    }
+    if (raw.runtime === true && (command === 'verify' || command === 'remove' || command === 'export')) {
+      output.stderr(`paseo-room ${command}: --runtime is a setup choice recorded in the room marker; ${command} reads it from there.\n`);
+      return 2;
+    }
     if (command === 'auth') {
+      if (raw.runtime === true) {
+        output.stderr('paseo-room auth login only authenticates a role and does not use --runtime.\n');
+        return 2;
+      }
       if (raw.claudeMemoryContract === false) {
         output.stderr('paseo-room auth login only authenticates a role and does not use --no-claude-memory-contract.\n');
         return 2;
@@ -184,9 +201,16 @@ export async function runCli(argv: readonly string[], output: Output, context: C
     if (command === 'setup') return emit(await setup(options));
     if (command === 'verify') return emit(await verify(options));
     if (command === 'remove') return emit(await remove(options));
+    if (command === 'export') {
+      return emit(await exportRuntime({
+        ...options,
+        ...(typeof raw.out === 'string' && raw.out.trim() !== '' ? { out: raw.out.trim() } : {}),
+        ...(raw.includeGateOutput === true ? { includeGateOutput: true } : {}),
+      }));
+    }
   } catch (error) {
     return emit(failedFromThrown(command, error));
   }
-  output.stderr(`paseo-room: unknown command "${command}". Try: setup, verify, remove, or auth login.\n`);
+  output.stderr(`paseo-room: unknown command "${command}". Try: setup, verify, remove, export, or auth login.\n`);
   return 2;
 }

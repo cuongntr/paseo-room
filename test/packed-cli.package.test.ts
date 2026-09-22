@@ -42,9 +42,9 @@ async function reserveClosedLoopbackPort(): Promise<number> {
   return address.port;
 }
 
-async function runCli(entry: string, cwd: string, env: NodeJS.ProcessEnv): Promise<CliResult> {
+async function runCli(entry: string, cwd: string, env: NodeJS.ProcessEnv, extra: readonly string[] = []): Promise<CliResult> {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [entry, 'setup', '--agent', 'codex'], {
+    const child = spawn(process.execPath, [entry, 'setup', '--agent', 'codex', ...extra], {
       cwd,
       env,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -156,6 +156,13 @@ describe('packed CLI prompt rendering', { concurrent: false }, () => {
     expect(complete.stdout).not.toContain('prompt-asset');
     expect(complete.stdout).not.toContain('Reinstall paseo-room');
     expect(complete.stderr).toBe('');
+
+    // The runtime plugin tree is read from the installed bundle before any connection, so an
+    // opt-in run reaches the same daemon diagnostic instead of a missing-file error.
+    const withRuntime = await runCli(installedEntry, installedRoot, env, ['--runtime']);
+    expect(withRuntime.stdout).toContain('Check that Paseo is running and reachable, then try again.');
+    expect(withRuntime.stdout).not.toContain('ENOENT');
+    expect(withRuntime.stderr).toBe('');
 
     const missingAsset = join(installedRoot, 'dist', 'prompts', 'contract', 'lead.md');
     await rm(missingAsset);

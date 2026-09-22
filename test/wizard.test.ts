@@ -8,12 +8,16 @@ import { emptyDaemon, fakeClient, makeFixture, type FakeDaemon } from './helpers
 
 /** Scripted answers for the no-argument path; a symbol means the user cancelled. */
 function scripted(answers: {
-  action: string; agents?: string[]; confirm?: boolean | symbol; carrier?: string;
+  action: string; agents?: string[]; confirm?: boolean | symbol; carrier?: string; runtime?: string;
 }): Prompts {
-  let selects = 0;
   return {
-    // The action is asked first; a Claude selection then asks for the contract carrier.
-    select: () => Promise.resolve(selects++ === 0 ? answers.action : answers.carrier ?? 'both'),
+    // The action is asked first; a Claude selection then asks for the contract carrier, and every
+    // setup asks whether to opt in to runtime coordination.
+    select: options => Promise.resolve(
+      options.message.startsWith('What do you want') ? answers.action
+        : options.message.startsWith('Runtime coordination') ? answers.runtime ?? 'off'
+          : answers.carrier ?? 'both',
+    ),
     multiselect: () => Promise.resolve((answers.agents ?? ['codex']) as never),
     confirm: () => Promise.resolve(answers.confirm ?? false),
   };
@@ -48,6 +52,19 @@ describe('the no-argument wizard', () => {
     const leadMemory = join(fixture.roomHome, 'roles/claude/lead/CLAUDE.md');
     expect(await readFile(leadMemory, 'utf8')).toBe(operatorMemory);
     expect(result.out).toContain('global memory only');
+  });
+
+  it('installs the runtime plugin only when the operator opts in', async () => {
+    const fixture = await makeFixture();
+    const declined: FakeDaemon = emptyDaemon();
+    expect((await wizard(scripted({ action: 'setup', agents: ['codex'], confirm: true }), fixture.env, declined)).code).toBe(0);
+    expect(declined.plugins).toEqual([]);
+
+    const other = await makeFixture();
+    const opted: FakeDaemon = emptyDaemon();
+    const result = await wizard(scripted({ action: 'setup', agents: ['codex'], confirm: true, runtime: 'runtime' }), other.env, opted);
+    expect(result.code).toBe(0);
+    expect(opted.plugins?.map(plugin => plugin.id)).toEqual(['paseo-room-runtime']);
   });
 
   it('keeps both carriers when the Claude prompt is answered with the default', async () => {

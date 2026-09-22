@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   markdownInventory, parsePackFilePaths, PLUGIN_ASSET_PATHS, promptContents, registeredPromptPaths,
-  registeredSkillPaths, skillContents,
+  registeredSkillPaths, runtimePluginInventory, skillContents,
 } from './package-inventory.js';
 
 const execFileAsync = promisify(execFile);
@@ -17,6 +17,8 @@ const distSkills = join(distRoot, 'skills');
 const sourceSkills = join(repositoryRoot, 'src', 'room', 'skills');
 const sourcePluginAssets = join(repositoryRoot, 'src', 'plugin-assets');
 const distPluginAssets = join(distRoot, 'plugin-assets');
+const sourceRuntimePlugin = join(repositoryRoot, 'src', 'runtime-plugin');
+const distRuntimePlugin = join(distRoot, 'runtime-plugin');
 
 async function npm(...args: readonly string[]): Promise<string> {
   const { stdout } = await execFileAsync('npm', [...args], {
@@ -41,6 +43,13 @@ describe('build and package prompt inventory', { concurrent: false }, () => {
     );
     for (const path of PLUGIN_ASSET_PATHS) {
       expect(await readFile(join(distPluginAssets, path))).toEqual(await readFile(join(sourcePluginAssets, path)));
+    }
+
+    const runtimeFiles = await runtimePluginInventory(sourceRuntimePlugin);
+    expect(runtimeFiles).toEqual(expect.arrayContaining(['paseo-plugin.json', 'index.server.ts', 'index.client.tsx']));
+    expect(await runtimePluginInventory(distRuntimePlugin)).toEqual(runtimeFiles);
+    for (const path of runtimeFiles) {
+      expect(await readFile(join(distRuntimePlugin, path))).toEqual(await readFile(join(sourceRuntimePlugin, path)));
     }
 
     await mkdir(join(distPrompts, 'prompts'), { recursive: true });
@@ -71,5 +80,9 @@ describe('build and package prompt inventory', { concurrent: false }, () => {
       PLUGIN_ASSET_PATHS.map(path => `dist/plugin-assets/${path}`).sort(),
     );
     expect(packPaths.some(path => path.startsWith('src/plugin-assets'))).toBe(false);
+    expect(packPaths.filter(path => path.startsWith('dist/runtime-plugin/'))).toEqual(
+      (await runtimePluginInventory(sourceRuntimePlugin)).map(path => `dist/runtime-plugin/${path}`),
+    );
+    expect(packPaths.some(path => path.startsWith('src/runtime-plugin'))).toBe(false);
   }, 30_000);
 });
