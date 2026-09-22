@@ -47,8 +47,9 @@ describe('notices', () => {
   it('never addresses a Peer', async () => {
     const h = await room();
     h.paseo.addAgent({ id: 'peer-x', provider: 'codex-peer' });
-    await expect(h.controller.notices.notify(await loaded(h), { kind: 'k', class: 'owner', disposition: 'lead-now', text: 'x', recipient: { agentId: 'peer-x', role: 'lead' } }))
-      .rejects.toThrow('never addressed to a Peer');
+    const noticeId = await h.controller.notices.notify(await loaded(h), { kind: 'k', class: 'owner', disposition: 'lead-now', text: 'x', recipient: { agentId: 'peer-x', role: 'lead' } });
+    expect((await loaded(h)).state.notices.get(noticeId)?.state).toBe('failed');
+    expect(h.paseo.agents.get('peer-x')?.prompts).toEqual([]);
   });
 
   it('retries an undelivered notice with the same id, and never resends a confirmed one', async () => {

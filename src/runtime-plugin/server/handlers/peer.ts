@@ -149,7 +149,8 @@ async function accept(controller: Controller, loaded: LoadedProject, association
       ...(inspectedCommit === undefined ? {} : { inspectedCommit }),
     },
   });
-  await notifyLead(controller, loaded, view, parsed.tool, assignmentState, parsed.input);
+  // The report is already durable; a notice problem must never turn it into a refusal.
+  await notifyLead(controller, loaded, view, parsed.tool, assignmentState, parsed.input).catch(() => undefined);
   return { ok: true, result: accepted };
 }
 

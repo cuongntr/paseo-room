@@ -214,7 +214,13 @@ export function quiescence(state: ProjectState): { readonly quiescent: boolean; 
   for (const view of state.assignments.values()) {
     if (view.state !== 'draft' && !TERMINAL_STATES.includes(view.state)) blockers.push({ kind: 'assignment', id: view.id, detail: `is ${view.state}` });
     if (view.peerAgentId !== undefined && view.closure !== 'closed') blockers.push({ kind: 'archive', id: view.id, detail: `managed Peer ${view.peerAgentId} is not archived (${view.closure})` });
-    for (const gate of view.gates) if (gate.status !== 'finished') blockers.push({ kind: 'gate', id: gate.gateRunId, detail: `gate is ${gate.status}` });
+    for (const gate of view.gates) {
+      // A running gate always blocks. An uncertain one blocks until its Peer is proven archived:
+      // after that nothing can act on it, and nothing could ever settle it further.
+      if (gate.status === 'running' || (gate.status === 'uncertain' && view.closure !== 'closed')) {
+        blockers.push({ kind: 'gate', id: gate.gateRunId, detail: `gate is ${gate.status}` });
+      }
+    }
     for (const [intent, type] of Object.entries(view.openIntents)) blockers.push({ kind: 'intent', id: intent, detail: `${type} has no result` });
   }
   for (const owner of state.ownership.values()) {

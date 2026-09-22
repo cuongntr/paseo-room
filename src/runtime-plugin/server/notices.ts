@@ -35,9 +35,6 @@ export class Notices {
   /** Records the notice, then delivers it when it has a recipient. Call inside the project's queue. */
   async notify(loaded: LoadedProject, request: NoticeRequest): Promise<string> {
     const recipient = request.recipient;
-    if (recipient !== undefined && this.controller.deps.recognition.recognize((await this.controller.deps.paseo.getAgent(recipient.agentId))?.provider ?? '')?.role === 'peer') {
-      throw new Error('A notice is never addressed to a Peer.');
-    }
     const noticeId = `ntc_${randomBytes(9).toString('base64url')}`;
     await this.controller.append(loaded, {
       type: 'notice.pending', payloadVersion: 1, actor: plugin,
@@ -56,7 +53,19 @@ export class Notices {
     return noticeId;
   }
 
+  /** Recorded first, so a failure here leaves a notice to retry rather than none at all. */
   private async deliver(loaded: LoadedProject, noticeId: string, agentId: string, text: string): Promise<void> {
+    try {
+      const target = await this.controller.deps.paseo.getAgent(agentId);
+      if (this.controller.deps.recognition.recognize(target?.provider ?? '')?.role === 'peer') {
+        await this.controller.append(loaded, { type: 'notice.failed', payloadVersion: 1, actor: plugin, data: { noticeId, reason: 'A notice is never addressed to a Peer.' } });
+        return;
+      }
+    } catch (error) {
+      const reason = error instanceof Error ? error.message.slice(0, 1_000) || 'unknown' : 'unknown';
+      await this.controller.append(loaded, { type: 'notice.uncertain', payloadVersion: 1, actor: plugin, data: { noticeId, reason } });
+      return;
+    }
     try {
       await this.controller.deps.paseo.run(agentId, noticeText(noticeId, text), noticeId);
       await this.controller.append(loaded, { type: 'notice.sent', payloadVersion: 1, actor: plugin, data: { noticeId } });

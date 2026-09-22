@@ -77,6 +77,14 @@ export class Recovery {
         for (const gate of running) {
           actions.push(await this.recoverGateRun(loaded.value, view.id, gate.gateRunId));
         }
+        const unsettled = (loaded.value.state.assignments.get(view.id) ?? view).gates.filter(run => run.status === 'uncertain');
+        for (const gate of unsettled) {
+          const late = await recoverGate(gate.gateRunId, loaded.value.store.gatesDirectory);
+          if (late.status === 'finished') {
+            await this.controller.append(loaded.value, { type: 'gate.finished', payloadVersion: 1, assignmentId: view.id, actor: plugin, data: { result: late.result } });
+            actions.push({ assignmentId: view.id, intent: gate.gateRunId, outcome: 'succeeded', detail: 'A late gate result sidecar settled the gate.' });
+          }
+        }
       }
       await this.controller.notices.retryUndelivered(loaded.value);
       await checkLeadOwnership(this.controller, this.controller.notices, loaded.value);

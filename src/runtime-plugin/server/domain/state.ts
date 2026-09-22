@@ -235,7 +235,8 @@ export function checkEvent(state: ProjectState, event: RuntimeEventV1): Check {
         ?? need(assignment.candidate !== undefined && assignment.candidate.commit === event.data.candidate.commit, 'A gate runs only against the projected candidate.')
         ?? need(!assignment.gates.some(gate => gate.status === 'running'), 'Another gate is still running.');
     case 'gate.finished':
-      return need(assignment.gates.some(gate => gate.gateRunId === event.data.result.id && gate.status === 'running'), 'No running gate matches.');
+      // A late sidecar may still settle a gate recorded as uncertain after a restart.
+      return need(assignment.gates.some(gate => gate.gateRunId === event.data.result.id && gate.status !== 'finished'), 'No unsettled gate matches.');
     case 'gate.uncertain':
       return need(assignment.gates.some(gate => gate.gateRunId === event.data.gateRunId && gate.status === 'running'), 'No running gate matches.');
     default: {

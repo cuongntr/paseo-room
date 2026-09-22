@@ -111,12 +111,23 @@ async function reapGroup(pgid: number, graceMs: number): Promise<{ readonly term
   return { terminal: await settle(1_000), killed: true };
 }
 
+export function gateRequestedData(request: GateRequest): Extract<GateEvent, { type: 'gate.requested' }>['data'] {
+  return {
+    gateRunId: request.gateRunId, candidate: request.candidate, command: request.command, timeoutSeconds: request.timeoutSeconds,
+    processContractVersion: 1, environmentPolicyVersion: 1,
+  };
+}
+
 function sidecarName(gateRunId: string): string {
   return `${gateRunId}.result.json`;
 }
 
-/** Runs one gate. Workspace identity is proven before `gate.requested` is ever recorded. */
-export async function runGate(request: GateRequest, deps: GateDependencies): Promise<GateOutcome> {
+/**
+ * Runs one gate. Workspace identity is proven before `gate.requested` is ever recorded. A caller
+ * that has already proven the workspace and recorded the request itself — atomically with its
+ * own checks — passes `alreadyRequested` so neither step happens twice.
+ */
+export async function runGate(request: GateRequest, deps: GateDependencies, options: { readonly alreadyRequested?: boolean } = {}): Promise<GateOutcome> {
   if (utf8Bytes(request.command) < 1 || utf8Bytes(request.command) > MAX_COMMAND_BYTES) {
     return { status: 'refused', code: 'command-too-long', message: `The gate command must be 1 byte to ${String(MAX_COMMAND_BYTES)} bytes.` };
   }
@@ -125,14 +136,12 @@ export async function runGate(request: GateRequest, deps: GateDependencies): Pro
   }
   const now = deps.now ?? (() => new Date());
   const graceMs = deps.graceMs ?? TERMINATION_GRACE_MS;
-  const precondition = await deps.git.dispatchPrecondition(request.cwd, { gitCommonDir: request.gitCommonDir, baseCommit: request.candidate.commit });
-  if (!precondition.ok) return { status: 'refused', code: 'workspace-mismatch', message: precondition.message };
+  if (options.alreadyRequested !== true) {
+    const precondition = await deps.git.dispatchPrecondition(request.cwd, { gitCommonDir: request.gitCommonDir, baseCommit: request.candidate.commit });
+    if (!precondition.ok) return { status: 'refused', code: 'workspace-mismatch', message: precondition.message };
+    await deps.publish({ type: 'gate.requested', data: gateRequestedData(request) });
+  }
   const root = (await deps.git.identity(request.cwd)).canonicalRoot;
-
-  await deps.publish({ type: 'gate.requested', data: {
-    gateRunId: request.gateRunId, candidate: request.candidate, command: request.command, timeoutSeconds: request.timeoutSeconds,
-    processContractVersion: 1, environmentPolicyVersion: 1,
-  } });
   await ensurePrivateDirectory(deps.gatesDirectory);
 
   const startedAt = now().toISOString();

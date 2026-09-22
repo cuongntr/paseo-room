@@ -19,7 +19,7 @@ import { sha256 } from './domain/receipts.js';
 import { applyEvent, checkEvent, project, type AssignmentView, type ProjectState } from './domain/state.js';
 import { validateAssignmentCreate } from './domain/validate.js';
 import { EVENT_SCHEMA, type RuntimeEventV1 } from './events/schema.js';
-import { runGate, type GateEvent, type GateOutcome } from './gate.js';
+import { gateRequestedData, runGate, type GateEvent, type GateOutcome, type GateRequest } from './gate.js';
 import type { GitEvidence } from './git.js';
 import { Notices } from './notices.js';
 import { checkLeadOwnership } from './ownership.js';
@@ -185,6 +185,16 @@ export class Controller {
     }
   }
 
+  /** A fresh snapshot, re-read briefly while the agent is still initializing. */
+  private async settledSnapshot(agentId: string): Promise<AgentSnapshot | undefined> {
+    const deadline = Date.now() + (this.deps.associationWaitMs ?? 5_000);
+    for (;;) {
+      const snapshot = await this.deps.paseo.getAgent(agentId);
+      if (snapshot?.status !== 'initializing' || Date.now() >= deadline) return snapshot;
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+  }
+
   /** The fresh-snapshot proof a Peer must pass before anything is sent to it. */
   bindingProblem(snapshot: AgentSnapshot | undefined, expected: { readonly providerId: string; readonly leadAgentId: string; readonly workspaceId: string | null; readonly assignmentId: string }): string | undefined {
     if (snapshot === undefined) return 'Paseo does not know the created agent.';
@@ -274,14 +284,24 @@ export class Controller {
       }
       await this.append(loaded, { type: 'agent.create-succeeded', payloadVersion: 1, assignmentId: view.id, actor: { source: 'paseo' }, data: { intentId, agentId } });
 
-      const snapshot = await this.deps.paseo.getAgent(agentId);
-      const correlationId = await this.waitForAssociation(view.id, agentId);
-      const problem = this.bindingProblem(snapshot, { providerId: input.peerProvider, leadAgentId: caller.agentId, workspaceId: caller.workspaceId, assignmentId: view.id })
-        ?? (correlationId === undefined ? 'The Peer\'s reporting bridge never associated with this agent.' : undefined);
+      // The session must open (associating the bridge) before the snapshot can prove idleness;
+      // an agent still initializing gets a bounded moment to settle, never an adoption.
+      let snapshot: AgentSnapshot | undefined;
+      let correlationId: string | undefined;
+      let problem: string | undefined;
+      try {
+        correlationId = await this.waitForAssociation(view.id, agentId);
+        snapshot = await this.settledSnapshot(agentId);
+        problem = this.bindingProblem(snapshot, { providerId: input.peerProvider, leadAgentId: caller.agentId, workspaceId: caller.workspaceId, assignmentId: view.id })
+          ?? (correlationId === undefined ? 'The Peer\'s reporting bridge never associated with this agent.' : undefined);
+      } catch (error) {
+        problem = `The created Peer could not be read back from Paseo: ${error instanceof Error ? error.message : String(error)}`;
+      }
       if (problem !== undefined || snapshot === undefined || correlationId === undefined) {
-        await this.append(loaded, { type: 'binding.refused', payloadVersion: 1, assignmentId: view.id, actor: this.plugin, data: { agentId, reason: problem ?? 'unknown' } });
-        await this.archiveUnbound(loaded, view.id, agentId);
-        return refuse('binding_refused', `The created Peer could not be bound and was archived rather than prompted: ${problem ?? 'unknown'}`);
+        const reason = (problem ?? 'unknown').slice(0, 1_000);
+        await this.append(loaded, { type: 'binding.refused', payloadVersion: 1, assignmentId: view.id, actor: this.plugin, data: { agentId, reason } });
+        await this.archiveUnbound(loaded, view.id, agentId).catch(() => undefined);
+        return refuse('binding_refused', `The created Peer could not be bound and was archived rather than prompted: ${reason}`);
       }
 
       await this.append(loaded, {
@@ -373,7 +393,16 @@ export class Controller {
       const gate = view.input.gate;
       if (view.input.mode !== 'writable' || candidate === undefined || gate === undefined) return refuse('candidate_missing', 'There is no writable candidate with a gate to run.');
       if (view.gates.some(run => run.status === 'running')) return refuse('gate_running', 'A gate is already running for this assignment.', true);
+      // Proven and recorded inside this queue slot, so a second call sees the running gate and a
+      // refused gate is refused to Lead rather than silently never started.
+      const precondition = await this.deps.git.dispatchPrecondition(caller.cwd, { gitCommonDir: loaded.store.meta.gitCommonDir, baseCommit: candidate.commit });
+      if (!precondition.ok) return refuse('workspace_moved', `The gate cannot run: ${precondition.message}`);
       const gateRunId = token('gate');
+      const request: GateRequest = {
+        gateRunId, assignmentId: view.id, candidate, command: gate.command, timeoutSeconds: gate.timeoutSeconds,
+        cwd: caller.cwd, gitCommonDir: loaded.store.meta.gitCommonDir,
+      };
+      await this.append(loaded, { type: 'gate.requested', payloadVersion: 1, assignmentId: view.id, actor: this.plugin, data: gateRequestedData(request) });
       const publish = async (event: GateEvent): Promise<void> => {
         await this.serial(store.meta.projectId, async () => {
           const fresh = await this.load(store);
@@ -381,13 +410,18 @@ export class Controller {
           await this.append(fresh.value, { ...event, payloadVersion: 1, assignmentId: view.id, actor: this.plugin });
         });
       };
-      // The run is started after this queue slot is released, so its own appends can proceed.
-      const started = Promise.resolve().then(() => runGate({
-        gateRunId, assignmentId: view.id, candidate, command: gate.command, timeoutSeconds: gate.timeoutSeconds,
-        cwd: caller.cwd, gitCommonDir: loaded.store.meta.gitCommonDir,
-      }, { git: this.deps.git, gatesDirectory: loaded.store.gatesDirectory, publish }));
+      // The process runs after this queue slot is released, so its own appends can proceed. Any
+      // failure is recorded as an uncertain gate; nothing is left as an unhandled rejection.
+      const started = Promise.resolve()
+        .then(() => runGate(request, { git: this.deps.git, gatesDirectory: loaded.store.gatesDirectory, publish }, { alreadyRequested: true }))
+        .catch(async (error: unknown): Promise<GateOutcome> => {
+          const reason = `The gate runner failed: ${error instanceof Error ? error.message : String(error)}`.slice(0, 1_000);
+          await publish({ type: 'gate.uncertain', data: { gateRunId, reason } }).catch(() => undefined);
+          return { status: 'uncertain', reason };
+        })
+        .finally(() => { this.activeGates.delete(gateRunId); });
       this.activeGates.add(gateRunId);
-      this.gates.set(gateRunId, started.finally(() => { this.activeGates.delete(gateRunId); }));
+      this.gates.set(gateRunId, started);
       return done({ gateRunId });
     });
   }
