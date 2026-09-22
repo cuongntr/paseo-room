@@ -96,6 +96,14 @@ describe('runtime plugin module boundary', () => {
     for (const path of files) expect(dom.test(await readFile(join(pluginRoot, path), 'utf8')), path).toBe(false);
   });
 
+  it('names icons by their Lucide component name, as the Paseo app resolves them', async () => {
+    const source = await readFile(join(pluginRoot, 'index.client.tsx'), 'utf8');
+    const icons = [...source.matchAll(/icon:\s*'([^']+)'/g)].map(match => match[1] ?? '');
+    expect(icons.length).toBeGreaterThan(0);
+    // The app looks the name up on the lucide module; kebab-case such as 'workflow' is unknown there.
+    for (const icon of icons) expect(icon, icon).toMatch(/^[A-Z][A-Za-z0-9]*$/);
+  });
+
   it('rejects each planted violation the compiler or the room boundary would refuse', () => {
     expect(boundaryViolations('server/a.ts', "import { x } from 'lodash';")).toHaveLength(1);
     expect(boundaryViolations('client/a.tsx', "import { readFile } from 'node:fs';")).toHaveLength(1);

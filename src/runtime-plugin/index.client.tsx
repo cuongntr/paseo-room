@@ -14,8 +14,8 @@ export default function contribute(client: PluginClientContext): () => Promise<v
   // The surface is registered before the sidebar item that points at it.
   const removers = [
     client.addSurface(SURFACE, RuntimeSurface),
-    client.addSidebarItem({ id: SURFACE, title: 'Room runtime', icon: 'workflow', surface: SURFACE }),
-    client.addWorkspacePanel({ id: SURFACE, title: 'Room runtime', icon: 'workflow', context: 'workspace', Component: RuntimeWorkspacePanel }),
+    client.addSidebarItem({ id: SURFACE, title: 'Room runtime', icon: 'Workflow', surface: SURFACE }),
+    client.addWorkspacePanel({ id: SURFACE, title: 'Room runtime', icon: 'Workflow', context: 'workspace', Component: RuntimeWorkspacePanel }),
   ];
   return async () => { for (const remove of removers.reverse()) await remove(); };
 }
