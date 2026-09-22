@@ -39,6 +39,8 @@ export interface AgentSnapshot {
 
 export interface CreateAgentInput {
   readonly provider: string;
+  /** Resolved from operator-owned configuration only; the runtime never picks a model itself. */
+  readonly model: string;
   readonly cwd: string;
   readonly parentAgentId: string;
   readonly title: string;
@@ -46,6 +48,12 @@ export interface CreateAgentInput {
 }
 
 export interface PaseoPort {
+  /**
+   * The model an exact room provider runs, from operator-owned configuration: the room profile's
+   * model when the operator set one, else the provider's declared default. Undefined when neither
+   * exists — dispatch then refuses rather than choosing.
+   */
+  resolveModel(provider: string): Promise<string | undefined>;
   /** Creates an agent with no initial prompt; the first turn is always a separate `run`. */
   createAgent(input: CreateAgentInput): Promise<{ readonly agentId: string }>;
   /** A fresh snapshot from Paseo, or undefined when Paseo knows no such agent. */
@@ -125,10 +133,19 @@ export function toSnapshot(raw: RawSnapshot): AgentSnapshot {
 export function sdkPaseoPort(handle: PaseoHandle, waitMs = 10_000): PaseoPort {
   const api = (): Promise<PaseoApi> => handle.acquire(waitMs);
   return {
+    async resolveModel(provider) {
+      const paseo = await api();
+      const config = await paseo.config.get();
+      const profiles = (config.config as { agentProfiles?: readonly Record<string, unknown>[] }).agentProfiles ?? [];
+      const profile = profiles.find(entry => entry.id === `room-${provider}` && entry.provider === provider);
+      if (typeof profile?.model === 'string' && profile.model !== '') return profile.model;
+      const listed = await paseo.providers.listModels(provider) as { models?: readonly { id: string; isDefault?: boolean }[] };
+      return listed.models?.find(model => model.isDefault === true)?.id;
+    },
     async createAgent(input) {
       const paseo = await api();
       const created = await paseo.agents.create({
-        config: { provider: input.provider }, cwd: input.cwd, parent: input.parentAgentId,
+        config: { provider: `${input.provider}/${input.model}` }, cwd: input.cwd, parent: input.parentAgentId,
         title: input.title, labels: { ...input.labels },
       });
       return { agentId: created.id };

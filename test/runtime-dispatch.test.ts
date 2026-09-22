@@ -129,6 +129,21 @@ describe('two-step writable dispatch', () => {
     expect((await ledger(unsent, other)).view).toMatchObject({ state: 'uncertain', reportingState: 'uncertain' });
   });
 
+  it('creates the Peer on the operator-owned model and refuses when none is configured', async () => {
+    const h = await room();
+    h.paseo.peerModels['codex-peer'] = 'gpt-operator';
+    const id = await assignment(h);
+    expect((await h.controller.dispatch(h.lead, { assignmentId: id, peerProvider: 'codex-peer' })).ok).toBe(true);
+    expect(h.paseo.calls.find(call => call.operation === 'createAgent')?.args[0]).toMatchObject({ provider: 'codex-peer', model: 'gpt-operator' });
+    expect((await ledger(h, id)).view?.observedModel).toBe('gpt-operator');
+
+    const none = await room();
+    none.paseo.peerModels['claude-peer'] = null;
+    const other = await assignment(none);
+    expect(await none.controller.dispatch(none.lead, { assignmentId: other, peerProvider: 'claude-peer' })).toMatchObject({ ok: false, code: 'peer_model_unresolved' });
+    expect((await ledger(none, other)).types).toEqual(['assignment.created']);
+  });
+
   it('keeps runtime state inside the room home only', async () => {
     const h = await room();
     await h.controller.dispatch(h.lead, { assignmentId: await assignment(h), peerProvider: 'codex-peer' });

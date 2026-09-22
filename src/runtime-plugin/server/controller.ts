@@ -256,6 +256,11 @@ export class Controller {
         const base = await this.deps.git.dispatchPrecondition(caller.cwd, { gitCommonDir: loaded.store.meta.gitCommonDir, baseCommit: view.input.baseCommit });
         if (!base.ok) return refuse({ 'wrong-repository': 'base_wrong_repository', 'base-mismatch': 'base_moved', dirty: 'base_dirty' }[base.code], base.message);
       }
+      // The model is operator-owned; without one the runtime refuses, before recording anything.
+      const model = await this.deps.paseo.resolveModel(input.peerProvider);
+      if (model === undefined) {
+        return refuse('peer_model_unresolved', `${input.peerProvider} has no default model and its room profile sets none; set one in Paseo before dispatching.`);
+      }
       const workspaceId = caller.workspaceId ?? 'unknown';
       const lead = { source: 'seat' as const, role: 'lead' as const, agentId: caller.agentId, providerId: caller.providerId };
       try {
@@ -276,7 +281,7 @@ export class Controller {
       });
       let agentId: string;
       try {
-        agentId = (await this.deps.paseo.createAgent({ provider: input.peerProvider, cwd: caller.cwd, parentAgentId: caller.agentId, title, labels: { [ASSIGNMENT_LABEL]: view.id } })).agentId;
+        agentId = (await this.deps.paseo.createAgent({ provider: input.peerProvider, model, cwd: caller.cwd, parentAgentId: caller.agentId, title, labels: { [ASSIGNMENT_LABEL]: view.id } })).agentId;
       } catch (error) {
         this.deps.correlations.forgetPeerCreate(input.peerProvider, title);
         await this.append(loaded, { type: 'agent.create-uncertain', payloadVersion: 1, assignmentId: view.id, actor: this.plugin, data: { intentId, reason: error instanceof Error ? error.message.slice(0, 1_000) || 'unknown' : 'unknown' } });

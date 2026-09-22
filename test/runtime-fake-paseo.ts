@@ -61,7 +61,7 @@ export class FakePaseo implements PaseoPort {
     const created = await this.step('createAgent', [input], () => {
       const id = `agent-${String(++this.counter)}`;
       this.addAgent({
-        id, provider: input.provider, cwd: input.cwd, workspaceId: this.workspaceFor(input.cwd),
+        id, provider: input.provider, model: input.model, cwd: input.cwd, workspaceId: this.workspaceFor(input.cwd),
         labels: { ...input.labels, [PARENT_AGENT_ID_LABEL]: input.parentAgentId },
       });
       return { agentId: id };
@@ -101,6 +101,14 @@ export class FakePaseo implements PaseoPort {
       agent.activeTurn = false;
       return { archivedAt: agent.archivedAt };
     });
+  }
+
+  /** Operator-owned model per provider; `null` means the provider declares none. */
+  readonly peerModels: Record<string, string | null> = {};
+
+  resolveModel(provider: string): Promise<string | undefined> {
+    const configured = this.peerModels[provider];
+    return Promise.resolve(configured === null ? undefined : configured ?? this.models[provider] ?? 'model-x');
   }
 
   /** Set to force a timeline answer, e.g. `unknown` when history is incomplete. */

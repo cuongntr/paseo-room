@@ -86,14 +86,29 @@ describe('Paseo handle and SDK port', () => {
     const handle = new PaseoHandle();
     handle.supply(api);
     const port = sdkPaseoPort(handle, 50);
-    await port.createAgent({ provider: 'codex-peer', cwd: '/r', parentAgentId: 'lead', title: 'Peer', labels: { 'paseo-room.assignment': 'asg_1' } });
-    expect(created).toEqual([{ config: { provider: 'codex-peer' }, cwd: '/r', parent: 'lead', title: 'Peer', labels: { 'paseo-room.assignment': 'asg_1' } }]);
+    await port.createAgent({ provider: 'codex-peer', model: 'gpt-5.6-sol', cwd: '/r', parentAgentId: 'lead', title: 'Peer', labels: { 'paseo-room.assignment': 'asg_1' } });
+    expect(created).toEqual([{ config: { provider: 'codex-peer/gpt-5.6-sol' }, cwd: '/r', parent: 'lead', title: 'Peer', labels: { 'paseo-room.assignment': 'asg_1' } }]);
     expect(created[0]).not.toHaveProperty('prompt');
     expect(await port.getAgent('a1')).toMatchObject({ activeTurn: false, pendingPermissions: [{ id: 'p', name: 'mcp__x__ask' }] });
     await port.run('a1', 'brief', 'msg-1');
     expect(sent).toEqual([['brief', { messageId: 'msg-1' }]]);
     expect(await port.archive('a1')).toEqual({ archivedAt: 'now' });
     expect(await port.listAgents()).toHaveLength(1);
+  });
+
+  it('resolves the Peer model from the room profile, else the provider default, and never guesses', async () => {
+    const make = (profiles: unknown[], models: unknown[]) => {
+      const handle = new PaseoHandle();
+      handle.supply({
+        config: { get: () => Promise.resolve({ config: { agentProfiles: profiles } }) },
+        providers: { listModels: () => Promise.resolve({ models }) },
+      } as unknown as PaseoApi);
+      return sdkPaseoPort(handle, 50);
+    };
+    const defaults = [{ id: 'a' }, { id: 'b', isDefault: true }];
+    expect(await make([{ id: 'room-claude-peer', provider: 'claude-peer', model: 'sonnet' }], defaults).resolveModel('claude-peer')).toBe('sonnet');
+    expect(await make([{ id: 'room-codex-peer', provider: 'codex-peer' }], defaults).resolveModel('codex-peer')).toBe('b');
+    expect(await make([], [{ id: 'a' }]).resolveModel('pi-peer')).toBeUndefined();
   });
 
   it('keeps every agent SDK call inside the Paseo port module', async () => {
