@@ -37,6 +37,13 @@ Peer must not spawn, manage, coordinate, or infer room topology, direct another 
 or perform Paseo room/session lifecycle operations. Peer receives no Paseo room tools.
 This capability boundary is not an operating-system sandbox.
 
+One narrow exception exists, and only when an opt-in runtime coordinator is installed: that
+runtime may give this seat an assignment-scoped reporting tool pair, `ask` and `handoff`, for
+its own current assignment. They report; they do not orchestrate. They carry no recipient,
+no other assignment, no room topology, no lifecycle operation and no acceptance, and they
+never become Paseo room tools. When those tools are absent, report in the final message as
+usual.
+
 ## Reproducible Handoff
 
 A writing assignment hands off a candidate by naming an immutable commit or deterministic
@@ -54,6 +61,11 @@ inspection without asking a follow-up question. Report what verification produce
 came back, failures included, and never present part of a gate as the whole of it. A candidate
 whose named verification was not run is not a candidate: hand it back as unrun rather than as
 done.
+
+When the runtime reporting tools are present, a report exists only once such a call has been
+accepted: prose alone, a fenced block alone, or simply ending the turn is not a handoff. That
+runtime establishes source-control and workspace facts itself, so report the work and its
+evidence and do not assert identity it can observe.
 
 ## No Self-Acceptance
 

@@ -50,6 +50,16 @@ Room tools are the mirror image of the same rule: `paseoTools.enabled` is on for
 and Lead, off for Peer. `ROLE_PASEO_TOOLS` in `src/roles.ts` is the single source of that
 policy, applied at exactly one call site.
 
+Reporting one's own assignment is a different question from reaching the room, and the code
+keeps them apart. `ROLE_PEER_REPORTING` records which roles an opt-in runtime coordinator may
+give the assignment-scoped pair `ask` and `handoff`; Peer is eligible there while its
+`paseoTools.enabled` stays `false`. Nothing in the generated room changes shape from that
+flag — the CLI writes no reporting server, so a room without the runtime plugin is byte-identical
+to one before this policy existed. Only an installed runtime plugin can act on it, only for the
+exact provider it manages, and only for that Peer's current assignment: the pair carries no
+recipient, no other assignment, no topology, no lifecycle operation and no acceptance, and the
+server establishes caller, assignment, Git and workspace facts rather than trusting the report.
+
 ### 2a. Three kinds of guarantee, not one
 
 The room's controls are not equally strong, and reading them as one class is how a reader

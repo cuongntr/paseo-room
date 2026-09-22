@@ -60,6 +60,15 @@ That design is in git history before the `v2` rewrite. Do not reintroduce it.
   case-insensitively colliding room-skill name, plus the room-owned skill, and Peer's is an exact
   role-home projection of the non-`paseo*` operator skills. No projection ever writes into an
   operator home.
+- **Reporting an assignment is not room access.** An opt-in runtime coordinator may give a Peer
+  it manages exactly two assignment-scoped tools, `ask` and `handoff`, and `ROLE_PEER_REPORTING`
+  in `src/roles.ts` is the single source of which roles are eligible. Keep it separate from
+  `ROLE_PASEO_TOOLS`, which stays `false` for Peer: a seat may report its own work without
+  gaining a control plane. Neither tool may carry a recipient, another assignment, room topology,
+  a lifecycle operation or acceptance, and the server — never the Peer — establishes caller,
+  assignment, Git and workspace facts. The CLI writes no reporting server from this flag; only an
+  installed runtime plugin acts on it, for the exact provider it manages. Widening that pair is a
+  contract change, not an implementation detail.
 - **The room ships no default workspace protocol.** A repository's root
   `WORKSPACE_PROTOCOL.md` is optional and, where it exists, complete: there is no room default
   behind it and no point-by-point merge. Lead resolves the repository root and reads it in full

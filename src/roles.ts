@@ -8,6 +8,20 @@ export type AgentId = (typeof AGENT_IDS)[number];
 export const ROLE_PASEO_TOOLS: Record<Role, boolean> = { supervisor: true, lead: true, peer: false };
 
 /**
+ * Whether a role may be given the opt-in runtime coordinator's assignment-scoped reporting
+ * pair, `ask` and `handoff`. This is deliberately not `ROLE_PASEO_TOOLS`: that field is Paseo's
+ * native room-tool policy and stays off for Peer, because reporting one's own assignment is not
+ * room access. Supervisor and Lead already report through room tools, so only Peer needs it.
+ *
+ * The flag authorizes nothing by itself. The CLI never writes a reporting server, and no
+ * generated provider changes shape from this constant; an installed runtime plugin is the only
+ * thing that can act on it, and only for the exact provider it manages. Keeping the two
+ * policies separate is the point: a reader can see that granting a report did not grant a
+ * control plane, and `verify` still fails if Peer's `paseoTools.enabled` ever flips.
+ */
+export const ROLE_PEER_REPORTING: Record<Role, boolean> = { supervisor: false, lead: false, peer: true };
+
+/**
  * Reasoning effort a seat starts at: Supervisor routes, Lead judges, Peer implements.
  * Deliberately short of the top option on either agent — `ultra` and `ultracode`
  * advertise automatic task delegation, which is a second control plane.

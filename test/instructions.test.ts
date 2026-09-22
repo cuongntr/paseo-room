@@ -157,6 +157,27 @@ describe('role instructions', () => {
     expect(peer).not.toContain(ROOM_SKILL_NAME);
   });
 
+  it('bounds the runtime reporting exception to reporting and keeps it absent by default', () => {
+    const peer = renderInstructions('peer');
+    // The exception is stated as reporting, not as a room tool or a lifecycle grant.
+    expect(peer).toContain('Peer receives no Paseo room tools');
+    expect(peer).toContain('assignment-scoped reporting tool pair, `ask` and `handoff`');
+    expect(peer).toContain('They report; they do not orchestrate');
+    expect(peer).toContain('never become Paseo room tools');
+    // Absence is the default the seat must still work under.
+    expect(peer).toContain('When those tools are absent, report in the final message as');
+    // A report is an accepted call, and the runtime owns the facts it can observe.
+    expect(peer).toContain('a report exists only once such a call has been');
+    expect(peer).toContain('do not assert identity it can observe');
+    // The exception grants no wider surface, and reaches no other role.
+    for (const forbidden of ['assignment_create', 'assignment_accept', 'room_status', 'message_lead']) {
+      expect(peer).not.toContain(forbidden);
+    }
+    for (const role of ['supervisor', 'lead'] as const) {
+      expect(renderInstructions(role)).not.toContain('assignment-scoped reporting tool pair');
+    }
+  });
+
   it('makes Lead the sole standing reader of an optional, complete repository protocol', () => {
     const lead = renderInstructions('lead');
     expect(lead).toContain('resolve the repository root');
