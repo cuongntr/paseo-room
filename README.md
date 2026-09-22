@@ -74,7 +74,7 @@ starts, its exit code is preserved; a signal is returned using the conventional
   **0.8.0-beta.1 or newer**; any selection containing Claude or Pi requires **0.8.0 or newer**.
   Claude also requires Paseo plugins to be enabled explicitly: the generated trusted server plugin
   is the strong contract carrier, and `paseo-room` never enables plugins for you. The plugin is
-  version-bounded to `>=0.8.0 <0.9.0`. `paseo-room` checks compatibility before touching anything,
+  version-bounded to `>=0.8.0 <0.10.0`. `paseo-room` checks compatibility before touching anything,
   and never installs or upgrades Paseo.
 - An initialised Codex home (`~/.codex/config.toml`) and/or Claude Code home (`~/.claude`).
   Codex must be new enough for `codex debug models` to print its JSON model catalog: the room
@@ -98,7 +98,7 @@ starts, its exit code is preserved; a signal is returned using the conventional
     SKILL.md, references/         # procedure plus a scaffold loaded only when the skill runs
   room/skill-projections/<agent>/lead/     # exact Lead skill aggregate for each seated agent
   plugin/                         # Claude only: trusted creation-time system-prompt append carrier
-    paseo-plugin.json             # accepts Paseo >=0.8.0 <0.9.0
+    paseo-plugin.json             # accepts Paseo >=0.8.0 <0.10.0
     index.server.ts, server/      # exact provider map + generated role contracts
   roles/codex/<role>/
     config.toml                   # your config.toml + the room's overrides
@@ -612,8 +612,9 @@ npx paseo-room verify
 - **Trust.** Like the carrier, the runtime is trusted, unsandboxed code running in your daemon.
   Enable Paseo plugins yourself; `paseo-room` never does. It is not an operating-system sandbox and
   cannot stop a process running as your user.
-- **Range.** Runtime requires Paseo `>=0.8.0 <0.9.0`. `0.8.0` is the only qualified point, so a
-  newer daemon is refused for runtime while the baseline room keeps working.
+- **Range.** Runtime requires Paseo `>=0.8.0 <0.10.0`. `0.8.0` and `0.9.1` are the qualified
+  points, so a daemon outside that range is refused for runtime while the baseline room keeps
+  working.
 - **Lead** gains room tools such as `assignment_create`, `assignment_dispatch`, `assignment_answer`,
   `assignment_accept` and `gate_run`. **Supervisor** gains `room_status`, `runtime_findings` and
   `message_lead`, and cannot change an assignment.

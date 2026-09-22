@@ -68,7 +68,7 @@ describe('runtime plugin managed entries', () => {
 
   it('keeps the runtime plugin distinct from the Claude carrier', () => {
     expect(RUNTIME_PLUGIN_ID).toBe('paseo-room-runtime');
-    expect(RUNTIME_PASEO_RANGE).toBe('>=0.8.0 <0.9.0');
+    expect(RUNTIME_PASEO_RANGE).toBe('>=0.8.0 <0.10.0');
     expect(runtimePluginDir(layout)).not.toBe(join(layout.roomHome, 'plugin'));
   });
 });

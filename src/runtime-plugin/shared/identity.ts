@@ -7,5 +7,10 @@
  */
 export const RUNTIME_PLUGIN_ID = 'paseo-room-runtime';
 
-/** `0.8.0` is the only live-qualified point; `0.9.0` is unqualified, so the bound is exclusive. */
-export const RUNTIME_PASEO_RANGE = '>=0.8.0 <0.9.0';
+/**
+ * `0.8.0` and `0.9.1` are the live-qualified points. `0.9.x` carries a byte-identical plugin
+ * compiler, unchanged lifecycle hooks and an unchanged provider/profile config schema, so the
+ * host contract this plugin depends on is the same one `0.8.0` was qualified against. `0.10.0`
+ * is unqualified, so the bound stays exclusive.
+ */
+export const RUNTIME_PASEO_RANGE = '>=0.8.0 <0.10.0';

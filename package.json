@@ -40,7 +40,7 @@
   },
   "dependencies": {
     "@clack/prompts": "^1.8.0",
-    "@getpaseo/client": "0.8.0",
+    "@getpaseo/client": "0.9.1",
     "commander": "^14.0.3",
     "semver": "^7.8.5",
     "smol-toml": "^1.8.0",
@@ -48,8 +48,8 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@getpaseo/plugin": "0.8.0",
-    "@getpaseo/protocol": "0.8.0",
+    "@getpaseo/plugin": "0.9.1",
+    "@getpaseo/protocol": "0.9.1",
     "@types/node": "^22.0.0",
     "@types/react": "19.2.2",
     "@types/semver": "^7.7.0",

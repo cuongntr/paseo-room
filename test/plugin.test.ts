@@ -10,7 +10,7 @@ import {
 import { contractDigest, renderInstructions } from '../src/room/instructions.js';
 import { transformAgentCreate } from '../src/plugin-assets/index.server.js';
 import { composeSystemPrompt, contractMarker } from '../src/plugin-assets/server/carrier.js';
-import { emptyDaemon, fakeClient, makeFixture } from './helpers.js';
+import { emptyDaemon, fakeClient, makeFixture, RUNNING_STATUS } from './helpers.js';
 
 describe('Claude contract carrier composition', () => {
   it('appends without replacing and rewrites one marked block idempotently', () => {
@@ -67,6 +67,21 @@ describe('Claude contract carrier hook', () => {
 });
 
 describe('Claude contract carrier lifecycle', () => {
+  it('states the supported Paseo range itself instead of letting apply hit the daemon refusal', async () => {
+    // Paseo refuses to install a plugin whose manifest range excludes the running daemon, so a
+    // Claude room on an unsupported Paseo must fail as a room check and write nothing.
+    const fixture = await makeFixture({ paseoStatus: { ...RUNNING_STATUS, cliVersion: '0.10.0', daemonVersion: '0.10.0' } });
+    const daemon = emptyDaemon();
+    const result = await setup({ env: fixture.env, factory: fakeClient(daemon), agents: ['claude'], apply: true });
+    expect(result.outcome).toBe('failed');
+    expect(result.checks.filter(check => check.status === 'fail').map(check => check.id)).toEqual(['claude.paseo-range']);
+    expect(daemon.plugins).toEqual([]);
+    await expect(readFile(join(fixture.roomHome, 'plugin/paseo-plugin.json'), 'utf8')).rejects.toThrow();
+
+    // A codex-only room needs no plugin, so the same daemon still sets up.
+    expect((await setup({ env: fixture.env, factory: fakeClient(daemon), agents: ['codex'], apply: true })).outcome).toBe('ok');
+  });
+
   it('installs, verifies, reports drift, and removes the room-owned plugin', async () => {
     const fixture = await makeFixture();
     const daemon = emptyDaemon();
@@ -84,7 +99,7 @@ describe('Claude contract carrier lifecycle', () => {
     const parsedManifest: unknown = JSON.parse(manifest);
     expect(parsedManifest).toEqual({
       id: CLAUDE_CARRIER_PLUGIN_ID,
-      requirements: { paseo: '>=0.8.0 <0.9.0' },
+      requirements: { paseo: '>=0.8.0 <0.10.0' },
     });
     await expect(readFile(join(fixture.roomHome, 'plugin/server/contract.ts'), 'utf8'))
       .resolves.toContain(typescriptTemplateLiteral(renderInstructions('lead')));

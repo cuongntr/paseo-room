@@ -10,7 +10,7 @@ import { AUTHENTICATION_GUIDE, renderAuthenticationGuide } from './auth.js';
 import { applyEntries, exists, planEntries, type Entry } from './fsops.js';
 import { layoutChecks, resolveLayout, roleHome, sharedRoom, type Layout, type Options } from './layout.js';
 import { checkDaemon, mergeProfiles, minimumPaseoVersion, profileMatches, providerMatches, withSession, type ClientFactory, type LivePlugin, type LiveProfile, type Session } from './paseo.js';
-import { CLAUDE_CARRIER_PLUGIN_ID, claudeCarrierEntries, claudeCarrierPluginDir } from './plugin.js';
+import { CLAUDE_CARRIER_PASEO_RANGE, CLAUDE_CARRIER_PLUGIN_ID, claudeCarrierEntries, claudeCarrierPluginDir } from './plugin.js';
 import { fail, failed, hasFailure, pass, warn, type Check, type Operation, type Result } from './result.js';
 import { contractDigest } from './room/instructions.js';
 import {
@@ -89,6 +89,14 @@ interface PluginSpec {
   readonly running: string;
   readonly enabledPass: string;
   readonly enabledFail: string;
+  /**
+   * The manifest's `requirements.paseo`. Paseo refuses to install a plugin outside it, so the
+   * room states the same bound as its own check rather than letting `--apply` surface the
+   * daemon's error. Its id is explicit because the two plugins were named independently.
+   */
+  readonly paseoRange: string;
+  readonly rangeCheck: string;
+  readonly rangeRemedy: string;
 }
 
 function carrierSpec(layout: Layout): PluginSpec {
@@ -97,6 +105,8 @@ function carrierSpec(layout: Layout): PluginSpec {
     running: 'Claude contract carrier plugin',
     enabledPass: 'Paseo plugins are enabled for the required Claude contract carrier.',
     enabledFail: 'Claude rooms require the paseo-room trusted server plugin, but Paseo plugins are disabled. Plugins are trusted, unsandboxed code with access to the daemon machine.',
+    paseoRange: CLAUDE_CARRIER_PASEO_RANGE, rangeCheck: 'claude.paseo-range',
+    rangeRemedy: 'Use a Paseo release inside that range, or upgrade paseo-room, then run setup again.',
   };
 }
 
@@ -106,6 +116,8 @@ function runtimeSpec(layout: Layout): PluginSpec {
     running: 'Runtime coordination plugin (preview)',
     enabledPass: 'Paseo plugins are enabled for the runtime coordination plugin.',
     enabledFail: 'Runtime coordination is a trusted server plugin, but Paseo plugins are disabled. Plugins are trusted, unsandboxed code with access to the daemon machine.',
+    paseoRange: RUNTIME_PASEO_RANGE, rangeCheck: 'runtime.paseo-range',
+    rangeRemedy: 'Use a Paseo release inside that range, or run setup without --runtime.',
   };
 }
 
@@ -451,14 +463,14 @@ async function reconcilePlugins(session: Session, desired: Desired, stale: Stale
 }
 
 /**
- * The runtime range is exact on both ends: `0.8.0` is the only live-qualified point and `0.9.0`
- * is unqualified. Choosing runtime accepts that bound; omitting it never raises the baseline.
+ * A room plugin's range is exact on both ends: `0.8.0` and `0.9.1` are live-qualified and
+ * `0.10.0` is unqualified. Selecting the plugin accepts that bound; not selecting it never
+ * raises the baseline, which stays the floor `minimumPaseoVersion` reports.
  */
-function runtimeRangeCheck(version: string): Check {
-  return satisfies(version, RUNTIME_PASEO_RANGE)
-    ? pass('runtime.paseo-range', `Paseo ${version} is inside the runtime preview range ${RUNTIME_PASEO_RANGE}.`)
-    : fail('runtime.paseo-range', `Runtime coordination supports Paseo ${RUNTIME_PASEO_RANGE}; the running daemon is ${version}.`,
-      'Use a Paseo release inside that range, or run setup without --runtime.');
+function pluginRangeCheck(spec: PluginSpec, version: string): Check {
+  return satisfies(version, spec.paseoRange)
+    ? pass(spec.rangeCheck, `Paseo ${version} is inside the ${spec.running} range ${spec.paseoRange}.`)
+    : fail(spec.rangeCheck, `${spec.running} supports Paseo ${spec.paseoRange}; the running daemon is ${version}.`, spec.rangeRemedy);
 }
 
 /**
@@ -528,10 +540,11 @@ export async function setup(options: RunOptions = {}): Promise<Result> {
   const runtime = options.runtime === true;
   const daemon = await checkDaemon(layout, options.env, minimumPaseoVersion(compatibilityAgents, runtime || previous?.runtime?.enabled === true));
   if (!daemon.daemon) return failed('setup', daemon.checks);
+  const version = daemon.daemon.version;
   const desired = await buildDesired(layout, agents, ROLES, { memoryContract, runtime });
   const stale = await staleFrom(layout, previous, agents, ROLES, runtime);
   const runtimeChecks = [
-    ...(runtime ? [runtimeRangeCheck(daemon.daemon.version)] : []),
+    ...desired.plugins.map(spec => pluginRangeCheck(spec, version)),
     ...(stale.removePlugins.some(spec => spec.id === RUNTIME_PLUGIN_ID) ? await runtimeDeselectionCheck(layout) : []),
   ];
   const retained = stale.retainedDirectories.length === 0 ? [] : [warn(
@@ -606,17 +619,18 @@ export async function verify(options: RunOptions = {}): Promise<Result> {
   const runtime = marker.runtime?.enabled === true;
   const daemon = await checkDaemon(layout, options.env, minimumPaseoVersion(marker.agents, runtime));
   if (!daemon.daemon) return failed('verify', daemon.checks);
+  const version = daemon.daemon.version;
   const desired = await buildDesired(layout, marker.agents, marker.roles, {
     // The room's own recorded choices, so verify compares against what setup wrote.
     memoryContract: marker.claudeMemoryContract ?? true,
     runtime,
   });
-  const runtimeChecks = runtime ? [
-    runtimeRangeCheck(daemon.daemon.version),
-    marker.runtime?.generation === desired.runtime?.generation
+  const runtimeChecks = [
+    ...desired.plugins.map(spec => pluginRangeCheck(spec, version)),
+    ...(runtime ? [marker.runtime?.generation === desired.runtime?.generation
       ? pass('runtime.generation', `Runtime manifest generation ${String(desired.runtime?.generation)} matches this package.`)
-      : fail('runtime.generation', `This room was set up with runtime generation ${String(marker.runtime?.generation)}; this package generates ${String(desired.runtime?.generation)}.`, 'Run: paseo-room setup --runtime --apply'),
-  ] : [];
+      : fail('runtime.generation', `This room was set up with runtime generation ${String(marker.runtime?.generation)}; this package generates ${String(desired.runtime?.generation)}.`, 'Run: paseo-room setup --runtime --apply')] : []),
+  ];
   const checks = [...daemon.checks, ...runtimeChecks, ...desired.checks];
   if (hasFailure(daemon.checks) || hasFailure(desired.checks)) return failed('verify', checks);
 

@@ -36,7 +36,7 @@ That design is in git history before the `v2` rewrite. Do not reintroduce it.
   Role text goes in `developer_instructions`, Claude's room plugin `config.systemPrompt` append
   with `CLAUDE.md` as degraded fallback, and Pi's additive `APPEND_SYSTEM.md`.
 - **Claude's strong carrier is a required trusted plugin.** It is bounded to Paseo
-  `>=0.8.0 <0.9.0`, appends only for exact room Claude provider ids at agent creation, and
+  `>=0.8.0 <0.10.0`, appends only for exact room Claude provider ids at agent creation, and
   retains `CLAUDE.md` as degraded/resume fallback. Require `pluginsEnabled`; never set or infer it.
   `--no-claude-memory-contract` drops only the contract half of `CLAUDE.md`, never the operator's
   own memory, and is recorded in the marker so `verify` compares against the room's own choice.

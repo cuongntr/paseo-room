@@ -6,7 +6,8 @@ import { providerId, type Role } from './roles.js';
 import { contractDigest, renderInstructions } from './room/instructions.js';
 
 export const CLAUDE_CARRIER_PLUGIN_ID = 'paseo-room-claude-carrier';
-export const CLAUDE_CARRIER_PASEO_RANGE = '>=0.8.0 <0.9.0';
+/** Kept in step with `RUNTIME_PASEO_RANGE`: both bind the same unchanged plugin host contract. */
+export const CLAUDE_CARRIER_PASEO_RANGE = '>=0.8.0 <0.10.0';
 
 const STATIC_ASSETS = [
   'paseo-plugin.json',

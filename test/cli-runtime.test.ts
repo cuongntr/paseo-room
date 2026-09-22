@@ -79,7 +79,7 @@ describe('setup --runtime', () => {
     expect(checkIds(refused, 'fail')).toContain('runtime.plugin.enabled');
     await expect(stat(pluginDir(disabled.fixture))).rejects.toThrow();
 
-    const newer = await room(emptyDaemon(), { ...RUNNING_STATUS, cliVersion: '0.9.0', daemonVersion: '0.9.0' });
+    const newer = await room(emptyDaemon(), { ...RUNNING_STATUS, cliVersion: '0.10.0', daemonVersion: '0.10.0' });
     const outside = await setup(newer.options({ runtime: true }));
     expect(checkIds(outside, 'fail')).toEqual(['runtime.paseo-range']);
     // Without --runtime the same daemon still sets up the baseline room.
