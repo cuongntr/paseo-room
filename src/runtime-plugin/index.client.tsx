@@ -4,12 +4,13 @@
  * Runs inside the Paseo app on every platform: React Native primitives only, no DOM, and no
  * import from `server/` or any `node:` module. See docs/design/runtime-coordination.md §8.1.
  */
-import type { PluginClientContribution } from '@getpaseo/plugin/client';
+import type { PluginClientContext } from '@getpaseo/plugin/client';
 import { RuntimeSurface, RuntimeWorkspacePanel } from './client/views.js';
 
 const SURFACE = 'paseo-room-runtime';
 
-const contribute: PluginClientContribution = client => {
+// Hoisted on purpose; see the note in index.server.ts about Paseo's eager export copy.
+export default function contribute(client: PluginClientContext): () => Promise<void> {
   // The surface is registered before the sidebar item that points at it.
   const removers = [
     client.addSurface(SURFACE, RuntimeSurface),
@@ -17,6 +18,4 @@ const contribute: PluginClientContribution = client => {
     client.addWorkspacePanel({ id: SURFACE, title: 'Room runtime', icon: 'workflow', context: 'workspace', Component: RuntimeWorkspacePanel }),
   ];
   return async () => { for (const remove of removers.reverse()) await remove(); };
-};
-
-export default contribute;
+}
