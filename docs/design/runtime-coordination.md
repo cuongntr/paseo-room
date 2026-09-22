@@ -1359,6 +1359,14 @@ restored afterwards). Every probe agent was archived.
 | Panel | First mobile load failed with "Unknown Lucide icon": the app resolves icons by Lucide component name, so `workflow` had to be `Workflow` (fixed, with a naming test). After the fix the operator's mobile app (compact layout, light theme) showed the Room runtime surface: manifest `ready`, all three projects `healthy`, the Trust section, legible theme colours. | pass (mobile, light) |
 | Not rehearsed live | Whole-room `remove --apply` (would delete the operator's real room; covered by CLI tests); visual panel check on wide/compact and light/dark (needs the operator's eyes). | pending |
 
+R3 rehearsal (risk owner: repository owner; rehearsal selected in §14) on the live daemon: plugin reload —
+pass; plugin disable (`verify` fails, carrier and room unaffected) and re-enable — pass; daemon restart —
+pass; runtime deselection on quiet state and re-enable — pass; export — pass. Rehearsed by automated
+fault injection only, not live: unresolved agent creation and unresolved delivery (crash at every
+intent/result boundary against the fake Paseo), gate timeout and process-group termination (real processes
+in temporary repositories), and whole-room `remove --apply`, which on this machine would delete the
+operator's real room because Paseo provider ids are global.
+
 Operational findings: room Claude Peers start in Paseo's "Always Ask" mode, so an unattended Claude Peer waits
 on every tool, not only the reporter; and the advertised flat `handoff` schema marks `details`/`blocker` as
 conditionally required only in their descriptions, which one Pi turn missed once.

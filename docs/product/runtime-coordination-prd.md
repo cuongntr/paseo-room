@@ -434,6 +434,7 @@ Phases 0–1 because those phases contain no sensor and no worktree concurrency.
 
 | Date | Author | Change |
 |---|---|---|
+| 2026-09-22 | Bytes | Phase 1 MVP delivered on branch `feat/runtime-coordination-phase1` and qualified live on Paseo `0.8.0` across all three exact Peer paths; Q-003b resolved. Implementation deltas are recorded in [runtime-coordination-change-001](../plans/runtime-coordination-change-001-implementation-deltas.md). Phase 2 remains unauthorized. |
 | 2026-09-22 | Repository owner / Bytes | Qualified the reporting carrier on all three exact Peer providers, split Q-003 into resolved Q-003a and open Q-003b (a Phase 1 exit criterion), resolved Q-005 as preview range `>=0.8.0 <0.9.0`, and recorded that Claude gates a reporting call behind an explicit tool permission while Codex and Pi do not. Phase 1 planning is now unblocked. |
 | 2026-09-22 | Repository owner | Accepted the PRD without amendment. Status moved Review → Accepted; the four carried proposed answers (Q-007, Q-008, Q-012, Q-013) became decisions. Acceptance authorized Phase 1 design activation and planning subject to the then-open carrier and version questions, and did not itself authorize implementation or Phase 2. |
 | 2026-09-22 | Repository owner / Bytes | Resolved Q-014: the owner authorized and landed the narrow reporting amendment, adding `ROLE_PEER_REPORTING` alongside an unchanged `ROLE_PASEO_TOOLS.peer: false`, amending `AGENTS.md`, `docs/design.md` and the Peer contract, and leaving `src/agents/mcp.ts` and `src/agents/resources.ts` unchanged as unrelated. |

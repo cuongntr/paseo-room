@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Active |
+| Status | Archived |
 | Plan-ready | PASS — 2026-09-22 — Bytes (self-evaluated under the repository owner's instruction to proceed) |
 | Owner | Repository owner |
 | Routing decision | [PRD routing decision](../product/runtime-coordination-prd.md#routing-decision): brownfield; trusted-plugin boundary, public tool/RPC contract, persistent local state, role authorization, multi-session handoff, phased rollout with weak rollback; PRD → Technical Design → Implementation Plan → Beads |
@@ -424,5 +424,6 @@ No other open question affects Phase 1 scope. Q-009 through Q-011 are deferred t
 
 | Date | Author | Change |
 |---|---|---|
+| 2026-09-22 | Bytes | Phase 1 MVP completed 2026-09-22 on branch `feat/runtime-coordination-phase1`: 30/30 leaves closed, `npm run verify` green, live qualification and R3 rehearsal recorded in the Technical Design. Deltas in [change-001](runtime-coordination-change-001-implementation-deltas.md). This plan covered only Phase 1, so it is archived; Phase 2 needs its own design delta and plan. |
 | 2026-09-22 | Bytes | Passed `plan-ready-for-beads` and activated; Phase 1 scope frozen (WP-001–WP-010). Accepted the >8-WP warning under R-5. |
 | 2026-09-22 | Bytes | Created Draft from the Accepted PRD and Active design: ten work packages for Phase 1 MVP, settled CLI spelling, source layout, host-supplied plugin dependencies, bridge process, Paseo-handle handling and export surface. |
