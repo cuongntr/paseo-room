@@ -1356,6 +1356,7 @@ restored afterwards). Every probe agent was archived.
 | Archive and release | Every close produced `archive.requested → ownership.releasing → archive.succeeded → ownership.released` with a refreshed `closed` status. | pass |
 | Deselect, re-enable, export | Setup without `--runtime` on quiet state unregistered the plugin and kept 3 projects; `--runtime` restored it; `export --apply` wrote 3 projects, no omissions, no gate output. | pass |
 | Daemon restart | At the operator's request a detached script ran `paseo daemon restart` (PID 219117 → 1040391) and then the checks: carrier and runtime reloaded to `running`, `verify` ok, and the full matrix on all three paths returned identical codes with each original receipt replayed from the durable ledger. A second, independent daemon start (PID 1046382) also reloaded the runtime to `running`. | pass |
+| Panel | First mobile load failed with "Unknown Lucide icon": the app resolves icons by Lucide component name, so `workflow` had to be `Workflow` (fixed, with a naming test). After the fix the operator's mobile app (compact layout, light theme) showed the Room runtime surface: manifest `ready`, all three projects `healthy`, the Trust section, legible theme colours. | pass (mobile, light) |
 | Not rehearsed live | Whole-room `remove --apply` (would delete the operator's real room; covered by CLI tests); visual panel check on wide/compact and light/dark (needs the operator's eyes). | pending |
 
 Operational findings: room Claude Peers start in Paseo's "Always Ask" mode, so an unattended Claude Peer waits
