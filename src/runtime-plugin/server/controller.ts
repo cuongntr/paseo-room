@@ -596,12 +596,14 @@ export class Controller {
       if (view.gates.some(run => run.status === 'running')) return refuse('gate_running', 'A gate is already running for this assignment.', true);
       // Proven and recorded inside this queue slot, so a second call sees the running gate and a
       // refused gate is refused to Lead rather than silently never started.
-      const precondition = await this.deps.git.dispatchPrecondition(caller.cwd, { gitCommonDir: loaded.store.meta.gitCommonDir, baseCommit: candidate.commit });
+      // An isolated assignment's gate runs in its worktree (Phase 2 delta §6); every other rule holds.
+      const cwd = loaded.state.ownership.get(view.id)?.lease?.worktreePath ?? caller.cwd;
+      const precondition = await this.deps.git.dispatchPrecondition(cwd, { gitCommonDir: loaded.store.meta.gitCommonDir, baseCommit: candidate.commit }).catch((error: unknown) => ({ ok: false as const, message: error instanceof Error ? error.message : String(error) }));
       if (!precondition.ok) return refuse('workspace_moved', `The gate cannot run: ${precondition.message}`);
       const gateRunId = token('gate');
       const request: GateRequest = {
         gateRunId, assignmentId: view.id, candidate, command: gate.command, timeoutSeconds: gate.timeoutSeconds,
-        cwd: caller.cwd, gitCommonDir: loaded.store.meta.gitCommonDir,
+        cwd, gitCommonDir: loaded.store.meta.gitCommonDir,
       };
       await this.append(loaded, { type: 'gate.requested', payloadVersion: 1, assignmentId: view.id, actor: this.plugin, data: gateRequestedData(request) });
       const publish = async (event: GateEvent): Promise<void> => {
@@ -636,8 +638,10 @@ export class Controller {
       const { loaded, view } = found.value;
       let observedHead: string | undefined;
       if (view.input.mode === 'writable') {
-        const identity = await this.deps.git.identity(caller.cwd);
-        observedHead = await this.deps.git.head(identity.canonicalRoot);
+        // An isolated candidate lives in its worktree; Lead's own checkout is not evidence of it.
+        const worktree = loaded.state.ownership.get(view.id)?.lease?.worktreePath;
+        const root = worktree ?? (await this.deps.git.identity(caller.cwd)).canonicalRoot;
+        observedHead = await this.deps.git.head(root).catch(() => 'unavailable');
       }
       const decision = evaluateAcceptance(view, { reason: input.reason, ...(input.override === undefined ? {} : { override: input.override }), ...(observedHead === undefined ? {} : { observedHead }) });
       if (!decision.ok) return refuse(decision.code, decision.message);

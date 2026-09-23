@@ -30,7 +30,7 @@ const DESCRIPTIONS: Readonly<Record<string, string>> = {
   assignment_dispatch: 'Dispatch a draft assignment to a new Peer on an eligible room Peer provider. isolation "worktree" asks the runtime for the Peer\'s own worktree, so it may run beside other isolated writers; the runtime refuses it when scopes overlap, a serial-only path or a writer in your workspace collides, or the cap is reached, and that refusal is final for this dispatch. Scope checks prevent collisions; they do not contain the Peer.',
   assignment_answer: 'Answer a Peer question, or follow up on a blocked handback, with a new Peer turn.',
   assignment_rework: 'Send a handed-back candidate back to its Peer for rework.',
-  assignment_accept: 'Accept a handed-back assignment. Red gate evidence needs an override.',
+  assignment_accept: 'Accept a handed-back assignment. Red gate evidence, or changed paths outside an isolated assignment\'s write scope, needs an override.',
   assignment_reject: 'Reject a handed-back assignment.',
   assignment_abandon: 'Abandon an assignment.',
   assignment_close: 'Close a decided assignment by archiving its Peer. Your workspace is not closed.',

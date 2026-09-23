@@ -1,8 +1,12 @@
-import { writeFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { DispatchInput } from '../src/runtime-plugin/server/controller.js';
 import { CreationConflictError } from '../src/runtime-plugin/server/paseo-port.js';
+import { latestCapability } from '../src/runtime-plugin/server/capabilities.js';
+import { createPeerHandlers } from '../src/runtime-plugin/server/handlers/peer.js';
+import type { HandlerReply } from '../src/runtime-plugin/server/spool.js';
 import { harness, readOnlyBrief, writableBrief, type Harness } from './runtime-harness.js';
 
 const open: Harness[] = [];
@@ -210,5 +214,82 @@ describe('worktree dispatch', () => {
     expect(after.state.workspaces.get(conflict)?.create).toBe('failed');
     expect(after.state.ownership.get(conflict)?.state).toBe('released');
     expect(other.paseo.calls.filter(call => call.operation === 'createWorktreeWorkspace')).toHaveLength(1);
+  });
+});
+
+describe('isolated handoff, acceptance and gate', () => {
+  const gate = { command: 'test -f src/api/a.ts', timeoutSeconds: 30, runtimeRerun: 'optional', processContractVersion: 1 };
+  const complete = { completion: 'complete', summary: 'Implemented.', deliverables: ['src/api/a.ts'], verification: [{ command: gate.command, outcome: 'passed' }], residualRisks: [], evidence: [], details: { kind: 'engineer' } };
+  let counter = 0;
+
+  async function seat(h: Harness, scope: string[]) {
+    const id = await assignment(h, { writeScope: scope, gate });
+    const result = await h.controller.dispatch(h.lead, isolated(id));
+    if (!result.ok) throw new Error(result.message);
+    const association = await h.hooks.correlations.findByAssignment(id);
+    const worktree = (await ledger(h)).state.workspaces.get(id)?.worktreePath ?? '';
+    return { id, correlation: association?.correlationId ?? '', worktree };
+  }
+
+  async function handoff(h: Harness, correlation: string): Promise<HandlerReply> {
+    const capability = (await latestCapability(join(h.runtimeRoot, 'capabilities'), correlation))?.capability;
+    return await createPeerHandlers(h.controller).handoff({
+      protocol: 1, requestId: `req_${String(++counter).padStart(8, '0')}`, operation: 'handoff', payload: JSON.parse(JSON.stringify(complete)) as unknown,
+      correlation, ...(capability === undefined ? {} : { capability }),
+    }, { kind: 'peer', role: 'peer' });
+  }
+
+  async function commit(worktree: string, paths: string[]): Promise<string> {
+    for (const path of paths) {
+      await mkdir(join(worktree, path, '..'), { recursive: true });
+      await writeFile(join(worktree, path), 'x');
+    }
+    const git = (...args: string[]): string => execFileSync('git', ['-c', 'user.name=T', '-c', 'user.email=t@example.invalid', '-C', worktree, ...args], { encoding: 'utf8' }).trim();
+    git('add', '.');
+    git('commit', '-q', '-m', 'peer work');
+    return git('rev-parse', 'HEAD');
+  }
+
+  it('derives the candidate in the worktree, accepts an in-scope one normally and runs the gate there', async () => {
+    const h = await room();
+    const { id, correlation, worktree } = await seat(h, ['src/api']);
+    const head = await commit(worktree, ['src/api/a.ts']);
+    expect(await handoff(h, correlation)).toMatchObject({ ok: true, result: { assignmentState: 'handed-back' } });
+    const loaded = await ledger(h);
+    expect(loaded.state.assignments.get(id)?.candidate).toMatchObject({ commit: head, changedPaths: ['src/api/a.ts'], branch: `paseo-room/${id}` });
+    expect(loaded.events.some(event => event.type === 'scope.exceeded')).toBe(false);
+    // Lead's own checkout never moved; the gate's file exists only in the worktree.
+    expect(await h.git('rev-parse', 'HEAD')).toBe(h.base);
+    const run = await h.controller.gateRun(h.lead, { assignmentId: id });
+    expect(run.ok).toBe(true);
+    const outcome = await h.controller.gates.get(run.ok ? run.value.gateRunId : '');
+    expect(outcome).toMatchObject({ status: 'finished', result: { exitCode: 0, workspaceMoved: false } });
+    expect(await h.controller.accept(h.lead, { assignmentId: id, reason: 'In scope and green.' })).toMatchObject({ ok: true, value: { red: false } });
+  });
+
+  it('records paths outside the lease\'s scope and requires an override to accept them', async () => {
+    const h = await room();
+    const { id, correlation, worktree } = await seat(h, ['src/api']);
+    const head = await commit(worktree, ['src/api/a.ts', 'README.md']);
+    expect(await handoff(h, correlation)).toMatchObject({ ok: true, result: { assignmentState: 'handed-back' } });
+    const loaded = await ledger(h);
+    const exceeded = loaded.events.find(event => event.type === 'scope.exceeded');
+    expect(exceeded?.type === 'scope.exceeded' && exceeded.data).toEqual({ candidateCommit: head, paths: ['README.md'] });
+    expect(h.paseo.agents.get('lead-1')?.prompts.at(-1)?.text).toContain('1 changed path(s) outside its write scope, e.g. README.md');
+    const refused = await h.controller.accept(h.lead, { assignmentId: id, reason: 'Looks fine.' });
+    expect(refused).toMatchObject({ ok: false, code: 'override_required' });
+    expect(!refused.ok && refused.message).toContain('README.md outside its write scope');
+    expect(await h.controller.accept(h.lead, { assignmentId: id, reason: 'Looks fine.', override: { reason: 'README change is the release note.', residualRiskAcknowledged: true } }))
+      .toMatchObject({ ok: true, value: { red: true } });
+  });
+
+  it('refuses acceptance when the worktree moved after handoff', async () => {
+    const h = await room();
+    const { id, correlation, worktree } = await seat(h, ['src/api']);
+    await commit(worktree, ['src/api/a.ts']);
+    await handoff(h, correlation);
+    await commit(worktree, ['src/api/b.ts']);
+    expect(await h.controller.accept(h.lead, { assignmentId: id, reason: 'ok' })).toMatchObject({ ok: false, code: 'candidate_moved' });
+    expect(await h.controller.gateRun(h.lead, { assignmentId: id })).toMatchObject({ ok: false, code: 'workspace_moved' });
   });
 });

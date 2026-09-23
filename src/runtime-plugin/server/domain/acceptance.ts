@@ -61,9 +61,14 @@ export function evaluateAcceptance(view: AssignmentView, request: AcceptanceRequ
       ? refuse('rerun_pending', 'The required runtime gate is still running.')
       : refuse('rerun_required', 'This assignment requires a runtime gate rerun on the candidate before acceptance.');
   }
-  const red = peer === 'failed' || (required && finished !== undefined && rerunIsRed(finished));
+  const gateRed = peer === 'failed' || (required && finished !== undefined && rerunIsRed(finished));
+  // An isolated candidate that changed paths outside its lease's scopes (Phase 2 delta §5.4).
+  const exceeded = view.scopeExceeded !== undefined && view.scopeExceeded.candidateCommit === candidate.commit;
+  const red = gateRed || exceeded;
   if (red && (request.override === undefined || request.override.reason.trim() === '')) {
-    return refuse('override_required', 'The gate evidence is red: accepting it needs an override reason and a residual-risk acknowledgement.');
+    return refuse('override_required', gateRed
+      ? 'The gate evidence is red: accepting it needs an override reason and a residual-risk acknowledgement.'
+      : `The candidate changes ${view.scopeExceeded?.paths.join(', ') ?? 'paths'} outside its write scope: accepting it needs an override reason and a residual-risk acknowledgement.`);
   }
   return { ok: true, red, ...(finished === undefined ? {} : { gate: finished }) };
 }

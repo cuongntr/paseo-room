@@ -15,6 +15,7 @@ import { parsePeerToolInput, type PeerReportErrorCodeV1, type PeerReportReceiptV
 import type { Controller, LoadedProject } from '../controller.js';
 import type { Association } from '../correlations.js';
 import { actionFingerprint, resolveReceipt, sha256 } from '../domain/receipts.js';
+import { conforms, parseScopes } from '../domain/scope.js';
 import type { AssignmentView } from '../domain/state.js';
 import { PARENT_AGENT_ID_LABEL } from '../paseo-port.js';
 import type { HandlerReply, OperationHandler } from '../spool.js';
@@ -138,6 +139,11 @@ async function accept(controller: Controller, loaded: LoadedProject, association
     }
   }
 
+  // Scope conformance is evidence, not containment (Phase 2 delta §5.4): paths outside a lease's
+  // scopes are recorded beside the report and make acceptance need an override.
+  const lease = loaded.state.ownership.get(assignmentId)?.lease;
+  const outside = candidate === undefined || lease === undefined ? [] : outsideScope(candidate.changedPaths, lease.scopes);
+
   const accepted: PeerReportReceiptV1 = { schema: 1, receipt: `rcpt_${randomBytes(12).toString('base64url')}`, tool, status: 'accepted', assignmentState };
   await controller.append(loaded, {
     type: 'report.accepted', payloadVersion: 1, assignmentId,
@@ -149,8 +155,11 @@ async function accept(controller: Controller, loaded: LoadedProject, association
       ...(inspectedCommit === undefined ? {} : { inspectedCommit }),
     },
   });
+  if (candidate !== undefined && outside.length > 0) {
+    await controller.append(loaded, { type: 'scope.exceeded', payloadVersion: 1, assignmentId, actor: { source: 'plugin' }, data: { candidateCommit: candidate.commit, paths: outside } });
+  }
   // The report is already durable; a notice problem must never turn it into a refusal.
-  await notifyLead(controller, loaded, view, parsed.tool, assignmentState, parsed.input).catch(() => undefined);
+  await notifyLead(controller, loaded, view, parsed.tool, assignmentState, parsed.input, outside).catch(() => undefined);
   return { ok: true, result: accepted };
 }
 
@@ -168,14 +177,20 @@ async function writableCandidate(
 }
 
 /** Assignment-local evidence goes to that assignment's Lead, never to Supervisor or a Peer. */
-async function notifyLead(controller: Controller, loaded: LoadedProject, view: AssignmentView, tool: Tool, state: PeerReportReceiptV1['assignmentState'], input: unknown): Promise<void> {
+/** Changed paths no lease scope covers; an unparseable recorded scope covers nothing. */
+function outsideScope(changedPaths: readonly string[], scopes: readonly string[]): string[] {
+  const parsed = parseScopes(scopes);
+  return conforms(changedPaths, parsed.ok ? parsed.entries : []);
+}
+
+async function notifyLead(controller: Controller, loaded: LoadedProject, view: AssignmentView, tool: Tool, state: PeerReportReceiptV1['assignmentState'], input: unknown, outside: readonly string[]): Promise<void> {
   const report = input as { question?: string; summary?: string; blocker?: string; verification?: readonly { outcome: string }[] };
   const red = report.verification?.some(entry => entry.outcome === 'failed') === true;
   const text = tool === 'ask'
     ? `Peer on ${view.id} asks: ${report.question ?? ''}`
     : state === 'blocked'
       ? `Peer on ${view.id} handed back blocked: ${report.blocker ?? ''}`
-      : `Peer on ${view.id} handed back: ${report.summary ?? ''}${red ? ' (its gate reported a failure)' : ''}`;
+      : `Peer on ${view.id} handed back: ${report.summary ?? ''}${red ? ' (its gate reported a failure)' : ''}${outside.length > 0 ? ` (${String(outside.length)} changed path(s) outside its write scope, e.g. ${outside[0] ?? ''}; accepting needs an override)` : ''}`;
   await controller.notices.notify(loaded, {
     kind: tool === 'ask' ? 'peer-question' : state === 'blocked' ? 'blocked-handback' : 'handback', class: 'owner', disposition: 'lead-now',
     assignmentId: view.id, text, recipient: { agentId: view.leadAgentId, role: 'lead' },
