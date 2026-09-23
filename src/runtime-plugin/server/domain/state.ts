@@ -120,7 +120,7 @@ export interface AssignmentView {
   /** Intents without a terminal result, keyed by intent id. Recovery works from these. */
   readonly openIntents: Readonly<Record<string, RuntimeEventV1['type']>>;
   readonly decision?: { readonly type: 'accepted' | 'rejected' | 'abandoned'; readonly eventId: string };
-  /** Changed paths of a candidate outside its lease's scopes: evidence, not containment. */
+  /** Changed paths of the current candidate outside its lease's scopes: evidence, not containment. */
   readonly scopeExceeded?: { readonly candidateCommit: string; readonly paths: readonly string[]; readonly eventId: string };
   readonly eventIds: readonly string[];
 }
@@ -370,14 +370,12 @@ export function checkEvent(state: ProjectState, event: RuntimeEventV1): Check {
       return need(record !== undefined && record.createIntentId === event.data.intentId && from.includes(record.create), 'No unresolved worktree create matches.')
         ?? need(!('workspaceId' in event.data) || event.data.workspaceId === record?.workspaceId, 'The result names a different workspace.');
     }
-    case 'lease.reclaimed':
-      return need(owner?.lease !== undefined && owner.state !== 'released' && owner.state !== 'reserved', 'Only a held or uncertain lease is reclaimed.')
-        ?? need(event.data.fromEpoch === owner?.lease?.epoch && event.data.toEpoch === event.data.fromEpoch + 1, 'A reclaim moves the lease to exactly the next epoch.')
-        ?? need(owner?.agentId === event.data.priorAgentId && assignment.peerAgentId === event.data.priorAgentId, 'The reclaim names a different writer than the lease holder.')
-        ?? need(!TERMINAL_STATES.includes(assignment.state) && assignment.state !== 'draft' && assignment.state !== 'dispatching', `Cannot reclaim while the assignment is ${assignment.state}.`)
-        ?? need(assignment.closure === 'open', 'A closing assignment is not reclaimed.')
-        ?? need(Object.keys(assignment.openIntents).length === 0, 'Settle every unresolved effect before a reclaim.')
-        ?? need(state.workspaces.get(assignment.id)?.create === 'succeeded' && state.workspaces.get(assignment.id)?.close === 'open', 'The lease\'s worktree is not open.');
+    case 'lease.reclaimed': {
+      const check = reclaimCheck(state, assignment.id);
+      if (!check.ok) return check.message;
+      return need(event.data.fromEpoch === check.value.lease.epoch && event.data.toEpoch === event.data.fromEpoch + 1, 'A reclaim moves the lease to exactly the next epoch.')
+        ?? need(event.data.priorAgentId === check.value.prior, 'The reclaim names a different writer than the lease holder.');
+    }
     case 'scope.exceeded':
       return need(owner?.lease !== undefined, 'Only a leased candidate has scopes to exceed.')
         ?? need(assignment.candidate?.commit === event.data.candidateCommit, 'The evidence names a different candidate.');
@@ -464,6 +462,13 @@ function applyReport(state: ProjectState, view: AssignmentView, event: RuntimeEv
     ...(event.data.candidate === undefined ? {} : { candidate: event.data.candidate }),
     ...(event.data.inspectedCommit === undefined ? {} : { inspectedCommit: event.data.inspectedCommit }),
   }, event);
+  // Scope evidence belongs to one candidate; a new candidate replaces it (or not, if in scope).
+  const next = state.assignments.get(view.id);
+  if (next?.scopeExceeded !== undefined && event.data.candidate !== undefined && event.data.candidate.commit !== next.scopeExceeded.candidateCommit) {
+    const copy: { -readonly [K in keyof AssignmentView]?: AssignmentView[K] } = { ...next };
+    delete copy.scopeExceeded;
+    state.assignments.set(view.id, copy as AssignmentView);
+  }
 }
 
 /** Folds one already-checked event into the projection. */
@@ -646,20 +651,36 @@ export function project(projectId: string, events: readonly RuntimeEventV1[]): P
   return { state, violations: [] };
 }
 
+export interface ReclaimableLease {
+  readonly view: AssignmentView;
+  readonly lease: WriterLease;
+  readonly worktreePath: string;
+  readonly prior: string;
+  readonly provider: string;
+}
+
+export type ReclaimCheck =
+  | { readonly ok: true; readonly value: ReclaimableLease }
+  | { readonly ok: false; readonly code: string; readonly message: string };
+
 /**
- * Why the projection forbids reclaiming this assignment's lease, or undefined when only live proof
- * that the prior Peer stopped is still needed. Shared by the controller and the panel.
+ * The one projection rule for a lease reclaim, shared by replay (`lease.reclaimed`), the controller
+ * and the panel. What remains after it passes is live proof that the prior Peer stopped.
  */
-export function reclaimRefusal(state: ProjectState, assignmentId: string): { readonly code: string; readonly message: string } | undefined {
+export function reclaimCheck(state: ProjectState, assignmentId: string): ReclaimCheck {
+  const refused = (code: string, message: string): ReclaimCheck => ({ ok: false, code, message });
   const view = state.assignments.get(assignmentId);
   const owner = state.ownership.get(assignmentId);
+  const lease = owner?.lease;
   const record = state.workspaces.get(assignmentId);
-  if (view === undefined || owner?.lease === undefined || record === undefined) return { code: 'lease_missing', message: `Assignment ${assignmentId} holds no worktree lease.` };
-  if (owner.state === 'released' || owner.state === 'reserved') return { code: 'lease_state', message: `The lease is ${owner.state}; only a held or uncertain lease is reclaimed.` };
-  if (TERMINAL_STATES.includes(view.state) || view.closure !== 'open') return { code: 'assignment_state', message: `Assignment ${assignmentId} is ${view.state} (${view.closure}); a decided or closing assignment is not reclaimed.` };
-  if (Object.keys(view.openIntents).length > 0) return { code: 'effect_unresolved', message: 'An effect of this assignment is still unresolved; let recovery settle it first.' };
-  if (record.create !== 'succeeded' || record.close !== 'open' || record.worktreePath === undefined) return { code: 'worktree_unavailable', message: 'The lease\'s worktree is not open.' };
-  if (owner.agentId === undefined && view.peerAgentId === undefined) return { code: 'lease_state', message: 'The lease names no writer to reclaim from.' };
-  if (view.peerProviderId === undefined) return { code: 'lease_state', message: 'The assignment names no Peer provider.' };
-  return undefined;
+  if (view === undefined || owner === undefined || lease === undefined || record === undefined) return refused('lease_missing', `Assignment ${assignmentId} holds no worktree lease.`);
+  if (owner.state === 'released' || owner.state === 'reserved') return refused('lease_state', 'Only a held or uncertain lease is reclaimed.');
+  const prior = owner.agentId;
+  if (prior === undefined || view.peerAgentId !== prior) return refused('lease_state', 'The reclaim names a different writer than the lease holder.');
+  if (TERMINAL_STATES.includes(view.state) || view.state === 'draft' || view.state === 'dispatching') return refused('assignment_state', `Cannot reclaim while the assignment is ${view.state}.`);
+  if (view.closure !== 'open') return refused('assignment_state', 'A closing assignment is not reclaimed.');
+  if (Object.keys(view.openIntents).length > 0) return refused('effect_unresolved', 'Settle every unresolved effect before a reclaim.');
+  if (record.create !== 'succeeded' || record.close !== 'open' || record.worktreePath === undefined) return refused('worktree_unavailable', 'The lease\'s worktree is not open.');
+  if (view.peerProviderId === undefined) return refused('lease_state', 'The assignment names no Peer provider.');
+  return { ok: true, value: { view, lease, worktreePath: record.worktreePath, prior, provider: view.peerProviderId } };
 }

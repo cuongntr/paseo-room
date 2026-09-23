@@ -63,7 +63,7 @@ export function evaluateAcceptance(view: AssignmentView, request: AcceptanceRequ
   }
   const gateRed = peer === 'failed' || (required && finished !== undefined && rerunIsRed(finished));
   // An isolated candidate that changed paths outside its lease's scopes (Phase 2 delta §5.4).
-  const exceeded = view.scopeExceeded !== undefined && view.scopeExceeded.candidateCommit === candidate.commit;
+  const exceeded = view.scopeExceeded !== undefined;
   const red = gateRed || exceeded;
   if (red && (request.override === undefined || request.override.reason.trim() === '')) {
     return refuse('override_required', gateRed

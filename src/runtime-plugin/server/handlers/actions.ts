@@ -87,10 +87,10 @@ export function createLeadHandlers(controller: Controller): Record<string, Opera
       const mine = [...loaded.value.state.assignments.values()].filter(view => view.leadAgentId === caller.agentId);
       if (input.assignmentId !== undefined) {
         if (!mine.some(view => view.id === input.assignmentId)) return failure('assignment_unknown', `No assignment ${input.assignmentId} of yours in this project.`);
-        const detail = assignmentDetailView(loaded.value.state, input.assignmentId, 'lead');
+        const detail = assignmentDetailView(loaded.value.state, input.assignmentId, 'lead', existsSync);
         return success({ revision: revision(detail), assignment: detail });
       }
-      const details = mine.map(view => assignmentDetailView(loaded.value.state, view.id, 'lead'));
+      const details = mine.map(view => assignmentDetailView(loaded.value.state, view.id, 'lead', existsSync));
       return success({ revision: revision(details), assignments: details });
     }),
   };

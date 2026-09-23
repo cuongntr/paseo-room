@@ -140,10 +140,12 @@ function Worktrees(props: { readonly theme: Theme; readonly projectId: string; r
   const shown = project.worktrees.filter(worktree => worktree.disposition === 'retained' || worktree.disposition === 'leftover');
   if (project.leases.length === 0 && shown.length === 0) return null;
   const reasonOf = (id: string): string => (reasons[id] ?? '').trim();
-  const withReason = (id: string, run: (reason: string) => Promise<unknown>): void => {
+  /** Runs `run` with the row's reason; a destructive action (`confirm`) needs a second press. */
+  const withReason = (id: string, run: (reason: string) => Promise<unknown>, confirm = false): void => {
     const reason = reasonOf(id);
     if (reason === '') { setHint(`State a reason for ${id} first.`); return; }
     setHint(undefined);
+    if (confirm && armed !== id) { setArmed(id); return; }
     setArmed(undefined);
     setReasons({ ...reasons, [id]: '' });
     props.act(run(reason));
@@ -177,9 +179,7 @@ function Worktrees(props: { readonly theme: Theme; readonly projectId: string; r
               <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
                 <Button theme={theme} label="Close if clean" onPress={() => { setArmed(undefined); props.act(rpc.workspaceClose({ projectId: props.projectId, assignmentId: worktree.assignmentId, idempotencyKey: idempotencyKey() })); }} />
                 <Button theme={theme} danger label={armed === worktree.assignmentId ? 'Press again: destroy uncommitted work' : 'Discard work and close'} onPress={() => {
-                  if (reasonOf(worktree.assignmentId) === '') { setHint(`State a reason for ${worktree.assignmentId} first.`); return; }
-                  if (armed !== worktree.assignmentId) { setArmed(worktree.assignmentId); return; }
-                  withReason(worktree.assignmentId, reason => rpc.workspaceClose({ projectId: props.projectId, assignmentId: worktree.assignmentId, discardUncommitted: true, reason, idempotencyKey: idempotencyKey() }));
+                  withReason(worktree.assignmentId, reason => rpc.workspaceClose({ projectId: props.projectId, assignmentId: worktree.assignmentId, discardUncommitted: true, reason, idempotencyKey: idempotencyKey() }), true);
                 }} />
               </View>
             </View>

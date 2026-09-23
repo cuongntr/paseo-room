@@ -24,7 +24,7 @@ import type { AssignmentView } from './domain/state.js';
 import { recoverGate } from './gate.js';
 import { settleEndedTurn } from './handlers/turns.js';
 import { checkLeadOwnership } from './ownership.js';
-import { ASSIGNMENT_LABEL, CreationConflictError, PARENT_AGENT_ID_LABEL, type AgentSnapshot, type WorkspaceSnapshot } from './paseo-port.js';
+import { ASSIGNMENT_LABEL, CreationConflictError, PARENT_AGENT_ID_LABEL, peerStopped, type AgentSnapshot, type WorkspaceSnapshot } from './paseo-port.js';
 import type { Spool } from './spool.js';
 import { ProjectStore } from './store/project.js';
 
@@ -182,7 +182,7 @@ export class Recovery {
     const agentId = view.peerAgentId;
     if (agentId === undefined) return { assignmentId: view.id, intent: intentId, outcome: 'uncertain', detail: 'No managed Peer.' };
     const snapshot = await this.controller.deps.paseo.getAgent(agentId);
-    if (snapshot?.status === 'closed' && snapshot.archivedAt !== null) {
+    if (peerStopped(snapshot)) {
       await this.controller.append(loaded, { type: 'archive.succeeded', payloadVersion: 1, assignmentId: view.id, actor: { source: 'paseo' }, data: { intentId, agentId, archivedAt: snapshot.archivedAt, liveStatus: 'closed' } });
       const owner = loaded.state.ownership.get(view.id);
       if (owner !== undefined && (owner.state === 'releasing' || owner.state === 'uncertain')) {
@@ -242,7 +242,7 @@ export class Recovery {
       return { assignmentId: view.id, intent: intentId, outcome: 'uncertain', detail: `Paseo answered with workspace ${snapshot.id}, not ${record.workspaceId}.` };
     }
     await this.controller.append(loaded, { type: 'workspace.create-refused', payloadVersion: 1, assignmentId: view.id, actor: plugin, data: { intentId, workspaceId: record.workspaceId, reason: 'Recovered after an interrupted dispatch; recovery never adopts a worktree.' } });
-    const closed = await this.controller.closeWorkspace(loaded, view.id, { discardUncommitted: false, reason: 'Recovered after an interrupted dispatch; no Peer was ever placed in it.' }, undefined, snapshot.directory).catch(() => undefined);
+    const closed = await this.controller.closeWorkspace(loaded, view.id, { discardUncommitted: false, reason: 'Recovered after an interrupted dispatch; no Peer was ever placed in it.', directory: snapshot.directory }).catch(() => undefined);
     return { assignmentId: view.id, intent: intentId, outcome: 'archived-unbound', detail: `Closed recovered worktree ${record.workspaceId}${closed?.ok === true ? '' : ' (close unconfirmed)'}.` };
   }
 

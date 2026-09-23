@@ -8,7 +8,7 @@
 import type { RuntimeEventV1 } from '../events/schema.js';
 import { canonicalJson, sha256 } from './receipts.js';
 import {
-  activeLeases, leadWorkspaceWriter, reclaimRefusal, TERMINAL_STATES, type AssignmentView, type ProjectState, type Violation, type WorkspaceRecord,
+  activeLeases, leadWorkspaceWriter, reclaimCheck, TERMINAL_STATES, type AssignmentView, type ProjectState, type Violation, type WorkspaceRecord,
 } from './state.js';
 
 export type EvidenceClass = 'enforced' | 'detected' | 'procedural' | 'unverifiable';
@@ -88,9 +88,6 @@ export interface WorktreeView {
   readonly create: Claim<string>;
   readonly close: Claim<string>;
   readonly disposition: WorktreeDisposition;
-  /** Writer released but the worktree kept for an explicit close decision. */
-  readonly retained: boolean;
-  readonly directoryRemoved?: boolean;
 }
 
 export interface ProjectStatusView {
@@ -146,7 +143,7 @@ function leaseView(state: ProjectState, assignmentId: string): LeaseView | undef
     epoch: lease.epoch, scopes: lease.scopes, serialOnly: lease.serialOnly, workspaceId: lease.workspaceId, branch: lease.branch,
     ...(lease.worktreePath === undefined ? {} : { worktreePath: lease.worktreePath }),
     ...(owner.agentId === undefined ? {} : { agentId: owner.agentId }),
-    reclaimable: reclaimRefusal(state, assignmentId) === undefined,
+    reclaimable: reclaimCheck(state, assignmentId).ok,
   };
 }
 
@@ -167,20 +164,18 @@ export function worktreeDisposition(state: ProjectState, record: WorkspaceRecord
   return state.ownership.get(record.assignmentId)?.state === 'released' ? 'retained' : 'active';
 }
 
-/** Released writer, worktree created (or refused) and not closed: kept for an explicit decision. */
-export function isRetained(state: ProjectState, record: WorkspaceRecord): boolean {
-  return worktreeDisposition(state, record) === 'retained';
-}
-
-function worktreeView(state: ProjectState, record: WorkspaceRecord, present?: (path: string) => boolean): WorktreeView {
+function worktreeView(record: WorkspaceRecord, disposition: WorktreeDisposition): WorktreeView {
   const claim = (value: string): Claim<string> => ({ value, evidence: value === 'uncertain' ? 'unverifiable' : 'detected' });
-  const disposition = worktreeDisposition(state, record, present);
   return {
     assignmentId: record.assignmentId, workspaceId: record.workspaceId, branch: record.branch ?? record.branchName,
     ...(record.worktreePath === undefined ? {} : { path: record.worktreePath }),
-    create: claim(record.create), close: claim(record.close), disposition, retained: disposition === 'retained',
-    ...(record.directoryRemoved === undefined ? {} : { directoryRemoved: record.directoryRemoved }),
+    create: claim(record.create), close: claim(record.close), disposition,
   };
+}
+
+/** Every record's disposition, worked out once per view (each may check the disk). */
+function dispositions(state: ProjectState, present?: (path: string) => boolean): Map<WorkspaceRecord, WorktreeDisposition> {
+  return new Map([...state.workspaces.values()].map(record => [record, worktreeDisposition(state, record, present)]));
 }
 
 function eventIdsOf(events: readonly RuntimeEventV1[], assignmentId: string, type: RuntimeEventV1['type']): string[] {
@@ -223,11 +218,12 @@ export function findings(input: StatusInput): Finding[] {
       found.push({ kind: 'awaiting-permission', evidence: 'detected', assignmentId: view.id, message: `The Peer for ${view.id} is waiting for permission to call its reporting tool.`, recoveryAction: RECOVERY.permission, sourceEventIds: eventIdsOf(input.events, view.id, 'permission.awaiting').slice(-1) });
     }
   }
-  for (const record of input.state.workspaces.values()) {
+  for (const [record, disposition] of dispositions(input.state, input.present)) {
     const ids = record.eventIds.slice(-1);
-    const disposition = worktreeDisposition(input.state, record, input.present);
-    if (disposition === 'unresolved' && (record.create === 'uncertain' || record.close === 'uncertain') && !flagged.has(record.assignmentId)) {
-      found.push({ kind: 'uncertain-effect', evidence: 'unverifiable', assignmentId: record.assignmentId, message: `The worktree ${record.create === 'uncertain' ? 'create' : 'close'} of ${record.assignmentId} is unconfirmed.`, recoveryAction: RECOVERY.uncertain, sourceEventIds: ids });
+    if (record.create === 'uncertain' || record.close === 'uncertain') {
+      if (!flagged.has(record.assignmentId)) {
+        found.push({ kind: 'uncertain-effect', evidence: 'unverifiable', assignmentId: record.assignmentId, message: `The worktree ${record.create === 'uncertain' ? 'create' : 'close'} of ${record.assignmentId} is unconfirmed.`, recoveryAction: RECOVERY.uncertain, sourceEventIds: ids });
+      }
     } else if (disposition === 'retained') {
       found.push({ kind: 'worktree-retained', evidence: 'detected', assignmentId: record.assignmentId, message: `The worktree of ${record.assignmentId} (${record.worktreePath ?? record.workspaceId}) was ${record.create === 'refused' ? 'refused and not closed' : 'retained after its writer was released'}.`, recoveryAction: RECOVERY.retained, sourceEventIds: ids });
     } else if (disposition === 'leftover') {
@@ -236,7 +232,7 @@ export function findings(input: StatusInput): Finding[] {
   }
   for (const view of input.state.assignments.values()) {
     const exceeded = view.scopeExceeded;
-    if (exceeded !== undefined && view.candidate?.commit === exceeded.candidateCommit && !TERMINAL_STATES.includes(view.state)) {
+    if (exceeded !== undefined && !TERMINAL_STATES.includes(view.state)) {
       found.push({ kind: 'scope-exceeded', evidence: 'detected', assignmentId: view.id, message: `The candidate of ${view.id} changes ${exceeded.paths.join(', ')} outside its write scope.`, recoveryAction: RECOVERY.exceeded, sourceEventIds: [exceeded.eventId] });
     }
   }
@@ -278,9 +274,7 @@ export function projectStatusView(input: StatusInput): ProjectStatusView {
     liveFacts: input.liveAvailable ? 'fresh' : 'stale',
     ...(writer === undefined ? {} : { writer: { assignmentId: writer.assignmentId, state: { value: writer.state, evidence: writer.state === 'uncertain' ? 'unverifiable' : 'enforced' } } }),
     leases: activeLeases(input.state).flatMap(owner => leaseView(input.state, owner.assignmentId) ?? []),
-    worktrees: [...input.state.workspaces.values()]
-      .filter(record => worktreeDisposition(input.state, record, input.present) !== 'gone')
-      .map(record => worktreeView(input.state, record, input.present)),
+    worktrees: [...dispositions(input.state, input.present)].filter(([, disposition]) => disposition !== 'gone').map(([record, disposition]) => worktreeView(record, disposition)),
     scopeStatement: SCOPE_STATEMENT,
     assignments: [...input.state.assignments.values()].map(summary),
     findings: found,
@@ -288,7 +282,7 @@ export function projectStatusView(input: StatusInput): ProjectStatusView {
 }
 
 /** Full assignment detail is for Lead and the operator; Supervisor observes summaries only. */
-export function assignmentDetailView(state: ProjectState, assignmentId: string, role: ViewerRole): AssignmentDetailView | undefined {
+export function assignmentDetailView(state: ProjectState, assignmentId: string, role: ViewerRole, present?: (path: string) => boolean): AssignmentDetailView | undefined {
   if (role === 'supervisor') return undefined;
   const view = state.assignments.get(assignmentId);
   if (view === undefined) return undefined;
@@ -312,9 +306,8 @@ export function assignmentDetailView(state: ProjectState, assignmentId: string, 
     })),
     ...(owner === undefined ? {} : { ownership: { value: owner.state, evidence: owner.state === 'uncertain' ? 'unverifiable' as const : 'enforced' as const } }),
     ...(lease === undefined ? {} : { lease }),
-    ...(record === undefined ? {} : { worktree: worktreeView(state, record) }),
-    // Only evidence about the current candidate: a replaced one no longer needs an override.
-    ...(view.scopeExceeded === undefined || view.scopeExceeded.candidateCommit !== view.candidate?.commit ? {} : { scopeExceeded: { value: { candidateCommit: view.scopeExceeded.candidateCommit, paths: view.scopeExceeded.paths }, evidence: 'detected' as const } }),
+    ...(record === undefined ? {} : { worktree: worktreeView(record, worktreeDisposition(state, record, present)) }),
+    ...(view.scopeExceeded === undefined ? {} : { scopeExceeded: { value: { candidateCommit: view.scopeExceeded.candidateCommit, paths: view.scopeExceeded.paths }, evidence: 'detected' as const } }),
     history: view.eventIds,
   };
 }
@@ -369,6 +362,6 @@ export function quiescence(state: ProjectState): { readonly quiescent: boolean; 
 
 /** Runtime worktrees that may still be on disk: retained ones Paseo still lists, and leftover directories. */
 export function worktreesOnDisk(state: ProjectState, present?: (path: string) => boolean): { readonly retained: number; readonly leftover: number } {
-  const dispositions = [...state.workspaces.values()].map(record => worktreeDisposition(state, record, present));
-  return { retained: dispositions.filter(value => value === 'retained').length, leftover: dispositions.filter(value => value === 'leftover').length };
+  const values = [...dispositions(state, present).values()];
+  return { retained: values.filter(value => value === 'retained').length, leftover: values.filter(value => value === 'leftover').length };
 }

@@ -135,7 +135,7 @@ export interface PaseoPort {
 }
 
 /** Paseo's proof that an agent can no longer act: archived, with a closed live status. */
-export function peerStopped(snapshot: AgentSnapshot | undefined): boolean {
+export function peerStopped(snapshot: AgentSnapshot | undefined): snapshot is AgentSnapshot & { readonly archivedAt: string } {
   return snapshot !== undefined && snapshot.archivedAt !== null && snapshot.status === 'closed';
 }
 

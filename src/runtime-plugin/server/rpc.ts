@@ -124,7 +124,7 @@ export function createRpcHandlers(runtime: RpcRuntime) {
       const store = await storeOf(runtime, input.projectId);
       if (store === undefined) return missing(input.projectId);
       const status = await statusInput(runtime, store);
-      const detail = assignmentDetailView(status.state, input.assignmentId, 'operator');
+      const detail = assignmentDetailView(status.state, input.assignmentId, 'operator', existsSync);
       return detail === undefined ? error('assignment_unknown', `No assignment ${input.assignmentId}.`, 'Refresh the project view.') : answer(runtime, detail);
     },
 

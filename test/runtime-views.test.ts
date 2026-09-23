@@ -110,8 +110,8 @@ describe('Phase 2 status views', () => {
       expect.objectContaining({ assignmentId: A, state: { value: 'held', evidence: 'enforced' }, epoch: 1, scopes: ['src/api'], serialOnly: ['generated'], workspaceId: wks(A), worktreePath: `/wt/${A}` }),
       expect.objectContaining({ assignmentId: B, scopes: ['docs'] }),
     ]);
-    expect(view.worktrees.map(worktree => [worktree.assignmentId, worktree.retained, worktree.create])).toEqual([
-      [A, false, { value: 'succeeded', evidence: 'detected' }], [B, false, { value: 'succeeded', evidence: 'detected' }],
+    expect(view.worktrees.map(worktree => [worktree.assignmentId, worktree.disposition, worktree.create])).toEqual([
+      [A, 'active', { value: 'succeeded', evidence: 'detected' }], [B, 'active', { value: 'succeeded', evidence: 'detected' }],
     ]);
     expect(view.scopeStatement).toBe(SCOPE_STATEMENT);
     expect(SCOPE_STATEMENT).toContain('do not contain a Peer');
@@ -121,7 +121,7 @@ describe('Phase 2 status views', () => {
   it('finds a retained worktree, a leftover directory and an exceeded scope, each with a recovery action', () => {
     const retained = input([...leased(A, ['src/api']), handoff(A), ...release(A)]);
     expect(findings(retained)).toEqual([expect.objectContaining({ kind: 'worktree-retained', evidence: 'detected', assignmentId: A })]);
-    expect(projectStatusView(retained).worktrees[0]).toMatchObject({ retained: true, close: { value: 'open' } });
+    expect(projectStatusView(retained).worktrees[0]).toMatchObject({ disposition: 'retained', close: { value: 'open' } });
     expect(worktreesOnDisk(retained.state)).toEqual({ retained: 1, leftover: 0 });
     expect(quiescence(retained.state).quiescent).toBe(true);
 
@@ -166,7 +166,7 @@ describe('Phase 2 status views after review', () => {
     const state = input(refusedOpen(A));
     expect(findings(state)).toEqual([expect.objectContaining({ kind: 'worktree-retained', message: expect.stringContaining('refused and not closed') as string })]);
     expect(worktreesOnDisk(state.state)).toEqual({ retained: 1, leftover: 0 });
-    expect(projectStatusView(state).worktrees).toEqual([expect.objectContaining({ disposition: 'retained', retained: true })]);
+    expect(projectStatusView(state).worktrees).toEqual([expect.objectContaining({ disposition: 'retained' })]);
   });
 
   it('clears a leftover directory once it is gone from disk', () => {
