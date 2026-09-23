@@ -73,7 +73,9 @@ That design is in git history before the `v2` rewrite. Do not reintroduce it.
   assignment, Git and workspace facts. The CLI writes no reporting server from this flag; only an
   installed runtime plugin acts on it, for the exact provider it manages. Widening that pair is a
   contract change, not an implementation detail.
-- **Runtime coordination is a separate, opt-in plugin.** `paseo-room-runtime` lives in
+- **Runtime coordination is a separate, opt-in plugin.** Concurrent writable Peers exist only as
+  runtime-isolated worktree dispatch (Phase 2); every other path keeps the one-writer limit.
+  `paseo-room-runtime` lives in
   `src/runtime-plugin/` and never shares an id, path or check with the Claude carrier. Its code may
   import only what Paseo's plugin compiler supplies (`@getpaseo/plugin*`, `zod`, and on the client
   `react`/`react-native`), and `server/bridge/bridge.mjs` only `node:` modules; the boundary test

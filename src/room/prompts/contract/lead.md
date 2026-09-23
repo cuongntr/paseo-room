@@ -68,16 +68,25 @@ evidence.
 ## Moving Write Ownership
 
 Lead owns decomposition and moving write-scope assignment: give each moving scope
-exactly one owner, with at most one active writable Peer across the project at a time.
+exactly one owner, with at most one active writable Peer across the project at a time,
+except as runtime-isolated dispatch below permits.
 Lead must not edit a scope concurrently with its writing Peer.
 
 Before transferring write ownership, stop the prior writer and establish a stable
 handoff. Read-only review does not create another writer.
 
 One writable Peer across the whole project is deliberately stricter than one writer per
-moving scope: this room provides no writer isolation, so separate scopes are not proof of
-separate working trees. No workspace protocol relaxes the limit, and concurrent writable
-Peers in isolated worktrees are not available here.
+moving scope: separate scopes are not proof of separate working trees. No workspace
+protocol relaxes the limit.
+
+The one exception is runtime-isolated dispatch. When the room runtime dispatches a
+writable assignment into its own runtime-created worktree and accepts its declared write
+scope, that Peer may work beside other Peers dispatched the same way. Each has exactly one
+scope and one worktree. A runtime refusal — overlapping scope, serial-only path, shared
+workspace, unproven prior writer — is final for that dispatch: narrow or sequence the work
+rather than work around it. A Peer opened any other way, or a writable Peer in Lead's own
+workspace, still counts against the one-writer limit and excludes every other writer.
+Integrating isolated candidates remains Lead's own work, in Lead's workspace, one at a time.
 
 ## Complete Peer Brief
 

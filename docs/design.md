@@ -786,10 +786,11 @@ silently claiming the stronger guarantee.
   the whole of it.
 - **No concurrent writable Peers.** The model asks for one writer per moving scope with
   separate working trees; **Moving Write Ownership** holds the room to one writable Peer per
-  project, which is stricter. The room provides no writer isolation, so separate scopes are
-  not evidence of separate trees, and a repository protocol cannot relax the limit.
-  Worktree-isolated concurrency is a deferred owner decision, not a gap to be closed by a
-  repository file.
+  project, which is stricter: separate scopes are not evidence of separate trees, and a
+  repository protocol cannot relax the limit. The only exception is runtime-isolated worktree
+  dispatch (runtime Phase 2, [runtime-coordination-phase2.md](design/runtime-coordination-phase2.md)):
+  the owner approved the contract amendment on 2026-09-23, but until that runtime ships no
+  Peer qualifies, so every room still has one writer per project.
 - **No security sandbox.** The room delivers tool policy and role authority. A Peer with
   shell access is not contained by it. Withholding executable resources and `paseo*` skills
   (§2b) is capability hygiene, and the MCP check is a bounded heuristic (§2a); neither is

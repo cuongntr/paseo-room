@@ -85,7 +85,7 @@ describe('role instructions', () => {
       const document = renderInstructions(role);
       expect(document).toContain('They cannot enlarge or weaken the authority this contract grants');
       expect(document).toContain(
-        'give Peer orchestration, give Supervisor or Peer technical acceptance, permit more than one writable Peer',
+        'give Peer orchestration, give Supervisor or Peer technical acceptance, relax the writable-Peer limit',
       );
       expect(document).toContain('report the conflict to Lead rather than choosing between them');
     }
@@ -132,6 +132,12 @@ describe('role instructions', () => {
     expect(lead).toContain('Lead owns one project across turns');
     expect(lead).toContain('at most one active writable Peer across the project at a time');
     expect(lead).toContain('No workspace protocol relaxes the limit');
+    // The single concurrency exception is runtime-owned worktree isolation, and nothing wider.
+    expect(lead).toContain('The one exception is runtime-isolated dispatch');
+    expect(lead).toContain('into its own runtime-created worktree');
+    expect(lead).toContain('is final for that dispatch');
+    expect(lead).toContain('A Peer opened any other way, or a writable Peer in Lead\'s own\nworkspace, still counts against the one-writer limit'.replace('\n', ' '));
+    expect(lead).toContain('Integrating isolated candidates remains Lead\'s own work');
     expect(lead).toContain('Among agents, Lead alone accepts; Human retains override authority');
     expect(lead).toContain('Lead opens Peer seats and no others');
     expect(lead).toContain('Set `notifyOnFinish: true` explicitly on every Peer creation');

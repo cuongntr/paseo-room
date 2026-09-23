@@ -1407,10 +1407,10 @@ generation-fencing and receipt-replay matrix must pass on every exact provider p
 
 ### Deferred to Phase 2 MVP
 
-Phase 2 remains descriptive, not authorized. It requires a separate design delta and an approved
-canonical Lead-contract change that grants only runtime-managed, worktree-isolated concurrency.
-That delta is drafted in [runtime-coordination-phase2.md](runtime-coordination-phase2.md) (Draft,
-awaiting the owner's decision on its §3 amendment).
+Phase 2 is authorized by its own design delta,
+[runtime-coordination-phase2.md](runtime-coordination-phase2.md) (Active), whose canonical Lead-contract
+amendment — granting only runtime-managed, worktree-isolated concurrency — the repository owner
+approved and landed on 2026-09-23. The delta governs; the list below is the original scope.
 
 - PRD REQ-010 and REQ-011;
 - multiple writable Peers;

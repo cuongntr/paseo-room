@@ -176,7 +176,7 @@ The mandatory completion gate remains `npm run verify` in repository order.
 |---|---|---|---|
 | Q-001 | Can `ultra` / `ultracode` enable delegation despite runtime closure? | Repository owner | unresolved vendor behavior; warning-only language, no hard enforcement in this phase |
 | Q-002 | Can Paseo expose a provider-owned Claude SDK `systemPrompt.append` field? | Paseo upstream | unsupported by the current paseo-room provider schema; document limitation, no CLI argv workaround |
-| Q-003 | Should repositories be allowed multiple writable Peers in isolated worktrees? | Repository owner | deferred; current conservative policy retained |
+| Q-003 | Should repositories be allowed multiple writable Peers in isolated worktrees? | Repository owner | answered 2026-09-23 — only through runtime-isolated worktree dispatch ([runtime Phase 2](runtime-coordination-phase2.md) §3); repository instructions still cannot relax the limit and baseline rooms are unchanged |
 | Q-004 | Can every plugin-contributed subagent path bypass Claude's provider and role-settings deny rules? | Repository owner | unproven; Peer plugin sharing is removed regardless because plugins also contribute MCP/hooks |
 
 No open question blocks the bounded implementation selected above.

@@ -507,9 +507,11 @@ healthy owner, and closes the duplicate only after a stable handoff. Ambiguous o
 health, or concurrent writes go back to Human rather than being guessed or merged.
 
 Two further limits are deliberately conservative. **One writable Peer per project**, not one
-per moving scope: the room gives you no writer isolation, so separate scopes are not evidence
-of separate working trees, and no workspace protocol relaxes the limit. Concurrent writable
-Peers in isolated worktrees are a deferred decision, not an oversight. And a seat's **model and
+per moving scope: separate scopes are not evidence of separate working trees, and no workspace
+protocol relaxes the limit. The contract makes one exception — Peers the runtime dispatches into
+its own worktrees with non-overlapping declared scopes — but that is runtime Phase 2, designed and
+approved in [runtime-coordination-phase2.md](docs/design/runtime-coordination-phase2.md) and not
+yet implemented, so today every Peer is inside the limit. And a seat's **model and
 reasoning effort are not one knob**: the model stays the profile's default unless a repository
 protocol explicitly supplies model routing, while the thinking effort is Lead's
 per-brief choice on task risk, uncertainty, context size and verification burden — lowest that
