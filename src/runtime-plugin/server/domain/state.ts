@@ -6,10 +6,17 @@
  * replay calls it before applying, so an illegal transition in a ledger pauses the project
  * instead of being silently absorbed. Writer ownership is its own projection: no technical
  * decision about an assignment releases it — only proven archive does.
+ *
+ * Phase 2 (docs/design/runtime-coordination-phase2.md §4, §5.3) extends a writable reservation
+ * with a writer lease on its own worktree. Leases may coexist only with each other, within the
+ * fixed cap and with provably disjoint scopes; a writer in Lead's workspace still excludes every
+ * other writer. Replay re-checks those rules, so a ledger can never hold two colliding writers.
  */
+import { MAX_WORKTREE_LEASES } from '../../shared/limits.js';
 import type { AssignmentCreateInputV1, CandidateRefV1 } from '../contracts/assignment.js';
 import type { PeerReportReceiptV1 } from '../contracts/peer.js';
 import type { GateResultV1, RuntimeEventOf, RuntimeEventV1 } from '../events/schema.js';
+import { firstOverlap, parseScopes, reaches, type ScopeEntry } from './scope.js';
 
 export type AssignmentState =
   | 'draft' | 'dispatching' | 'active' | 'questioned' | 'blocked' | 'handed-back' | 'rework'
@@ -38,12 +45,55 @@ export interface GateRun {
   readonly result?: GateResultV1;
 }
 
+/**
+ * A writer lease on a runtime-created worktree. Its state is the ownership state it extends:
+ * reserved → held → releasing → released, or uncertain.
+ */
+export interface WriterLease {
+  readonly workspaceId: string;
+  /** The requested branch until the worktree exists, then the branch Paseo resolved. */
+  readonly branch: string;
+  readonly baseCommit: string;
+  readonly scopes: readonly string[];
+  readonly serialOnly: readonly string[];
+  readonly epoch: number;
+  readonly worktreePath?: string;
+  /** Peers this lease was reclaimed from; none of them may report again. */
+  readonly priorAgentIds: readonly string[];
+}
+
 export interface WriterOwnership {
   readonly assignmentId: string;
   readonly workspaceId: string;
   readonly baseCommit: string;
   readonly agentId?: string;
   readonly state: OwnershipState;
+  readonly lease?: WriterLease;
+}
+
+export type WorkspaceCreateState = 'requested' | 'succeeded' | 'failed' | 'uncertain' | 'refused';
+export type WorkspaceCloseState = 'open' | 'requested' | 'succeeded' | 'failed' | 'uncertain';
+
+/** A runtime-requested Paseo worktree workspace, one per worktree assignment. */
+export interface WorkspaceRecord {
+  readonly assignmentId: string;
+  readonly workspaceId: string;
+  readonly idempotencyKey: string;
+  readonly baseCommit: string;
+  readonly branchName: string;
+  readonly worktreeSlug: string;
+  readonly create: WorkspaceCreateState;
+  readonly createIntentId: string;
+  readonly worktreePath?: string;
+  readonly branch?: string;
+  readonly headCommit?: string;
+  readonly close: WorkspaceCloseState;
+  readonly closeIntentId?: string;
+  readonly discardUncommitted?: boolean;
+  readonly archivedAt?: string;
+  /** False is cleanup evidence: Paseo archived the record but the directory is still there. */
+  readonly directoryRemoved?: boolean;
+  readonly eventIds: readonly string[];
 }
 
 export interface AssignmentView {
@@ -70,6 +120,8 @@ export interface AssignmentView {
   /** Intents without a terminal result, keyed by intent id. Recovery works from these. */
   readonly openIntents: Readonly<Record<string, RuntimeEventV1['type']>>;
   readonly decision?: { readonly type: 'accepted' | 'rejected' | 'abandoned'; readonly eventId: string };
+  /** Changed paths of a candidate outside its lease's scopes: evidence, not containment. */
+  readonly scopeExceeded?: { readonly candidateCommit: string; readonly paths: readonly string[]; readonly eventId: string };
   readonly eventIds: readonly string[];
 }
 
@@ -88,6 +140,8 @@ export interface ProjectState {
   ownershipConflict?: { readonly leadAgentIds: readonly string[]; readonly eventId: string };
   readonly assignments: Map<string, AssignmentView>;
   readonly ownership: Map<string, WriterOwnership>;
+  /** Runtime-requested worktree workspaces, keyed by assignment id. */
+  readonly workspaces: Map<string, WorkspaceRecord>;
   readonly notices: Map<string, NoticeView>;
   lastSequence: number;
 }
@@ -99,12 +153,73 @@ export interface Violation {
 }
 
 export function emptyProjectState(projectId: string): ProjectState {
-  return { projectId, assignments: new Map(), ownership: new Map(), notices: new Map(), lastSequence: 0 };
+  return { projectId, assignments: new Map(), ownership: new Map(), workspaces: new Map(), notices: new Map(), lastSequence: 0 };
 }
 
-/** Is any writer ownership in the project other than released? Then no writable dispatch. */
-export function activeWriter(state: ProjectState): WriterOwnership | undefined {
-  for (const owner of state.ownership.values()) if (owner.state !== 'released') return owner;
+/** Any writer ownership in the project other than released, optionally ignoring one assignment. */
+export function activeWriter(state: ProjectState, except?: string): WriterOwnership | undefined {
+  for (const owner of state.ownership.values()) if (owner.state !== 'released' && owner.assignmentId !== except) return owner;
+  return undefined;
+}
+
+/** A writer in Lead's own workspace that is not released: it excludes every other writer. */
+export function leadWorkspaceWriter(state: ProjectState, except?: string): WriterOwnership | undefined {
+  for (const owner of state.ownership.values()) {
+    if (owner.state !== 'released' && owner.lease === undefined && owner.assignmentId !== except) return owner;
+  }
+  return undefined;
+}
+
+/** Worktree leases that are not released. */
+export function activeLeases(state: ProjectState, except?: string): (WriterOwnership & { readonly lease: WriterLease })[] {
+  return [...state.ownership.values()].filter((owner): owner is WriterOwnership & { readonly lease: WriterLease } =>
+    owner.lease !== undefined && owner.state !== 'released' && owner.assignmentId !== except);
+}
+
+export type LeaseCollision =
+  | { readonly code: 'writer_exclusive'; readonly message: string }
+  | { readonly code: 'writer_uncertain'; readonly message: string }
+  | { readonly code: 'lease_cap'; readonly message: string }
+  | { readonly code: 'scope_not_canonical'; readonly message: string }
+  | { readonly code: 'scope_overlap'; readonly message: string }
+  | { readonly code: 'serial_path'; readonly message: string };
+
+function parsed(raws: readonly string[], empty: 'whole' | 'none'): readonly ScopeEntry[] | string {
+  if (raws.length === 0 && empty === 'none') return [];
+  const result = parseScopes(raws);
+  return result.ok ? result.entries : `${result.item} ${result.reason}`;
+}
+
+/**
+ * The §5.3 collision rules for a new worktree lease, decided on one projection. The controller
+ * runs them before recording anything; replay runs them again on `lease.reserved`.
+ */
+export function leaseCollision(state: ProjectState, assignmentId: string, request: { readonly scopes: readonly string[]; readonly serialOnly: readonly string[] }): LeaseCollision | undefined {
+  const exclusive = leadWorkspaceWriter(state, assignmentId);
+  if (exclusive !== undefined) return { code: 'writer_exclusive', message: `Assignment ${exclusive.assignmentId} writes in Lead's workspace (${exclusive.state}); it excludes every other writer.` };
+  const leases = activeLeases(state, assignmentId);
+  const uncertain = leases.find(lease => lease.state === 'uncertain');
+  if (uncertain !== undefined) return { code: 'writer_uncertain', message: `The writer of ${uncertain.assignmentId} is uncertain; no new writer starts until it is proven stopped.` };
+  if (leases.length >= MAX_WORKTREE_LEASES) return { code: 'lease_cap', message: `${String(MAX_WORKTREE_LEASES)} worktree leases are already held in this project.` };
+  const mine = parsed(request.scopes, 'whole');
+  if (typeof mine === 'string') return { code: 'scope_not_canonical', message: `writeScope item ${mine}.` };
+  const serial = parsed(request.serialOnly, 'none');
+  if (typeof serial === 'string') return { code: 'scope_not_canonical', message: `serialOnly item ${serial}.` };
+  const others = leases.map(lease => ({ lease, scopes: parsed(lease.lease.scopes, 'whole'), serial: parsed(lease.lease.serialOnly, 'none') }));
+  for (const other of others) {
+    // A recorded lease that no longer parses cannot be proven disjoint.
+    if (typeof other.scopes === 'string' || typeof other.serial === 'string') {
+      return { code: 'scope_overlap', message: `The scopes of ${other.lease.assignmentId} cannot be compared.` };
+    }
+    const overlap = firstOverlap(mine, other.scopes);
+    if (overlap !== undefined) return { code: 'scope_overlap', message: `${overlap[0].text} overlaps ${overlap[1].text} held by ${other.lease.assignmentId}.` };
+  }
+  const union = [...serial, ...others.flatMap(other => (typeof other.serial === 'string' ? [] : other.serial))];
+  for (const path of union) {
+    if (!mine.some(scope => reaches(scope, path))) continue;
+    const holder = others.find(other => typeof other.scopes !== 'string' && other.scopes.some(scope => reaches(scope, path)));
+    if (holder !== undefined) return { code: 'serial_path', message: `${path.text} is serial-only and ${holder.lease.assignmentId} already writes under it.` };
+  }
   return undefined;
 }
 
@@ -147,15 +262,22 @@ export function checkEvent(state: ProjectState, event: RuntimeEventV1): Check {
     case 'assignment.dispatch-requested':
       return inState(assignment, ['draft'], 'dispatch')
         ?? need(state.ownershipConflict === undefined, 'Dispatch is paused by a Lead ownership conflict.')
-        ?? need(!writable || activeWriter(state) === undefined, 'Another writer still owns this project.');
+        // The dispatch mode is not known yet: a writer in Lead's workspace excludes both modes,
+        // and `agent.create-requested` decides the rest once the mode is recorded.
+        ?? need(!writable || leadWorkspaceWriter(state) === undefined, 'Another writer still owns this project.');
     case 'ownership.reserved':
       return need(writable, 'A read-only assignment reserves no writer ownership.')
         ?? inState(assignment, ['dispatching'], 'reserve ownership')
-        ?? need(activeWriter(state) === undefined, 'Another writer still owns this project.');
-    case 'agent.create-requested':
+        ?? need(leadWorkspaceWriter(state) === undefined, 'Another writer still owns this project.');
+    case 'agent.create-requested': {
+      const lease = owner?.lease;
       return inState(assignment, ['dispatching'], 'create the Peer')
         ?? need(!writable || owner?.state === 'reserved', 'A writable Peer is created only after ownership is reserved.')
-        ?? need(assignment.peerAgentId === undefined, 'This assignment already has a Peer.');
+        ?? need(assignment.peerAgentId === undefined, 'This assignment already has a Peer.')
+        // A writer in Lead's workspace excludes every other writer, leased or not.
+        ?? need(!writable || lease !== undefined || activeWriter(state, assignment.id) === undefined, 'Another writer still owns this project.')
+        ?? need(lease === undefined || (state.workspaces.get(assignment.id)?.create === 'succeeded' && event.data.workspaceId === lease.workspaceId), 'A leased Peer is created only in its proven worktree.');
+    }
     case 'agent.create-succeeded': case 'agent.create-failed': case 'agent.create-uncertain':
       return need(assignment.openIntents[event.data.intentId] === 'agent.create-requested'
         || (assignment.state === 'uncertain' && event.type !== 'agent.create-uncertain'), 'No unresolved create intent matches.');
@@ -230,6 +352,47 @@ export function checkEvent(state: ProjectState, event: RuntimeEventV1): Check {
         ?? need(assignment.closure === 'closed', 'Ownership is released only after archive is proven.');
     case 'ownership.uncertain':
       return need(owner !== undefined && owner.state !== 'released', 'No unreleased ownership to mark uncertain.');
+    case 'lease.reserved': {
+      const collision = leaseCollision(state, assignment.id, event.data);
+      return need(writable, 'A read-only assignment holds no lease.')
+        ?? inState(assignment, ['dispatching'], 'reserve a lease')
+        ?? need(owner?.state === 'reserved' && owner.lease === undefined && owner.agentId === undefined, 'A lease extends a fresh reservation.')
+        ?? need(owner?.workspaceId === event.data.workspaceId && owner.baseCommit === event.data.baseCommit, 'The lease names a different workspace or base than the reservation.')
+        ?? (collision === undefined ? undefined : `${collision.code}: ${collision.message}`);
+    }
+    case 'workspace.create-requested':
+      return inState(assignment, ['dispatching'], 'request a worktree')
+        ?? need(owner?.state === 'reserved' && owner.lease?.workspaceId === event.data.workspaceId && owner.lease.baseCommit === event.data.baseCommit, 'A worktree is requested only for its reserved lease.')
+        ?? need(!state.workspaces.has(assignment.id), 'This assignment already requested its worktree.');
+    case 'workspace.create-succeeded': case 'workspace.create-failed': case 'workspace.create-uncertain': case 'workspace.create-refused': {
+      const record = state.workspaces.get(assignment.id);
+      const from = event.type === 'workspace.create-uncertain' ? ['requested'] : ['requested', 'uncertain'];
+      return need(record !== undefined && record.createIntentId === event.data.intentId && from.includes(record.create), 'No unresolved worktree create matches.')
+        ?? need(!('workspaceId' in event.data) || event.data.workspaceId === record?.workspaceId, 'The result names a different workspace.');
+    }
+    case 'lease.reclaimed':
+      return need(owner?.lease !== undefined && owner.state !== 'released' && owner.state !== 'reserved', 'Only a held or uncertain lease is reclaimed.')
+        ?? need(event.data.fromEpoch === owner?.lease?.epoch && event.data.toEpoch === event.data.fromEpoch + 1, 'A reclaim moves the lease to exactly the next epoch.')
+        ?? need(owner?.agentId === event.data.priorAgentId && assignment.peerAgentId === event.data.priorAgentId, 'The reclaim names a different writer than the lease holder.')
+        ?? need(!TERMINAL_STATES.includes(assignment.state) && assignment.state !== 'draft' && assignment.state !== 'dispatching', `Cannot reclaim while the assignment is ${assignment.state}.`)
+        ?? need(assignment.closure === 'open', 'A closing assignment is not reclaimed.')
+        ?? need(Object.keys(assignment.openIntents).length === 0, 'Settle every unresolved effect before a reclaim.')
+        ?? need(state.workspaces.get(assignment.id)?.create === 'succeeded' && state.workspaces.get(assignment.id)?.close === 'open', 'The lease\'s worktree is not open.');
+    case 'scope.exceeded':
+      return need(owner?.lease !== undefined, 'Only a leased candidate has scopes to exceed.')
+        ?? need(assignment.candidate?.commit === event.data.candidateCommit, 'The evidence names a different candidate.');
+    case 'workspace.close-requested': {
+      const record = state.workspaces.get(assignment.id);
+      return need(record?.workspaceId === event.data.workspaceId && (record.create === 'succeeded' || record.create === 'refused'), 'Only a created worktree is closed.')
+        ?? need(record?.close === 'open' || record?.close === 'failed', 'The worktree is already closing or closed.')
+        ?? need(owner?.state === 'released', 'A worktree closes only after its writer is proven released.')
+        ?? need(!event.data.discardUncommitted || event.data.reason !== undefined, 'Discarding uncommitted work needs a reason.');
+    }
+    case 'workspace.close-succeeded': case 'workspace.close-failed': case 'workspace.close-uncertain': {
+      const record = state.workspaces.get(assignment.id);
+      const from = event.type === 'workspace.close-uncertain' ? ['requested'] : ['requested', 'uncertain'];
+      return need(record !== undefined && record.closeIntentId === event.data.intentId && from.includes(record.close) && record.workspaceId === event.data.workspaceId, 'No unresolved worktree close matches.');
+    }
     case 'gate.requested':
       return inState(assignment, ['handed-back'], 'run a gate')
         ?? need(assignment.candidate !== undefined && assignment.candidate.commit === event.data.candidate.commit, 'A gate runs only against the projected candidate.')
@@ -268,6 +431,25 @@ function withoutPermission(view: AssignmentView): AssignmentView {
 function setOwner(state: ProjectState, id: string, change: Partial<WriterOwnership>): void {
   const current = state.ownership.get(id);
   if (current !== undefined) state.ownership.set(id, { ...current, ...change });
+}
+
+function setLease(state: ProjectState, id: string, change: Partial<WriterLease>): void {
+  const current = state.ownership.get(id);
+  if (current?.lease !== undefined) state.ownership.set(id, { ...current, lease: { ...current.lease, ...change } });
+}
+
+function setWorkspace(state: ProjectState, id: string, change: Partial<WorkspaceRecord>, event: RuntimeEventV1): void {
+  const current = state.workspaces.get(id);
+  if (current !== undefined) state.workspaces.set(id, { ...current, ...change, eventIds: [...current.eventIds, event.id] });
+}
+
+/** A reclaim ends the prior Peer's binding: the assignment dispatches again inside its lease. */
+function reclaimed(view: AssignmentView, event: RuntimeEventV1): AssignmentView {
+  const copy: { -readonly [K in keyof AssignmentView]?: AssignmentView[K] } = { ...withoutPermission(view) };
+  delete copy.peerAgentId;
+  delete copy.observedProviderId;
+  delete copy.observedModel;
+  return { ...(copy as AssignmentView), state: 'dispatching', reportingState: 'consumed', eventIds: [...view.eventIds, event.id] };
 }
 
 function applyReport(state: ProjectState, view: AssignmentView, event: RuntimeEventOf<'report.accepted'>): void {
@@ -386,6 +568,58 @@ export function applyEvent(state: ProjectState, event: RuntimeEventV1): void {
     case 'ownership.releasing': setOwner(state, id, { state: 'releasing' }); update(state, id, {}, event); return;
     case 'ownership.released': setOwner(state, id, { state: 'released' }); update(state, id, {}, event); return;
     case 'ownership.uncertain': setOwner(state, id, { state: 'uncertain' }); update(state, id, {}, event); return;
+    case 'lease.reserved':
+      setOwner(state, id, {
+        lease: {
+          workspaceId: event.data.workspaceId, branch: event.data.branch, baseCommit: event.data.baseCommit, scopes: event.data.scopes,
+          serialOnly: event.data.serialOnly, epoch: event.data.epoch, priorAgentIds: [],
+        },
+      });
+      update(state, id, {}, event); return;
+    case 'workspace.create-requested':
+      state.workspaces.set(id, {
+        assignmentId: id, workspaceId: event.data.workspaceId, idempotencyKey: event.data.idempotencyKey, baseCommit: event.data.baseCommit,
+        branchName: event.data.branchName, worktreeSlug: event.data.worktreeSlug, create: 'requested', createIntentId: event.data.intentId,
+        close: 'open', eventIds: [event.id],
+      });
+      update(state, id, { openIntents: withIntent(view, event.data.intentId, event.type) }, event); return;
+    case 'workspace.create-succeeded':
+      setWorkspace(state, id, { create: 'succeeded', worktreePath: event.data.worktreePath, branch: event.data.branch, headCommit: event.data.headCommit }, event);
+      setLease(state, id, { worktreePath: event.data.worktreePath, branch: event.data.branch });
+      update(state, id, { openIntents: withIntent(view, event.data.intentId, undefined), ...(view.state === 'uncertain' ? { state: 'dispatching' } : {}) }, event); return;
+    case 'workspace.create-failed': case 'workspace.create-refused':
+      // No Peer was ever placed in the worktree, so the lease cannot still be writing.
+      setWorkspace(state, id, { create: event.type === 'workspace.create-failed' ? 'failed' : 'refused' }, event);
+      setOwner(state, id, { state: 'released' });
+      update(state, id, { state: 'blocked', openIntents: withIntent(view, event.data.intentId, undefined) }, event); return;
+    case 'workspace.create-uncertain':
+      setWorkspace(state, id, { create: 'uncertain' }, event);
+      setOwner(state, id, { state: 'uncertain' });
+      update(state, id, { state: 'uncertain' }, event); return;
+    case 'lease.reclaimed': {
+      const owner = state.ownership.get(id);
+      const lease = owner?.lease;
+      if (owner === undefined || lease === undefined) return;
+      const next: { -readonly [K in keyof WriterOwnership]?: WriterOwnership[K] } = { ...owner, state: 'reserved', lease: { ...lease, epoch: event.data.toEpoch, priorAgentIds: [...lease.priorAgentIds, event.data.priorAgentId] } };
+      delete next.agentId;
+      state.ownership.set(id, next as WriterOwnership);
+      state.assignments.set(id, reclaimed(view, event));
+      return;
+    }
+    case 'scope.exceeded':
+      update(state, id, { scopeExceeded: { candidateCommit: event.data.candidateCommit, paths: event.data.paths, eventId: event.id } }, event); return;
+    case 'workspace.close-requested':
+      setWorkspace(state, id, { close: 'requested', closeIntentId: event.data.intentId, discardUncommitted: event.data.discardUncommitted }, event);
+      update(state, id, { openIntents: withIntent(view, event.data.intentId, event.type) }, event); return;
+    case 'workspace.close-succeeded':
+      setWorkspace(state, id, { close: 'succeeded', archivedAt: event.data.archivedAt, directoryRemoved: event.data.directoryRemoved }, event);
+      update(state, id, { openIntents: withIntent(view, event.data.intentId, undefined) }, event); return;
+    case 'workspace.close-failed':
+      setWorkspace(state, id, { close: 'failed' }, event);
+      update(state, id, { openIntents: withIntent(view, event.data.intentId, undefined) }, event); return;
+    case 'workspace.close-uncertain':
+      setWorkspace(state, id, { close: 'uncertain' }, event);
+      update(state, id, {}, event); return;
     case 'gate.requested':
       update(state, id, { gates: [...view.gates, { gateRunId: event.data.gateRunId, candidate: event.data.candidate, command: event.data.command, status: 'running' }] }, event); return;
     case 'gate.finished':

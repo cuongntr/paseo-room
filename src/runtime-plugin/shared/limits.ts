@@ -38,3 +38,9 @@ export function withinAggregateLimit(value: unknown): boolean {
     return false;
   }
 }
+
+/**
+ * Concurrent worktree writer leases per project (docs/design/runtime-coordination-phase2.md
+ * P2-D1). Fixed: raising it is a design change, not configuration.
+ */
+export const MAX_WORKTREE_LEASES = 3;

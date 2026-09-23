@@ -22,6 +22,11 @@ const reason = boundedString(1024);
 const generation = z.number().int().min(1);
 const digest = z.string().regex(/^sha256:[0-9a-f]{64}$/);
 const timestamp = z.iso.datetime({ offset: true });
+/** A Paseo workspace id the runtime chose before asking for it (delta P2-D3). */
+export const workspaceIdSchema = z.string().regex(/^wks_[a-f0-9]{16}$/);
+const branch = z.string().min(1).max(256);
+const epoch = z.number().int().min(1);
+const scopes = z.array(boundedString()).max(64);
 
 export const gateResultSchema = z.strictObject({
   id,
@@ -46,7 +51,7 @@ export const NOTICE_DISPOSITIONS = ['record', 'panel', 'lead-now', 'supervisor-d
 export const NOTICE_CLASSES = ['record', 'owner', 'operator', 'page'] as const;
 
 /**
- * Every Phase 1 payload, as a raw shape. Intent/result pairs share one `intentId` so replay can
+ * Every payload, as a raw shape. Intent/result pairs share one `intentId` so replay can
  * find an intent that never reached a terminal result.
  */
 export const EVENT_PAYLOADS = {
@@ -80,7 +85,12 @@ export const EVENT_PAYLOADS = {
   'ownership.uncertain': { reason },
 
   // External effects: agent creation, turn delivery and archive (§6).
-  'agent.create-requested': { intentId: id, peerProviderId: id, workspaceId: id, parentAgentId: id, label: id },
+  // `agentId` and `idempotencyKey` are chosen before the call, so recovery reissues the identical
+  // request (Phase 2 delta P2-D3). Optional and additive: a Phase 1 reader ignores them.
+  'agent.create-requested': {
+    intentId: id, peerProviderId: id, workspaceId: id, parentAgentId: id, label: id,
+    agentId: z.uuid().optional(), idempotencyKey: z.string().min(1).max(512).optional(),
+  },
   'agent.create-succeeded': { intentId: id, agentId: id },
   'agent.create-failed': { intentId: id, reason },
   'agent.create-uncertain': { intentId: id, reason },
@@ -125,6 +135,27 @@ export const EVENT_PAYLOADS = {
   },
   'gate.finished': { result: gateResultSchema },
   'gate.uncertain': { gateRunId: id, reason },
+
+  // Phase 2 worktree concurrency (docs/design/runtime-coordination-phase2.md §4). A writer lease
+  // extends the assignment's ownership with its own worktree, scopes and epoch.
+  'lease.reserved': { workspaceId: workspaceIdSchema, branch, baseCommit: commitSchema, scopes, serialOnly: scopes, epoch: z.literal(1) },
+  'workspace.create-requested': {
+    intentId: id, workspaceId: workspaceIdSchema, idempotencyKey: z.string().min(1).max(512), baseCommit: commitSchema,
+    branchName: branch, worktreeSlug: z.string().min(1).max(128),
+  },
+  // Written only after the Git proof (P2-D4); `branch` is the name Paseo resolved.
+  'workspace.create-succeeded': { intentId: id, workspaceId: workspaceIdSchema, worktreePath: z.string().min(1).max(4096), branch, headCommit: commitSchema },
+  'workspace.create-failed': { intentId: id, reason },
+  'workspace.create-uncertain': { intentId: id, reason },
+  // Created but failed its proof: no Peer is ever placed there, and a close follows.
+  'workspace.create-refused': { intentId: id, workspaceId: workspaceIdSchema, reason },
+  'lease.reclaimed': { fromEpoch: epoch, toEpoch: epoch, priorAgentId: id, decidedBy: z.enum(['lead', 'human']), reason },
+  // Handoff evidence, not containment (§5.4).
+  'scope.exceeded': { candidateCommit: commitSchema, paths: z.array(z.string().min(1)).min(1) },
+  'workspace.close-requested': { intentId: id, workspaceId: workspaceIdSchema, discardUncommitted: z.boolean(), reason: reason.optional() },
+  'workspace.close-succeeded': { intentId: id, workspaceId: workspaceIdSchema, archivedAt: timestamp, directoryRemoved: z.boolean() },
+  'workspace.close-failed': { intentId: id, workspaceId: workspaceIdSchema, reason },
+  'workspace.close-uncertain': { intentId: id, workspaceId: workspaceIdSchema, reason },
 
   // Deterministic notices (D9). Delivery is at least once with a stable id.
   'notice.pending': {

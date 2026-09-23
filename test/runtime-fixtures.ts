@@ -49,3 +49,29 @@ export function dispatched(id: string, mode: 'writable' | 'read-only' = 'writabl
   ];
 }
 
+
+/** A worktree workspace id for assignment `id`: `wks_` + 16 hex, stable per id. */
+export function wks(id: string): string {
+  return `wks_${Buffer.from(id).toString('hex').padEnd(16, '0').slice(-16)}`;
+}
+
+/** Worktree dispatch through lease, proven worktree, binding, held lease and the first run. */
+export function leased(id: string, scopes: readonly string[], options: { serialOnly?: readonly string[]; agent?: string } = {}): RuntimeEventV1[] {
+  const agent = options.agent ?? `peer-${id}`;
+  const workspaceId = wks(id);
+  return [
+    created(id),
+    ev('assignment.dispatch-requested', { peerProviderId: 'codex-peer', workspaceId }, id),
+    ev('ownership.reserved', { workspaceId, baseCommit: BASE }, id),
+    ev('lease.reserved', { workspaceId, branch: `paseo-room/${id}`, baseCommit: BASE, scopes, serialOnly: options.serialOnly ?? [], epoch: 1 }, id),
+    ev('workspace.create-requested', { intentId: `wsc-${id}`, workspaceId, idempotencyKey: `ws-${id}-e1`, baseCommit: BASE, branchName: `paseo-room/${id}`, worktreeSlug: id.toLowerCase() }, id),
+    ev('workspace.create-succeeded', { intentId: `wsc-${id}`, workspaceId, worktreePath: `/wt/${id}`, branch: `paseo-room/${id}`, headCommit: BASE }, id),
+    ev('agent.create-requested', { intentId: `create-${id}`, peerProviderId: 'codex-peer', workspaceId, parentAgentId: 'lead-1', label: id, agentId: '0b8f6c2e-8f1a-4c1e-9a55-3c1d2e4f5a6b', idempotencyKey: `${id}-g1-create` }, id),
+    ev('agent.create-succeeded', { intentId: `create-${id}`, agentId: agent }, id),
+    ev('binding.published', { agentId: agent, providerId: 'codex-peer', model: 'gpt-5', parentAgentId: 'lead-1', workspaceId, roomGeneration: 'g1' }, id),
+    ev('ownership.held', { agentId: agent }, id),
+    ev('reporting.generation-opened', { generation: 1, capabilityHash: DIGEST, turn: 'initial' }, id),
+    ev('run.requested', { intentId: `run-${id}-1`, generation: 1, promptDigest: DIGEST }, id),
+    ev('run.succeeded', { intentId: `run-${id}-1`, generation: 1 }, id),
+  ];
+}
