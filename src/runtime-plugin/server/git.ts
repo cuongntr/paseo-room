@@ -7,7 +7,7 @@
  * a workspace cannot rewrite its index.
  */
 import { execFile } from 'node:child_process';
-import { realpath } from 'node:fs/promises';
+import { realpath, stat } from 'node:fs/promises';
 import { isAbsolute, resolve } from 'node:path';
 import type { CandidateRefV1 } from './contracts/assignment.js';
 
@@ -55,6 +55,22 @@ export type CandidateDerivation =
 export type DispatchPrecondition =
   | { readonly ok: true; readonly head: string }
   | { readonly ok: false; readonly code: 'wrong-repository' | 'base-mismatch' | 'dirty'; readonly message: string };
+
+export type WorktreeProof =
+  | { readonly ok: true; readonly root: string; readonly head: string; readonly branch?: string }
+  | { readonly ok: false; readonly code: 'not-a-repository' | 'wrong-repository' | 'lead-directory' | 'not-linked' | 'head-mismatch' | 'dirty'; readonly message: string };
+
+/** Whether a retained worktree may be closed without destroying anything unrecorded (P2-D7). */
+export type CloseReadiness = 'clean-at-candidate' | 'clean-at-base' | 'dirty' | 'unrecorded-commits' | 'missing';
+
+/** What `paseo.json` at a commit declares for worktree setup (P2-D5). */
+export type SetupDeclaration = 'absent' | 'none' | 'declared' | 'unreadable';
+
+/** Paseo's own reading of `worktree.setup`: a non-blank string, or the non-blank strings of an array. */
+function setupCommands(value: unknown): string[] {
+  if (typeof value === 'string') return value.trim() === '' ? [] : [value];
+  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string' && entry.trim() !== '') : [];
+}
 
 export class GitEvidence {
   constructor(private readonly git: GitRunner = gitRunner()) {}
@@ -125,6 +141,77 @@ export class GitEvidence {
       return { ok: false, code: 'dirty', message: 'The workspace has uncommitted or untracked changes; the runtime never cleans, resets or stashes them.' };
     }
     return { ok: true, head };
+  }
+
+  /** Whether a path exists at all; Paseo's worktree close may leave the directory behind. */
+  async directoryPresent(path: string): Promise<boolean> {
+    try {
+      return (await stat(path)).isDirectory();
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Proves a runtime-requested worktree before any Peer is placed in it (delta P2-D4): a linked
+   * worktree of this repository, not Lead's directory, at exactly the base, with a clean tree.
+   * Paseo may silently branch from an existing branch instead of the base, so this is mandatory.
+   */
+  async provesWorktree(dir: string, expected: { readonly gitCommonDir: string; readonly baseCommit: string; readonly leadRoot: string }): Promise<WorktreeProof> {
+    let identity: RepositoryIdentity;
+    try {
+      identity = await this.identity(dir);
+    } catch (error) {
+      return { ok: false, code: 'not-a-repository', message: error instanceof Error ? error.message : String(error) };
+    }
+    if (identity.gitCommonDir !== expected.gitCommonDir) {
+      return { ok: false, code: 'wrong-repository', message: `The worktree belongs to ${identity.gitCommonDir}, not ${expected.gitCommonDir}.` };
+    }
+    const leadRoot = await realpath(expected.leadRoot).catch(() => expected.leadRoot);
+    if (identity.canonicalRoot === leadRoot) return { ok: false, code: 'lead-directory', message: 'The workspace is Lead\'s own directory, not a new worktree.' };
+    const gitDir = (await this.read(identity.canonicalRoot, ['rev-parse', '--absolute-git-dir'])).trim();
+    if (await realpath(gitDir).catch(() => gitDir) === identity.gitCommonDir) {
+      return { ok: false, code: 'not-linked', message: `${identity.canonicalRoot} is a main checkout, not a linked worktree.` };
+    }
+    const head = await this.head(identity.canonicalRoot);
+    if (head !== expected.baseCommit) {
+      return { ok: false, code: 'head-mismatch', message: `The worktree HEAD is ${head}, not the assignment base ${expected.baseCommit}.` };
+    }
+    if (!await this.isClean(identity.canonicalRoot)) return { ok: false, code: 'dirty', message: 'The new worktree already has changes.' };
+    const branch = await this.branch(identity.canonicalRoot);
+    return { ok: true, root: identity.canonicalRoot, head, ...(branch === undefined ? {} : { branch }) };
+  }
+
+  /**
+   * Close readiness of a worktree after its writer is released: clean at the recorded candidate
+   * or the unchanged base may close; anything else is retained for Lead's decision.
+   */
+  async closeReadiness(dir: string, expected: { readonly candidate?: string; readonly base: string }): Promise<CloseReadiness> {
+    if (!await this.directoryPresent(dir)) return 'missing';
+    const root = (await this.identity(dir)).canonicalRoot;
+    if (!await this.isClean(root)) return 'dirty';
+    const head = await this.head(root);
+    if (expected.candidate !== undefined && head === expected.candidate) return 'clean-at-candidate';
+    return head === expected.base ? 'clean-at-base' : 'unrecorded-commits';
+  }
+
+  /**
+   * Reads `paseo.json` exactly as committed at `commit`, never from any working tree. Setup
+   * that cannot be read is treated as declared by the caller.
+   */
+  async setupDeclared(root: string, commit: string): Promise<SetupDeclaration> {
+    const present = await this.git(root, ['cat-file', '-e', `${commit}:paseo.json`]);
+    if (present.code !== 0) return 'absent';
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(await this.read(root, ['show', `${commit}:paseo.json`]));
+    } catch {
+      return 'unreadable';
+    }
+    if (typeof parsed !== 'object' || parsed === null) return 'unreadable';
+    const worktree = (parsed as { worktree?: unknown }).worktree;
+    const setup = typeof worktree === 'object' && worktree !== null ? (worktree as { setup?: unknown }).setup : undefined;
+    return setupCommands(setup).length > 0 ? 'declared' : 'none';
   }
 
   /**

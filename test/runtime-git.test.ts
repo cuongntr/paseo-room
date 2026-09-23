@@ -115,3 +115,94 @@ describe('read-only Git evidence', () => {
     expect(await git(root, 'stash', 'list')).toBe('');
   });
 });
+
+describe('worktree evidence (Phase 2)', () => {
+  async function linked(root: string, name: string, ...args: string[]): Promise<string> {
+    const tree = join(root, '..', `${root.split('/').at(-1) ?? 'x'}-${name}`);
+    roots.push(tree);
+    await git(root, 'worktree', 'add', '-q', tree, ...args);
+    return await realpath(tree);
+  }
+
+  it('proves an exact-base linked worktree and names each failure distinctly', async () => {
+    const { root, base } = await repository();
+    const expected = { gitCommonDir: join(root, '.git'), baseCommit: base, leadRoot: root };
+    const tree = await linked(root, 'ok', '-b', 'paseo-room/asg_1', base);
+    expect(await evidence.provesWorktree(tree, expected)).toEqual({ ok: true, root: tree, head: base, branch: 'paseo-room/asg_1' });
+
+    expect(await evidence.provesWorktree(root, expected)).toMatchObject({ ok: false, code: 'lead-directory' });
+    const lead = await linked(root, 'lead', '-b', 'lead-lane', base);
+    expect(await evidence.provesWorktree(root, { ...expected, leadRoot: lead })).toMatchObject({ ok: false, code: 'not-linked' });
+
+    // Paseo branched from an existing branch instead of the requested base.
+    await writeFile(join(root, 'moved.txt'), 'x');
+    await git(root, 'add', '.');
+    await git(root, 'commit', '-q', '-m', 'moved');
+    const renamed = await linked(root, 'renamed', '-b', 'paseo-room/asg_2', 'HEAD');
+    expect(await evidence.provesWorktree(renamed, expected)).toMatchObject({ ok: false, code: 'head-mismatch' });
+
+    await writeFile(join(tree, 'wip.txt'), 'x');
+    expect(await evidence.provesWorktree(tree, expected)).toMatchObject({ ok: false, code: 'dirty' });
+
+    const other = await repository();
+    const foreign = await linked(other.root, 'foreign', '-b', 'f', other.base);
+    expect(await evidence.provesWorktree(foreign, { ...expected, baseCommit: other.base })).toMatchObject({ ok: false, code: 'wrong-repository' });
+    const outside = await mkdtemp(join(tmpdir(), 'paseo-room-nogit-'));
+    roots.push(outside);
+    expect(await evidence.provesWorktree(outside, expected)).toMatchObject({ ok: false, code: 'not-a-repository' });
+  });
+
+  it('reads worktree setup from paseo.json at the exact commit only', async () => {
+    const { root, base } = await repository();
+    expect(await evidence.setupDeclared(root, base)).toBe('absent');
+    const commit = async (content: string): Promise<string> => {
+      await writeFile(join(root, 'paseo.json'), content);
+      await git(root, 'add', 'paseo.json');
+      await git(root, 'commit', '-q', '-m', 'config');
+      return await git(root, 'rev-parse', 'HEAD');
+    };
+    expect(await evidence.setupDeclared(root, await commit('{"scripts":{}}'))).toBe('none');
+    expect(await evidence.setupDeclared(root, await commit('{"worktree":{"setup":[]}}'))).toBe('none');
+    expect(await evidence.setupDeclared(root, await commit('{"worktree":{"setup":"  "}}'))).toBe('none');
+    const declared = await commit('{"worktree":{"setup":["npm ci"]}}');
+    expect(await evidence.setupDeclared(root, declared)).toBe('declared');
+    expect(await evidence.setupDeclared(root, await commit('{"worktree":{"setup":"npm ci"}}'))).toBe('declared');
+    expect(await evidence.setupDeclared(root, await commit('{not json'))).toBe('unreadable');
+    // The working tree is never read: an uncommitted edit changes nothing.
+    await writeFile(join(root, 'paseo.json'), '{}');
+    expect(await evidence.setupDeclared(root, declared)).toBe('declared');
+    expect(await evidence.setupDeclared(root, base)).toBe('absent');
+  });
+
+  it('separates clean-at-candidate, clean-at-base, dirty, unrecorded and missing', async () => {
+    const { root, base } = await repository();
+    const tree = await linked(root, 'close', '-b', 'paseo-room/asg_3', base);
+    expect(await evidence.closeReadiness(tree, { base })).toBe('clean-at-base');
+    await writeFile(join(tree, 'feature.ts'), 'x');
+    expect(await evidence.closeReadiness(tree, { base })).toBe('dirty');
+    await git(tree, 'add', '.');
+    await git(tree, 'commit', '-q', '-m', 'feature');
+    const candidate = await git(tree, 'rev-parse', 'HEAD');
+    expect(await evidence.closeReadiness(tree, { base, candidate })).toBe('clean-at-candidate');
+    expect(await evidence.closeReadiness(tree, { base })).toBe('unrecorded-commits');
+    await writeFile(join(tree, 'late.ts'), 'x');
+    await git(tree, 'add', '.');
+    await git(tree, 'commit', '-q', '-m', 'after handoff');
+    expect(await evidence.closeReadiness(tree, { base, candidate })).toBe('unrecorded-commits');
+    expect(await evidence.closeReadiness(join(root, 'nowhere'), { base })).toBe('missing');
+    expect(await evidence.directoryPresent(tree)).toBe(true);
+    expect(await git(root, 'status', '--porcelain')).toBe('');
+  });
+
+  it('derives a candidate inside a linked worktree against the shared common directory', async () => {
+    const { root, base } = await repository();
+    const tree = await linked(root, 'derive', '-b', 'paseo-room/asg_4', base);
+    await mkdir(join(tree, 'src'));
+    await writeFile(join(tree, 'src', 'a.ts'), 'a');
+    await git(tree, 'add', '.');
+    await git(tree, 'commit', '-q', '-m', 'a');
+    const derived = await evidence.deriveCandidate(tree, { gitCommonDir: join(root, '.git'), baseCommit: base, workspaceId: 'wks_0000000000000001' });
+    expect(derived).toMatchObject({ ok: true, noChange: false, candidate: { changedPaths: ['src/a.ts'], branch: 'paseo-room/asg_4', workspaceId: 'wks_0000000000000001' } });
+    expect(await readFile(join(root, 'README.md'), 'utf8')).toBe('hello\n');
+  });
+});
