@@ -101,6 +101,12 @@ function conflictOr(error: unknown): unknown {
   return error instanceof Error && CONFLICT.test(error.message) ? new CreationConflictError(error.message) : error;
 }
 
+/** How Paseo launches a provider: its executable and the environment it sets. */
+export interface ProviderCommand {
+  readonly binary: string;
+  readonly env: Readonly<Record<string, string>>;
+}
+
 export interface PaseoPort {
   /**
    * How an exact room provider launches, from operator-owned configuration: the room profile's
@@ -108,6 +114,8 @@ export interface PaseoPort {
    * Undefined when no model exists anywhere — dispatch then refuses rather than choosing.
    */
   resolveLaunch(provider: string): Promise<PeerLaunch | undefined>;
+  /** The provider's configured executable and string environment, or undefined when it has none. */
+  providerCommand(provider: string): Promise<ProviderCommand | undefined>;
   /** Creates an agent with no initial prompt; the first turn is always a separate `run`. */
   createAgent(input: CreateAgentInput): Promise<{ readonly agentId: string }>;
   /** A fresh snapshot from Paseo, or undefined when Paseo knows no such agent. */
@@ -256,6 +264,16 @@ export function sdkPaseoPort(handle: PaseoHandle, waitMs = 10_000): PaseoPort {
       const listed = await paseo.providers.listModels(provider) as { models?: readonly { id: string; isDefault?: boolean }[] };
       const fallback = listed.models?.find(model => model.isDefault === true)?.id;
       return fallback === undefined ? undefined : { model: fallback, ...settings };
+    },
+    async providerCommand(provider) {
+      const paseo = await api();
+      const config = await paseo.config.get();
+      const providers = (config.config as { providers?: Readonly<Record<string, unknown>> }).providers ?? {};
+      const entry = (Object.hasOwn(providers, provider) ? providers[provider] : undefined) as { command?: unknown; env?: unknown } | undefined;
+      const binary = Array.isArray(entry?.command) ? (entry.command as unknown[])[0] : undefined;
+      if (typeof binary !== 'string' || binary === '') return undefined;
+      const env = typeof entry?.env === 'object' && entry.env !== null ? entry.env as Record<string, unknown> : {};
+      return { binary, env: Object.fromEntries(Object.entries(env).filter((pair): pair is [string, string] => typeof pair[1] === 'string')) };
     },
     async createAgent(input) {
       const paseo = await api();

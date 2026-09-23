@@ -291,6 +291,17 @@ is opened, hashed, parsed, copied or followed. Environment alternatives are dete
 Keyrings and providers are never queried, and setup never runs login or network token
 validation.
 
+The runtime plugin's **Room seats** settings screen is the only place the room asks which account a
+seat uses, and only when the Human opens it or presses Refresh. For each exact manifest provider
+it takes the executable and role home from Paseo's own launch entry, refuses any home that is not
+this room's `roles/<agent>/<role>`, and runs the vendor's status command there without a shell —
+`claude auth status`, `codex login status` — with only the home variables set. It keeps the
+account fields (method, email, plan, organization); Codex's prose, which can include part of an
+API key, is reduced to the login method. Pi has no status command, so for Pi, and for a Codex link
+to another home, only the `lstat` result is shown. Nothing is stored, and the vendor CLI remains
+the only reader of its credential. Account quotas are not shown: the only source reads the OAuth
+token itself.
+
 `AUTHENTICATION.md` is different from a credential path: it is a managed, secret-free guide
 at the room root. Setup renders it from the binaries it already resolved and the deterministic
 role homes it is about to manage, so custom binary and room-home paths are exact and

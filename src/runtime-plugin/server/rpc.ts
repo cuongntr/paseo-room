@@ -4,14 +4,16 @@
  * Read RPCs derive the operator's view from local state, so they keep working while Paseo is
  * unreachable and then say live facts are stale. Operator mutations go through the same
  * controller checks as seat calls, record a human actor, and require an idempotency key: a
- * retried key returns the first answer. No RPC runs a shell command or returns a secret.
+ * retried key returns the first answer. No RPC runs a shell or returns a secret; `runtime.seats`
+ * alone starts processes, each seat's own vendor status command (see seats.ts).
  */
 import type { PluginServerContext } from '@getpaseo/plugin/server';
 import { existsSync } from 'node:fs';
+import { dirname } from 'node:path';
 import type { z } from 'zod';
 import {
   runtimeAbandonRpc, runtimeAssignmentRpc, runtimeHealthRpc, runtimeLeaseReclaimRpc, runtimeProjectRpc, runtimeQuarantineRpc, runtimeRecoverRpc,
-  runtimeResolveOwnershipRpc, runtimeWorkspaceCloseRpc,
+  runtimeResolveOwnershipRpc, runtimeSeatsRpc, runtimeWorkspaceCloseRpc,
 } from '../shared/rpc-contracts.js';
 import type { RuntimeWarningV1 } from '../shared/rpc.js';
 import { RUNTIME_PLUGIN_ID } from '../shared/identity.js';
@@ -20,12 +22,15 @@ import { project } from './domain/state.js';
 import { assignmentDetailView, projectStatusView, revision, type StatusInput } from './domain/views.js';
 import { peerStopped, type PaseoApi, type PaseoHandle } from './paseo-port.js';
 import type { Recovery } from './recovery.js';
+import { lstatOrUndefined, readSeatAccounts, runStatus, type SeatDependencies } from './seats.js';
 import { ProjectStore } from './store/project.js';
 
 export interface RpcRuntime {
   readonly controller: Controller;
   readonly recovery: Recovery;
   readonly handle: PaseoHandle;
+  /** How seat status commands run; tests replace it, production runs the vendor CLI. */
+  readonly seats?: Pick<SeatDependencies, 'run' | 'lstat'>;
 }
 
 type Answer = { schema: 1; revision: string; data: unknown; warnings: RuntimeWarningV1[] } | {
@@ -192,6 +197,20 @@ export function createRpcHandlers(runtime: RpcRuntime) {
       });
     }),
 
+    async seats(): Promise<Answer> {
+      const manifest = controller.deps.recognition.current.manifest;
+      if (manifest === undefined) return error('manifest_unavailable', 'The room manifest is not loaded, so the room seats are unknown.', 'Run paseo-room verify, then reload the runtime plugin.');
+      const seats = Object.entries(manifest.providers).map(([providerId, entry]) => ({ providerId, agent: entry.agent, role: entry.role }));
+      const accounts = await readSeatAccounts({
+        // The runtime root is `<room home>/runtime/v1`.
+        roomHome: dirname(dirname(controller.deps.runtimeRoot)),
+        command: provider => controller.deps.paseo.providerCommand(provider),
+        run: runtime.seats?.run ?? runStatus,
+        lstat: runtime.seats?.lstat ?? lstatOrUndefined,
+      }, seats);
+      return answer(runtime, { checkedAt: (controller.deps.now?.() ?? new Date()).toISOString(), seats: accounts });
+    },
+
     quarantine: (input: z.infer<typeof runtimeQuarantineRpc.input>): Promise<Answer> => once(input.idempotencyKey, async () => {
       const store = await storeOf(runtime, input.projectId);
       if (store === undefined) return missing(input.projectId);
@@ -220,4 +239,5 @@ export function registerRpcs(server: Pick<PluginServerContext, 'handle'>, runtim
   server.handle(runtimeQuarantineRpc, async (input, { paseo }) => { supply(paseo); return runtimeQuarantineRpc.output.parse(await handlers.quarantine(input)); });
   server.handle(runtimeWorkspaceCloseRpc, async (input, { paseo }) => { supply(paseo); return runtimeWorkspaceCloseRpc.output.parse(await handlers.workspaceClose(input)); });
   server.handle(runtimeLeaseReclaimRpc, async (input, { paseo }) => { supply(paseo); return runtimeLeaseReclaimRpc.output.parse(await handlers.leaseReclaim(input)); });
+  server.handle(runtimeSeatsRpc, async (_input, { paseo }) => { supply(paseo); return runtimeSeatsRpc.output.parse(await handlers.seats()); });
 }

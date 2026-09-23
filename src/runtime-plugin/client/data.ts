@@ -6,7 +6,7 @@ import { useRpc } from '@getpaseo/plugin/client';
 import { useEffect, useRef, useState } from 'react';
 import {
   runtimeAbandonRpc, runtimeAssignmentRpc, runtimeHealthRpc, runtimeLeaseReclaimRpc, runtimeProjectRpc, runtimeQuarantineRpc, runtimeRecoverRpc,
-  runtimeResolveOwnershipRpc, runtimeWorkspaceCloseRpc,
+  runtimeResolveOwnershipRpc, runtimeSeatsRpc, runtimeWorkspaceCloseRpc,
 } from '../shared/rpc-contracts.js';
 
 export const POLL_MS = 5_000;
@@ -61,6 +61,7 @@ export function useRuntimeRpcs() {
     quarantine: useRpc(runtimeQuarantineRpc),
     workspaceClose: useRpc(runtimeWorkspaceCloseRpc),
     leaseReclaim: useRpc(runtimeLeaseReclaimRpc),
+    seats: useRpc(runtimeSeatsRpc),
   };
 }
 

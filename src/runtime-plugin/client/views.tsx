@@ -4,9 +4,9 @@
  * compact layout on narrow windows. It is an operator surface, never authority evidence for a seat.
  */
 import type { PluginSurfaceProps, PluginWorkspacePanelProps } from '@getpaseo/plugin/client';
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
-import { idempotencyKey, usePolled, useRuntimeRpcs } from './data.js';
+import { idempotencyKey, unwrap, usePolled, useRuntimeRpcs, type Unwrapped } from './data.js';
 
 type Theme = PluginSurfaceProps['theme'];
 
@@ -252,4 +252,71 @@ export function RuntimeSurface(props: PluginSurfaceProps) {
 
 export function RuntimeWorkspacePanel(props: PluginWorkspacePanelProps) {
   return <Runtime theme={props.theme} compact={props.layout.compact} />;
+}
+
+interface SeatAccount {
+  readonly providerId: string; readonly agent: string; readonly role: string;
+  readonly status: 'signed-in' | 'signed-out' | 'present' | 'unknown';
+  readonly method?: string; readonly email?: string; readonly plan?: string; readonly organization?: string;
+  readonly shared?: true; readonly note?: string;
+}
+
+function account(seat: SeatAccount): string {
+  if (seat.status === 'signed-out') return 'Not signed in';
+  if (seat.status === 'present') return 'Credential file present';
+  if (seat.status === 'unknown') return 'Unknown';
+  const who = seat.email ?? seat.method ?? 'Signed in';
+  return seat.plan === undefined ? who : `${who} · ${seat.plan}`;
+}
+
+/**
+ * Settings › Room seats: which account each room seat is signed in to. Loaded on open and on
+ * Refresh only, never polled, because each load runs every seat's vendor status command.
+ */
+export function RoomSeatsSettings(props: PluginSurfaceProps) {
+  const rpc = useRuntimeRpcs();
+  const [loaded, setLoaded] = useState<Unwrapped<{ readonly checkedAt: string; readonly seats: readonly SeatAccount[] }>>();
+  const [failed, setFailed] = useState<string>();
+  const [busy, setBusy] = useState(false);
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    setBusy(true);
+    rpc.seats({}).then(answer => {
+      if (cancelled) return;
+      setFailed(undefined);
+      setLoaded(unwrap(answer));
+      setBusy(false);
+    }, (error: unknown) => {
+      if (cancelled) return;
+      setFailed(error instanceof Error ? error.message : String(error));
+      setBusy(false);
+    });
+    return () => { cancelled = true; };
+  }, [tick]);
+  const { theme } = props;
+  const data = loaded?.data;
+  return (
+    <ScrollView style={{ backgroundColor: theme.colors.surface0 }} contentContainerStyle={{ padding: props.layout.compact ? 12 : 20 }}>
+      <Label theme={theme} strong>Room seats</Label>
+      <Label theme={theme} muted>Each seat's account, as its own CLI reports it for that role home. The room never reads a credential file.</Label>
+      {failed === undefined ? null : <Label theme={theme} muted>Runtime unavailable: {failed}</Label>}
+      {loaded?.error === undefined ? null : <Label theme={theme} muted>{loaded.error.message} {loaded.error.recoveryAction}</Label>}
+      {data === undefined ? (busy ? <Label theme={theme} muted>Checking…</Label> : null) : data.seats.map(seat => (
+        <View key={seat.providerId} style={{ borderTopWidth: 1, borderColor: theme.colors.border, paddingVertical: 8, flexDirection: props.layout.compact ? 'column' : 'row' }}>
+          <Text style={{ color: theme.colors.foreground, fontWeight: '600', width: props.layout.compact ? undefined : 180 }}>{seat.agent} · {seat.role}</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: seat.status === 'signed-in' ? theme.colors.foreground : theme.colors.statusWarning }}>{account(seat)}</Text>
+            {seat.organization === undefined ? null : <Text style={{ color: theme.colors.foregroundMuted }}>{seat.organization}</Text>}
+            {seat.shared === undefined ? null : <Text style={{ color: theme.colors.statusWarning }}>Linked to another home's login (legacy shared credential); run paseo-room verify for the fix.</Text>}
+            {seat.note === undefined ? null : <Text style={{ color: theme.colors.foregroundMuted }}>{seat.note}</Text>}
+          </View>
+        </View>
+      ))}
+      <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 12 }}>
+        <Button theme={theme} label={busy ? 'Checking…' : 'Refresh'} onPress={() => { if (!busy) setTick(tick + 1); }} />
+        {data === undefined ? null : <Label theme={theme} muted>Checked {new Date(data.checkedAt).toLocaleTimeString()}</Label>}
+      </View>
+    </ScrollView>
+  );
 }

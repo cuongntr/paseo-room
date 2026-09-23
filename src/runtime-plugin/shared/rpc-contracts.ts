@@ -7,6 +7,7 @@
 import { defineRpc } from '@getpaseo/plugin';
 import { z } from 'zod';
 import { boundedString } from './limits.js';
+import { RUNTIME_AGENTS, RUNTIME_ROLES } from './policy.js';
 import { runtimeRpcErrorSchema, runtimeRpcResponseSchema } from './rpc.js';
 
 const view = z.record(z.string(), z.unknown());
@@ -75,7 +76,28 @@ export const runtimeLeaseReclaimRpc = defineRpc({
   output: answer(z.strictObject({ epoch: z.number().int(), agentId: z.string(), generation: z.number().int() })),
 });
 
+const seatAccount = z.strictObject({
+  providerId: z.string().min(1).max(128),
+  agent: z.enum(RUNTIME_AGENTS),
+  role: z.enum(RUNTIME_ROLES),
+  status: z.enum(['signed-in', 'signed-out', 'present', 'unknown']),
+  method: z.string().max(200).optional(),
+  email: z.string().max(200).optional(),
+  plan: z.string().max(200).optional(),
+  organization: z.string().max(200).optional(),
+  shared: z.literal(true).optional(),
+  note: z.string().max(1_000).optional(),
+});
+
+/** Which account each room seat is signed in to, from the seat's own vendor status command. */
+export const runtimeSeatsRpc = defineRpc({
+  name: 'runtime.seats',
+  input: z.strictObject({}),
+  output: answer(z.strictObject({ checkedAt: z.string(), seats: z.array(seatAccount) })),
+});
+
 export const RUNTIME_RPCS = [
   runtimeHealthRpc, runtimeProjectRpc, runtimeAssignmentRpc, runtimeRecoverRpc, runtimeAbandonRpc,
   runtimeResolveOwnershipRpc, runtimeQuarantineRpc, runtimeWorkspaceCloseRpc, runtimeLeaseReclaimRpc,
+  runtimeSeatsRpc,
 ] as const;

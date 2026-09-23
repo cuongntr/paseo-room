@@ -5,7 +5,7 @@ import { PaseoHandle, type PaseoApi } from '../src/runtime-plugin/server/paseo-p
 import { Recovery } from '../src/runtime-plugin/server/recovery.js';
 import { createRpcHandlers, registerRpcs, type RpcRuntime } from '../src/runtime-plugin/server/rpc.js';
 import {
-  RUNTIME_RPCS, runtimeAbandonRpc, runtimeAssignmentRpc, runtimeHealthRpc, runtimeProjectRpc,
+  RUNTIME_RPCS, runtimeAbandonRpc, runtimeAssignmentRpc, runtimeHealthRpc, runtimeProjectRpc, runtimeSeatsRpc,
 } from '../src/runtime-plugin/shared/rpc-contracts.js';
 import { harness, writableBrief, type Harness } from './runtime-harness.js';
 
@@ -38,6 +38,28 @@ describe('runtime RPC contracts', () => {
 });
 
 describe('read RPCs', () => {
+  it('lists every manifest seat with its account, querying only the room role homes', async () => {
+    const h = await harness();
+    open.push(h);
+    const roomHome = join(h.root, 'room');
+    const lead = join(roomHome, 'roles', 'claude', 'lead');
+    h.paseo.commands['claude-lead'] = { binary: '/bin/claude', env: { CLAUDE_CONFIG_DIR: lead } };
+    const ran: string[] = [];
+    const runtime: RpcRuntime = {
+      controller: h.controller, recovery: new Recovery(h.controller), handle: new PaseoHandle(),
+      seats: {
+        run: (binary, args, env) => { ran.push(`${binary} ${args.join(' ')} ${String(env.CLAUDE_CONFIG_DIR)}`); return Promise.resolve({ exitCode: 0, output: JSON.stringify({ loggedIn: true, email: 'seat@example.com' }) }); },
+        lstat: () => Promise.resolve(undefined),
+      },
+    };
+    const answer = await createRpcHandlers(runtime).seats();
+    expect(runtimeSeatsRpc.output.safeParse(answer).success).toBe(true);
+    const seats = data(answer).seats as { providerId: string; status: string; email?: string }[];
+    expect(seats.find(entry => entry.providerId === 'claude-lead')).toMatchObject({ status: 'signed-in', email: 'seat@example.com' });
+    expect(seats.filter(entry => entry.providerId !== 'claude-lead').every(entry => entry.status === 'unknown')).toBe(true);
+    expect(ran).toEqual([`/bin/claude auth status ${lead}`]);
+  });
+
   it('reports plugin and project health, and labels live facts stale without Paseo', async () => {
     const { rpc, projectId } = await room({ handle: false });
     const health = await rpc.health();

@@ -148,7 +148,8 @@ docs/design.md                              # this tool's rationale; keep curren
 3. Close the agent's native multi-agent path in `pins` or in the generated config, and say
    how in `docs/design.md` §2.
 4. Keep mutable credentials role-owned and preserve-only: never copy, link, inspect, replace,
-   or validate them. Share supported read-only resources through `roleResourceEntries` in
+   or validate them. The one exception is display: the runtime's Room seats screen may run the
+   agent's own status command for a role home and keep only account fields — never open the file. Share supported read-only resources through `roleResourceEntries` in
    `src/agents/resources.ts` rather than linking them directly: it is the single place that
    decides what Peer does not receive, and declaring an executable resource name there is part
    of closing a new agent's capability surface.

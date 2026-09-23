@@ -637,6 +637,10 @@ npx paseo-room verify
   The **Room runtime** sidebar item and workspace panel show projects, assignments, writer
   ownership and findings, each labelled with how it is known (enforced, detected, procedural,
   unverifiable).
+- **Settings › Room seats** shows which account each seat is signed in to (email, plan and
+  organization for Claude; login method for Codex; for Pi, only whether a credential file exists).
+  It runs each seat's own `claude auth status` or `codex login status` when you open it or press
+  Refresh, and never reads a credential file. A seat linked to another home's login is flagged.
 
 ### Isolated writers (runtime Phase 2)
 

@@ -11,7 +11,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  ASSIGNMENT_LABEL, CreationConflictError, PARENT_AGENT_ID_LABEL, type AgentSnapshot, type CreateAgentInput, type PaseoPort, type PeerLaunch,
+  ASSIGNMENT_LABEL, CreationConflictError, PARENT_AGENT_ID_LABEL, type AgentSnapshot, type CreateAgentInput, type PaseoPort, type PeerLaunch, type ProviderCommand,
   type WorkspaceSnapshot, type WorktreeWorkspaceRequest,
 } from '../src/runtime-plugin/server/paseo-port.js';
 
@@ -243,6 +243,13 @@ export class FakePaseo implements PaseoPort {
     const model = configured ?? this.models[provider] ?? 'model-x';
     const modeId = this.peerModes[provider];
     return Promise.resolve({ model, ...(modeId === undefined ? {} : { modeId }) });
+  }
+
+  /** Operator-owned launch entries per provider, as Paseo's config would carry them. */
+  readonly commands: Record<string, ProviderCommand> = {};
+
+  providerCommand(provider: string): Promise<ProviderCommand | undefined> {
+    return Promise.resolve(this.commands[provider]);
   }
 
   /** Set to force a timeline answer, e.g. `unknown` when history is incomplete. */
