@@ -1003,6 +1003,11 @@ evidence shows lifecycle events leave state stranded; that would require a desig
 
 ## 7. Worktree Concurrency — Phase 2
 
+> **Superseded in detail by the [Phase 2 delta](runtime-coordination-phase2.md)**, which is what
+> shipped: runtime-chosen workspace ids and keys, Git proof after creation, refusal of repositories
+> that declare `worktree.setup` (instead of running it), epoch-fenced leases, gated close and
+> explicit reclaim. The text below is the original Phase 0 outline.
+
 ### 7.1 Native Paseo workspaces
 
 The plugin requests Paseo's worktree workspace with:
@@ -1410,7 +1415,9 @@ generation-fencing and receipt-replay matrix must pass on every exact provider p
 Phase 2 is authorized by its own design delta,
 [runtime-coordination-phase2.md](runtime-coordination-phase2.md) (Active), whose canonical Lead-contract
 amendment — granting only runtime-managed, worktree-isolated concurrency — the repository owner
-approved and landed on 2026-09-23. The delta governs; the list below is the original scope.
+approved and landed on 2026-09-23. The delta governs; the list below is the original scope. It is
+implemented by the [Phase 2 plan](../plans/runtime-coordination-phase2-implementation-plan.md)
+and enabled per qualified daemon version (delta §8, §9).
 
 - PRD REQ-010 and REQ-011;
 - multiple writable Peers;

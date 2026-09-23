@@ -509,9 +509,10 @@ health, or concurrent writes go back to Human rather than being guessed or merge
 Two further limits are deliberately conservative. **One writable Peer per project**, not one
 per moving scope: separate scopes are not evidence of separate working trees, and no workspace
 protocol relaxes the limit. The contract makes one exception — Peers the runtime dispatches into
-its own worktrees with non-overlapping declared scopes — but that is runtime Phase 2, designed and
-approved in [runtime-coordination-phase2.md](docs/design/runtime-coordination-phase2.md) and not
-yet implemented, so today every Peer is inside the limit. And a seat's **model and
+its own worktrees with non-overlapping declared scopes (runtime Phase 2,
+[runtime-coordination-phase2.md](docs/design/runtime-coordination-phase2.md); see
+[Isolated writers](#isolated-writers-runtime-phase-2) below). Every other Peer, and every writer in
+Lead's own workspace, is inside the limit. And a seat's **model and
 reasoning effort are not one knob**: the model stays the profile's default unless a repository
 protocol explicitly supplies model routing, while the thinking effort is Lead's
 per-brief choice on task risk, uncertainty, context size and verification burden — lowest that
@@ -619,8 +620,9 @@ npx paseo-room verify
   points, so a daemon outside that range is refused for runtime while the baseline room keeps
   working.
 - **Lead** gains room tools such as `assignment_create`, `assignment_dispatch`, `assignment_answer`,
-  `assignment_accept` and `gate_run`. **Supervisor** gains `room_status`, `runtime_findings` and
-  `message_lead`, and cannot change an assignment.
+  `assignment_accept`, `gate_run`, and for isolated writers `workspace_close` and `lease_reclaim`.
+  **Supervisor** gains `room_status`, `runtime_findings` and `message_lead`, and cannot change an
+  assignment.
 - **A runtime-dispatched Peer** gets exactly two tools, `ask` and `handoff`, for its own assignment,
   and still no Paseo room tools. A report exists only once one of those calls is accepted; its
   final message is never read as a report. Claude asks for permission before a Peer's first call
@@ -636,9 +638,48 @@ npx paseo-room verify
   ownership and findings, each labelled with how it is known (enforced, detected, procedural,
   unverifiable).
 
+### Isolated writers (runtime Phase 2)
+
+By default a writable assignment runs in Lead's workspace and excludes every other writer. With
+`isolation: "worktree"` on `assignment_dispatch`, the runtime instead asks Paseo for a new worktree
+cut from the assignment's exact base commit, proves it with Git (its repository, its exact `HEAD`, a
+clean tree, not Lead's directory), and places the Peer there with Lead as its parent. Up to three
+such writers may run at once in one project.
+
+The runtime refuses an isolated dispatch before recording anything or asking Paseo for anything,
+and the refusal is final for that dispatch — narrow or sequence the work:
+
+| Code | Why |
+|---|---|
+| `worktree_unqualified` | the daemon's version has not passed live qualification for worktree dispatch |
+| `worktree_setup_unobservable` | `paseo.json` at the base declares `worktree.setup`, which Paseo runs where the runtime cannot see it finish |
+| `scope_not_canonical` | a `writeScope` or `serialOnly` item is not a repository-relative path or `*`/`?`/`**` glob |
+| `writer_exclusive` | a writer is still active in Lead's workspace (or, the other way round, isolated writers are active) |
+| `writer_uncertain` | another isolated writer's state is uncertain |
+| `lease_cap` | three isolated writers are already active |
+| `scope_overlap` | the new scope may share a path with an active writer's scope |
+| `serial_path` | both the new scope and an active writer reach a path Lead declared `serialOnly` |
+
+Write scopes prevent collisions between isolated writers; **they do not contain a Peer**, which can
+still write anywhere its user can. At handoff the runtime records any changed path outside the
+scope as `scope.exceeded`, and accepting that candidate needs an override. Lead still integrates
+each candidate by hand, in its own workspace, one at a time; the runtime never merges, rebases or
+pushes.
+
+When the writer is released, the runtime closes a worktree that is clean at the handed-back
+candidate or the unchanged base. Anything else is kept and Lead is told: `workspace_close` with
+`discardUncommitted` and a reason destroys that work. Closing removes the directory and keeps the
+branch. If a Peer dies, `lease_reclaim` — once Paseo shows it archived — dispatches a new Peer into
+the same worktree at the next lease epoch; the old Peer's late reports are refused. The panel offers
+the Human form of both.
+
+Worktree dispatch is enabled per daemon version, only after the live qualification in the Phase 2
+delta §9 passes on that version.
+
 To stop using it, finish, close or abandon the recorded work, then run setup **without**
-`--runtime`. Setup refuses while anything is still active or uncertain, and keeps the recorded
-state once it proceeds. `npx paseo-room export --apply` copies that state out; the export omits gate
+`--runtime`. Setup refuses while anything is still active or uncertain — including an isolated
+writer's lease or an unconfirmed worktree create or close — and keeps the recorded state once it
+proceeds. Retained worktrees belong to Paseo: setup and `remove` count them and never delete them. `npx paseo-room export --apply` copies that state out; the export omits gate
 output unless you add `--include-gate-output`, and briefs or commands written by a seat cannot be
 proven secret-free. `remove --apply` warns about runtime history and then deletes it with the rest
 of the room.
@@ -654,7 +695,10 @@ of the room.
 - [docs/product/runtime-coordination-prd.md](docs/product/runtime-coordination-prd.md),
   [docs/design/runtime-coordination.md](docs/design/runtime-coordination.md) and
   [docs/plans/runtime-coordination-phase1-implementation-plan.md](docs/plans/runtime-coordination-phase1-implementation-plan.md)
-  — the runtime coordination preview: requirements, technical design and Phase 1 plan.
+  — the runtime coordination preview: requirements, technical design and Phase 1 plan;
+  [docs/design/runtime-coordination-phase2.md](docs/design/runtime-coordination-phase2.md) and
+  [docs/plans/runtime-coordination-phase2-implementation-plan.md](docs/plans/runtime-coordination-phase2-implementation-plan.md)
+  — worktree concurrency (Phase 2).
 - [docs/product/paseo-room-prd.md](docs/product/paseo-room-prd.md) — the original PRD, kept
   for history; the transactional-installer requirements in it were deliberately dropped.
 

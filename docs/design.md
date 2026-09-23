@@ -170,6 +170,16 @@ ones that surprise a reader of the code.
   `runtime/v1/exports` unless the operator names another destination explicitly.
 - **Not a sandbox.** Capabilities and bindings make every accepted report attributable and keep a
   Peer to its own assignment; they do not stop a process running as the same OS user.
+- **Isolation is a dispatch mode, not a relaxed limit** (Phase 2). A writer in Lead's workspace
+  still excludes every other writer; only writers the runtime placed in their own Git-proven
+  worktrees coexist, at most three, with scopes a conservative in-repo checker proves disjoint
+  (`server/domain/scope.ts`: it computes the intersection of two globs, which a matching library
+  cannot, and errs toward "overlapping"). Every refusal is decided on the projection before
+  anything is recorded, and replay re-checks the same rules. Paseo branches silently from an
+  existing branch of the requested name, so the Git proof after creation is mandatory, and a
+  worktree is closed automatically only when nothing uncommitted or unrecorded could be lost.
+  Worktree dispatch is enabled per daemon version (`QUALIFIED_WORKTREE_DAEMONS`), because the
+  plugin reads Paseo's version from its own host package rather than trusting the plugin range.
 
 ## 3. Where the instruction layers live
 
@@ -789,8 +799,8 @@ silently claiming the stronger guarantee.
   project, which is stricter: separate scopes are not evidence of separate trees, and a
   repository protocol cannot relax the limit. The only exception is runtime-isolated worktree
   dispatch (runtime Phase 2, [runtime-coordination-phase2.md](design/runtime-coordination-phase2.md)):
-  the owner approved the contract amendment on 2026-09-23, but until that runtime ships no
-  Peer qualifies, so every room still has one writer per project.
+  `assignment_dispatch` with `isolation: 'worktree'`, on a daemon version that passed its live
+  qualification. Every other Peer, and every writer in Lead's own workspace, keeps the limit.
 - **No security sandbox.** The room delivers tool policy and role authority. A Peer with
   shell access is not contained by it. Withholding executable resources and `paseo*` skills
   (§2b) is capability hygiene, and the MCP check is a bounded heuristic (§2a); neither is
