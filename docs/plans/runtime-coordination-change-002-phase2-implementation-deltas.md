@@ -5,10 +5,10 @@
 | Change ID | `runtime-coordination-change-002` |
 | Short name | Phase 2 implementation deltas |
 | Original plan | [runtime-coordination-phase2-implementation-plan.md](runtime-coordination-phase2-implementation-plan.md) |
-| Status | Review |
+| Status | Applied |
 | Owner | Repository owner |
 | Created | 2026-09-23 |
-| Accepted | — |
+| Accepted | 2026-09-23 — repository owner, on review |
 | Applied | 2026-09-23 |
 
 ## 1. Change summary
