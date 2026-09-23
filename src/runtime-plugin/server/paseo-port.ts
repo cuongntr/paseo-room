@@ -134,6 +134,11 @@ export interface PaseoPort {
   promptDelivered(agentId: string, messageId: string): Promise<'delivered' | 'absent' | 'unknown'>;
 }
 
+/** Paseo's proof that an agent can no longer act: archived, with a closed live status. */
+export function peerStopped(snapshot: AgentSnapshot | undefined): boolean {
+  return snapshot !== undefined && snapshot.archivedAt !== null && snapshot.status === 'closed';
+}
+
 export class PaseoUnavailableError extends Error {
   constructor(message = 'Paseo has not supplied an API handle to this plugin process yet.') {
     super(message);

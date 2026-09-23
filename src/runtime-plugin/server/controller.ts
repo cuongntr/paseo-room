@@ -18,7 +18,7 @@ import type { CorrelationRegistry } from './correlations.js';
 import { evaluateAcceptance } from './domain/acceptance.js';
 import { sha256 } from './domain/receipts.js';
 import { normalizeScope, parseScope } from './domain/scope.js';
-import { activeLeases, applyEvent, checkEvent, leadWorkspaceWriter, leaseCollision, project, TERMINAL_STATES as TERMINAL, type AssignmentView, type ProjectState } from './domain/state.js';
+import { activeLeases, applyEvent, checkEvent, leadWorkspaceWriter, leaseCollision, project, reclaimRefusal, type AssignmentView, type ProjectState } from './domain/state.js';
 import { validateAssignmentCreate } from './domain/validate.js';
 import { EVENT_SCHEMA, type RuntimeEventV1 } from './events/schema.js';
 import { gateRequestedData, runGate, type GateEvent, type GateOutcome, type GateRequest } from './gate.js';
@@ -27,7 +27,7 @@ import { hostPaseoVersion } from './host.js';
 import { Notices } from './notices.js';
 import { checkLeadOwnership } from './ownership.js';
 import {
-  ASSIGNMENT_LABEL, CreationConflictError, PARENT_AGENT_ID_LABEL, type AgentSnapshot, type PaseoPort, type PeerLaunch, type WorkspaceSnapshot,
+  ASSIGNMENT_LABEL, CreationConflictError, PARENT_AGENT_ID_LABEL, peerStopped, type AgentSnapshot, type PaseoPort, type PeerLaunch, type WorkspaceSnapshot,
 } from './paseo-port.js';
 import type { Recognition } from './recognition.js';
 import { ProjectStore, type NewEvent } from './store/project.js';
@@ -773,27 +773,22 @@ export class Controller {
    * Time, idleness or a turn end never reclaims anything.
    */
   async reclaim(loaded: LoadedProject, assignmentId: string, reason: string, decidedBy: 'lead' | 'human'): Promise<ControllerResult<{ readonly epoch: number; readonly agentId: string; readonly generation: number }>> {
+    const blocked = reclaimRefusal(loaded.state, assignmentId);
+    if (blocked !== undefined) return refuse(blocked.code, blocked.message, blocked.code === 'effect_unresolved');
     const view = loaded.state.assignments.get(assignmentId);
     const owner = loaded.state.ownership.get(assignmentId);
     const lease = owner?.lease;
     const record = loaded.state.workspaces.get(assignmentId);
-    if (view === undefined || owner === undefined || lease === undefined || record === undefined) return refuse('lease_missing', `Assignment ${assignmentId} holds no worktree lease.`);
-    if (owner.state === 'released' || owner.state === 'reserved') return refuse('lease_state', `The lease is ${owner.state}; only a held or uncertain lease is reclaimed.`);
-    if (TERMINAL.includes(view.state) || view.closure !== 'open') return refuse('assignment_state', `Assignment ${assignmentId} is ${view.state} (${view.closure}); a decided or closing assignment is not reclaimed.`);
-    if (Object.keys(view.openIntents).length > 0) return refuse('effect_unresolved', 'An effect of this assignment is still unresolved; let recovery settle it first.', true);
-    if (record.create !== 'succeeded' || record.close !== 'open' || record.worktreePath === undefined) return refuse('worktree_unavailable', 'The lease\'s worktree is not open.');
+    const prior = owner?.agentId ?? view?.peerAgentId;
+    const provider = view?.peerProviderId;
+    if (view === undefined || lease === undefined || record?.worktreePath === undefined || prior === undefined || provider === undefined) return refuse('lease_missing', `Assignment ${assignmentId} holds no worktree lease.`);
     if (!await this.deps.git.directoryPresent(record.worktreePath)) return refuse('worktree_unavailable', `The worktree ${record.worktreePath} is gone.`);
-    const prior = owner.agentId ?? view.peerAgentId;
-    if (prior === undefined) return refuse('lease_state', 'The lease names no writer to reclaim from.');
     const live = await this.deps.paseo.getAgent(prior);
-    const proven = live !== undefined && live.archivedAt !== null && live.status === 'closed';
-    if (!proven && !(decidedBy === 'human' && live === undefined)) {
+    if (!peerStopped(live) && !(decidedBy === 'human' && live === undefined)) {
       return refuse('writer_not_proven_stopped', live === undefined
         ? `Paseo no longer knows Peer ${prior}, so it cannot be proven stopped; a Human may reclaim from the panel.`
         : `Peer ${prior} is ${live.status}${live.archivedAt === null ? ' and not archived' : ''}; archive it in Paseo before reclaiming.`);
     }
-    const provider = view.peerProviderId;
-    if (provider === undefined) return refuse('lease_state', 'The assignment names no Peer provider.');
     const launch = await this.deps.paseo.resolveLaunch(provider);
     if (launch === undefined) return refuse('peer_model_unresolved', `${provider} has no default model and its room profile sets none.`);
     const epoch = lease.epoch + 1;

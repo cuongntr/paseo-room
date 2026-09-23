@@ -7,7 +7,9 @@
  */
 import type { RuntimeEventV1 } from '../events/schema.js';
 import { canonicalJson, sha256 } from './receipts.js';
-import { TERMINAL_STATES, type AssignmentView, type ProjectState, type Violation, type WorkspaceRecord } from './state.js';
+import {
+  activeLeases, leadWorkspaceWriter, reclaimRefusal, TERMINAL_STATES, type AssignmentView, type ProjectState, type Violation, type WorkspaceRecord,
+} from './state.js';
 
 export type EvidenceClass = 'enforced' | 'detected' | 'procedural' | 'unverifiable';
 export type ViewerRole = 'operator' | 'supervisor' | 'lead';
@@ -44,6 +46,11 @@ export interface StatusInput {
   readonly events: readonly RuntimeEventV1[];
   /** False while Paseo is unreachable: live facts are then labelled stale, never fresh. */
   readonly liveAvailable: boolean;
+  /**
+   * Whether a directory still exists, for worktrees Paseo archived but left behind. Callers with
+   * a filesystem pass it; without it a left-behind directory is assumed still there.
+   */
+  readonly present?: (path: string) => boolean;
 }
 
 export interface AssignmentSummary {
@@ -68,6 +75,8 @@ export interface LeaseView {
   readonly branch: string;
   readonly worktreePath?: string;
   readonly agentId?: string;
+  /** The projection allows a reclaim; the prior Peer must still be proven stopped live. */
+  readonly reclaimable: boolean;
 }
 
 /** A runtime-requested worktree, while it may still exist on disk. */
@@ -78,6 +87,7 @@ export interface WorktreeView {
   readonly branch: string;
   readonly create: Claim<string>;
   readonly close: Claim<string>;
+  readonly disposition: WorktreeDisposition;
   /** Writer released but the worktree kept for an explicit close decision. */
   readonly retained: boolean;
   readonly directoryRemoved?: boolean;
@@ -136,20 +146,39 @@ function leaseView(state: ProjectState, assignmentId: string): LeaseView | undef
     epoch: lease.epoch, scopes: lease.scopes, serialOnly: lease.serialOnly, workspaceId: lease.workspaceId, branch: lease.branch,
     ...(lease.worktreePath === undefined ? {} : { worktreePath: lease.worktreePath }),
     ...(owner.agentId === undefined ? {} : { agentId: owner.agentId }),
+    reclaimable: reclaimRefusal(state, assignmentId) === undefined,
   };
 }
 
-/** Released writer, worktree created and not closed: kept for an explicit decision. */
-export function isRetained(state: ProjectState, record: WorkspaceRecord): boolean {
-  return record.create === 'succeeded' && (record.close === 'open' || record.close === 'failed') && state.ownership.get(record.assignmentId)?.state === 'released';
+/**
+ * What a runtime worktree record means on disk — the one rule every view, count and blocker uses.
+ * `unresolved`: a create or close is unconfirmed. `active`: its writer is not released.
+ * `retained`: writer released, worktree open, waiting for an explicit close. `leftover`: archived
+ * by Paseo but its directory is still there. `gone`: never created, or closed and removed.
+ */
+export type WorktreeDisposition = 'unresolved' | 'active' | 'retained' | 'leftover' | 'gone';
+
+export function worktreeDisposition(state: ProjectState, record: WorkspaceRecord, present: (path: string) => boolean = () => true): WorktreeDisposition {
+  if (record.create === 'requested' || record.create === 'uncertain' || record.close === 'requested' || record.close === 'uncertain') return 'unresolved';
+  if (record.create === 'failed') return 'gone';
+  if (record.close === 'succeeded') {
+    return record.directoryRemoved === false && (record.worktreePath === undefined || present(record.worktreePath)) ? 'leftover' : 'gone';
+  }
+  return state.ownership.get(record.assignmentId)?.state === 'released' ? 'retained' : 'active';
 }
 
-function worktreeView(state: ProjectState, record: WorkspaceRecord): WorktreeView {
+/** Released writer, worktree created (or refused) and not closed: kept for an explicit decision. */
+export function isRetained(state: ProjectState, record: WorkspaceRecord): boolean {
+  return worktreeDisposition(state, record) === 'retained';
+}
+
+function worktreeView(state: ProjectState, record: WorkspaceRecord, present?: (path: string) => boolean): WorktreeView {
   const claim = (value: string): Claim<string> => ({ value, evidence: value === 'uncertain' ? 'unverifiable' : 'detected' });
+  const disposition = worktreeDisposition(state, record, present);
   return {
     assignmentId: record.assignmentId, workspaceId: record.workspaceId, branch: record.branch ?? record.branchName,
     ...(record.worktreePath === undefined ? {} : { path: record.worktreePath }),
-    create: claim(record.create), close: claim(record.close), retained: isRetained(state, record),
+    create: claim(record.create), close: claim(record.close), disposition, retained: disposition === 'retained',
     ...(record.directoryRemoved === undefined ? {} : { directoryRemoved: record.directoryRemoved }),
   };
 }
@@ -171,9 +200,11 @@ export function findings(input: StatusInput): Finding[] {
   if (conflict !== undefined) {
     found.push({ kind: 'ownership-conflict', evidence: 'detected', message: `Leads ${conflict.leadAgentIds.join(', ')} both claim this project.`, recoveryAction: RECOVERY.conflict, sourceEventIds: [conflict.eventId] });
   }
+  const flagged = new Set<string>();
   for (const view of input.state.assignments.values()) {
     const owner = input.state.ownership.get(view.id);
     if (view.state === 'uncertain' || view.closure === 'uncertain' || owner?.state === 'uncertain' || view.gates.some(gate => gate.status === 'uncertain')) {
+      flagged.add(view.id);
       found.push({
         kind: view.reportingState === 'uncertain' ? 'report-uncertain' : 'uncertain-effect', evidence: 'unverifiable', assignmentId: view.id,
         message: `Assignment ${view.id} has an effect whose outcome is not known.`,
@@ -194,11 +225,12 @@ export function findings(input: StatusInput): Finding[] {
   }
   for (const record of input.state.workspaces.values()) {
     const ids = record.eventIds.slice(-1);
-    if (record.create === 'uncertain' || record.close === 'uncertain') {
+    const disposition = worktreeDisposition(input.state, record, input.present);
+    if (disposition === 'unresolved' && (record.create === 'uncertain' || record.close === 'uncertain') && !flagged.has(record.assignmentId)) {
       found.push({ kind: 'uncertain-effect', evidence: 'unverifiable', assignmentId: record.assignmentId, message: `The worktree ${record.create === 'uncertain' ? 'create' : 'close'} of ${record.assignmentId} is unconfirmed.`, recoveryAction: RECOVERY.uncertain, sourceEventIds: ids });
-    } else if (isRetained(input.state, record)) {
-      found.push({ kind: 'worktree-retained', evidence: 'detected', assignmentId: record.assignmentId, message: `The worktree of ${record.assignmentId} (${record.worktreePath ?? record.workspaceId}) was retained after its writer was released.`, recoveryAction: RECOVERY.retained, sourceEventIds: ids });
-    } else if (record.close === 'succeeded' && record.directoryRemoved === false) {
+    } else if (disposition === 'retained') {
+      found.push({ kind: 'worktree-retained', evidence: 'detected', assignmentId: record.assignmentId, message: `The worktree of ${record.assignmentId} (${record.worktreePath ?? record.workspaceId}) was ${record.create === 'refused' ? 'refused and not closed' : 'retained after its writer was released'}.`, recoveryAction: RECOVERY.retained, sourceEventIds: ids });
+    } else if (disposition === 'leftover') {
       found.push({ kind: 'worktree-cleanup', evidence: 'detected', assignmentId: record.assignmentId, message: `The worktree of ${record.assignmentId} is closed but ${record.worktreePath ?? 'its directory'} remains.`, recoveryAction: RECOVERY.cleanup, sourceEventIds: ids });
     }
   }
@@ -237,17 +269,18 @@ function summary(view: AssignmentView): AssignmentSummary {
 export function projectStatusView(input: StatusInput): ProjectStatusView {
   const found = findings(input);
   const paused = found.some(finding => finding.kind === 'project-paused' || finding.kind === 'ownership-conflict');
-  const writer = [...input.state.ownership.values()].find(owner => owner.state !== 'released');
+  // The one writer in Lead's workspace; isolated writers are listed under `leases`.
+  const writer = leadWorkspaceWriter(input.state);
   return {
     projectId: input.projectId,
     canonicalRoot: input.canonicalRoot,
     health: { value: paused ? 'paused' : found.length > 0 ? 'attention' : 'healthy', evidence: 'detected' },
     liveFacts: input.liveAvailable ? 'fresh' : 'stale',
     ...(writer === undefined ? {} : { writer: { assignmentId: writer.assignmentId, state: { value: writer.state, evidence: writer.state === 'uncertain' ? 'unverifiable' : 'enforced' } } }),
-    leases: [...input.state.ownership.values()].filter(owner => owner.lease !== undefined && owner.state !== 'released').flatMap(owner => leaseView(input.state, owner.assignmentId) ?? []),
+    leases: activeLeases(input.state).flatMap(owner => leaseView(input.state, owner.assignmentId) ?? []),
     worktrees: [...input.state.workspaces.values()]
-      .filter(record => (record.create === 'succeeded' || record.create === 'uncertain' || record.create === 'requested' || record.create === 'refused') && (record.close !== 'succeeded' || record.directoryRemoved === false))
-      .map(record => worktreeView(input.state, record)),
+      .filter(record => worktreeDisposition(input.state, record, input.present) !== 'gone')
+      .map(record => worktreeView(input.state, record, input.present)),
     scopeStatement: SCOPE_STATEMENT,
     assignments: [...input.state.assignments.values()].map(summary),
     findings: found,
@@ -280,7 +313,8 @@ export function assignmentDetailView(state: ProjectState, assignmentId: string, 
     ...(owner === undefined ? {} : { ownership: { value: owner.state, evidence: owner.state === 'uncertain' ? 'unverifiable' as const : 'enforced' as const } }),
     ...(lease === undefined ? {} : { lease }),
     ...(record === undefined ? {} : { worktree: worktreeView(state, record) }),
-    ...(view.scopeExceeded === undefined ? {} : { scopeExceeded: { value: { candidateCommit: view.scopeExceeded.candidateCommit, paths: view.scopeExceeded.paths }, evidence: 'detected' as const } }),
+    // Only evidence about the current candidate: a replaced one no longer needs an override.
+    ...(view.scopeExceeded === undefined || view.scopeExceeded.candidateCommit !== view.candidate?.commit ? {} : { scopeExceeded: { value: { candidateCommit: view.scopeExceeded.candidateCommit, paths: view.scopeExceeded.paths }, evidence: 'detected' as const } }),
     history: view.eventIds,
   };
 }
@@ -323,7 +357,7 @@ export function quiescence(state: ProjectState): { readonly quiescent: boolean; 
       : { kind: 'lease', id: owner.assignmentId, detail: `worktree lease (epoch ${String(owner.lease.epoch)}) is ${owner.state}` });
   }
   for (const record of state.workspaces.values()) {
-    if (record.create === 'requested' || record.create === 'uncertain' || record.close === 'requested' || record.close === 'uncertain') {
+    if (worktreeDisposition(state, record) === 'unresolved') {
       blockers.push({ kind: 'worktree', id: record.workspaceId, detail: `worktree of ${record.assignmentId} is unresolved (create ${record.create}, close ${record.close})` });
     }
   }
@@ -333,7 +367,8 @@ export function quiescence(state: ProjectState): { readonly quiescent: boolean; 
   return { quiescent: blockers.length === 0, blockers };
 }
 
-/** Runtime worktrees that may still be on disk: retained, or closed with the directory left. */
-export function retainedWorktrees(state: ProjectState): number {
-  return [...state.workspaces.values()].filter(record => isRetained(state, record) || (record.close === 'succeeded' && record.directoryRemoved === false)).length;
+/** Runtime worktrees that may still be on disk: retained ones Paseo still lists, and leftover directories. */
+export function worktreesOnDisk(state: ProjectState, present?: (path: string) => boolean): { readonly retained: number; readonly leftover: number } {
+  const dispositions = [...state.workspaces.values()].map(record => worktreeDisposition(state, record, present));
+  return { retained: dispositions.filter(value => value === 'retained').length, leftover: dispositions.filter(value => value === 'leftover').length };
 }

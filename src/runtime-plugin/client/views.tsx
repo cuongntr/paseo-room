@@ -15,9 +15,12 @@ interface Finding { readonly kind: string; readonly message: string; readonly re
 interface Health { readonly plugin: { readonly manifest: string; readonly reason?: string }; readonly projects: readonly { readonly projectId: string; readonly canonicalRoot: string; readonly health: string; readonly findings: number }[] }
 interface Lease {
   readonly assignmentId: string; readonly state: Claim; readonly epoch: number; readonly scopes: readonly string[]; readonly serialOnly: readonly string[];
-  readonly branch: string; readonly worktreePath?: string; readonly peer: 'archived' | 'gone' | 'live' | 'unknown';
+  readonly branch: string; readonly worktreePath?: string; readonly reclaimable: boolean; readonly peer: 'archived' | 'gone' | 'live' | 'unknown';
 }
-interface Worktree { readonly assignmentId: string; readonly path?: string; readonly branch: string; readonly create: Claim; readonly close: Claim; readonly retained: boolean; readonly directoryRemoved?: boolean }
+interface Worktree {
+  readonly assignmentId: string; readonly path?: string; readonly branch: string; readonly create: Claim; readonly close: Claim;
+  readonly disposition: 'unresolved' | 'active' | 'retained' | 'leftover' | 'gone';
+}
 interface Project {
   readonly canonicalRoot: string;
   readonly health: Claim;
@@ -124,15 +127,31 @@ function ProjectView(props: { readonly theme: Theme; readonly projectId: string;
 
 /**
  * Isolated writers and the worktrees they leave. Human forms of workspace_close and lease_reclaim
- * appear only where the runtime would accept them: a retained worktree, or a lease whose Peer
- * Paseo shows archived (or no longer knows).
+ * appear only where the runtime would accept them: a retained worktree, or a lease the projection
+ * allows to be reclaimed whose Peer Paseo shows archived (or no longer knows). Each row has its own
+ * reason, cleared after use, and discarding work asks for a second press.
  */
 function Worktrees(props: { readonly theme: Theme; readonly projectId: string; readonly project: Project; readonly act: (work: Promise<unknown>) => void }) {
   const rpc = useRuntimeRpcs();
-  const [reason, setReason] = useState('');
+  const [reasons, setReasons] = useState<Readonly<Record<string, string>>>({});
+  const [armed, setArmed] = useState<string>();
+  const [hint, setHint] = useState<string>();
   const { theme, project } = props;
-  if (project.leases.length === 0 && project.worktrees.length === 0) return null;
-  const needReason = (run: () => void): void => { if (reason.trim() === '') return; run(); };
+  const shown = project.worktrees.filter(worktree => worktree.disposition === 'retained' || worktree.disposition === 'leftover');
+  if (project.leases.length === 0 && shown.length === 0) return null;
+  const reasonOf = (id: string): string => (reasons[id] ?? '').trim();
+  const withReason = (id: string, run: (reason: string) => Promise<unknown>): void => {
+    const reason = reasonOf(id);
+    if (reason === '') { setHint(`State a reason for ${id} first.`); return; }
+    setHint(undefined);
+    setArmed(undefined);
+    setReasons({ ...reasons, [id]: '' });
+    props.act(run(reason));
+  };
+  const reasonInput = (id: string, placeholder: string) => (
+    <TextInput value={reasons[id] ?? ''} onChangeText={text => { setReasons({ ...reasons, [id]: text }); }} placeholder={placeholder} placeholderTextColor={theme.colors.foregroundMuted}
+      style={{ color: theme.colors.foreground, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 6, padding: 6, marginBottom: 8 }} />
+  );
   return (
     <Section theme={theme} title="Isolated writers">
       <Label theme={theme} muted>{project.scopeStatement}</Label>
@@ -140,25 +159,34 @@ function Worktrees(props: { readonly theme: Theme; readonly projectId: string; r
         <View key={lease.assignmentId} style={{ marginBottom: 6 }}>
           <Label theme={theme}>{lease.assignmentId} · lease {lease.state.value} ({lease.state.evidence}) · epoch {String(lease.epoch)} · {lease.branch}</Label>
           <Label theme={theme} muted>Scope: {lease.scopes.length === 0 ? 'whole repository' : lease.scopes.join(', ')}{lease.serialOnly.length === 0 ? '' : ` · serial-only: ${lease.serialOnly.join(', ')}`} · Peer {lease.peer}</Label>
-          {lease.peer === 'archived' || lease.peer === 'gone' ? (
-            <Button theme={theme} label="Reclaim into a new Peer" onPress={() => { needReason(() => { props.act(rpc.leaseReclaim({ projectId: props.projectId, assignmentId: lease.assignmentId, reason, idempotencyKey: idempotencyKey() })); }); }} />
-          ) : null}
-        </View>
-      ))}
-      {project.worktrees.filter(worktree => worktree.retained || worktree.directoryRemoved === false).map(worktree => (
-        <View key={worktree.assignmentId} style={{ marginBottom: 6 }}>
-          <Label theme={theme}>{worktree.assignmentId} · worktree {worktree.retained ? 'retained' : 'closed, directory left'} ({worktree.close.evidence}) · {worktree.branch}</Label>
-          {worktree.path === undefined ? null : <Label theme={theme} muted>{worktree.path}</Label>}
-          {worktree.retained ? (
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
-              <Button theme={theme} label="Close if clean" onPress={() => { props.act(rpc.workspaceClose({ projectId: props.projectId, assignmentId: worktree.assignmentId, idempotencyKey: idempotencyKey() })); }} />
-              <Button theme={theme} danger label="Discard work and close" onPress={() => { needReason(() => { props.act(rpc.workspaceClose({ projectId: props.projectId, assignmentId: worktree.assignmentId, discardUncommitted: true, reason, idempotencyKey: idempotencyKey() })); }); }} />
+          {lease.reclaimable && (lease.peer === 'archived' || lease.peer === 'gone') ? (
+            <View>
+              {reasonInput(lease.assignmentId, 'Reason for reclaiming')}
+              <Button theme={theme} label="Reclaim into a new Peer" onPress={() => { withReason(lease.assignmentId, reason => rpc.leaseReclaim({ projectId: props.projectId, assignmentId: lease.assignmentId, reason, idempotencyKey: idempotencyKey() })); }} />
             </View>
           ) : null}
         </View>
       ))}
-      <TextInput value={reason} onChangeText={setReason} placeholder="Reason (required to reclaim or discard)" placeholderTextColor={theme.colors.foregroundMuted}
-        style={{ color: theme.colors.foreground, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 6, padding: 6, marginBottom: 8 }} />
+      {shown.map(worktree => (
+        <View key={worktree.assignmentId} style={{ marginBottom: 6 }}>
+          <Label theme={theme}>{worktree.assignmentId} · worktree {worktree.disposition === 'retained' ? 'retained' : 'closed, directory left — remove it by hand'} ({worktree.close.evidence}) · {worktree.branch}</Label>
+          {worktree.path === undefined ? null : <Label theme={theme} muted>{worktree.path}</Label>}
+          {worktree.disposition === 'retained' ? (
+            <View>
+              {reasonInput(worktree.assignmentId, 'Reason (required only to discard work)')}
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+                <Button theme={theme} label="Close if clean" onPress={() => { setArmed(undefined); props.act(rpc.workspaceClose({ projectId: props.projectId, assignmentId: worktree.assignmentId, idempotencyKey: idempotencyKey() })); }} />
+                <Button theme={theme} danger label={armed === worktree.assignmentId ? 'Press again: destroy uncommitted work' : 'Discard work and close'} onPress={() => {
+                  if (reasonOf(worktree.assignmentId) === '') { setHint(`State a reason for ${worktree.assignmentId} first.`); return; }
+                  if (armed !== worktree.assignmentId) { setArmed(worktree.assignmentId); return; }
+                  withReason(worktree.assignmentId, reason => rpc.workspaceClose({ projectId: props.projectId, assignmentId: worktree.assignmentId, discardUncommitted: true, reason, idempotencyKey: idempotencyKey() }));
+                }} />
+              </View>
+            </View>
+          ) : null}
+        </View>
+      ))}
+      {hint === undefined ? null : <Label theme={theme} muted>{hint}</Label>}
     </Section>
   );
 }

@@ -20,7 +20,7 @@ import { MARKER, readMarker, renderMarker, type Marker, type RuntimeMarker } fro
 import {
   renderRuntimeManifest, RUNTIME_PASEO_RANGE, RUNTIME_PLUGIN_ID, runtimePluginDir, runtimePluginEntries,
 } from './runtime.js';
-import { describeBlockers, inspectRuntimeState } from './runtime-state.js';
+import { describeBlockers, inspectRuntimeState, type RuntimeStateSummary } from './runtime-state.js';
 import { DELEGATING_THINKING, profileId, providerId, providerLabel, ROLES, ROLE_COLOR, ROLE_ICON, ROLE_NOTES, ROLE_PASEO_TOOLS, ROLE_THINKING, type AgentId, type Role } from './roles.js';
 
 export const AGENTS: Record<AgentId, Agent> = { codex: codexAgent, claude: claudeAgent, pi: piAgent };
@@ -487,13 +487,25 @@ async function runtimeDeselectionCheck(layout: Layout): Promise<Check[]> {
       'Keep --runtime and finish, close or abandon that work first; the runtime state is preserved either way.')];
   }
   return [warn('runtime.state-retained',
-    `Runtime coordination is quiet; its recorded state for ${String(summary.projects)} project(s) stays at ${summary.root}.${worktreeNote(summary.retainedWorktrees)}`,
+    `Runtime coordination is quiet; its recorded state for ${String(summary.projects)} project(s) stays at ${summary.root}.${worktreeNote(summary, 'gone')}`,
     'Export it with: paseo-room export --out <dir>, or keep it for a later --runtime.')];
 }
 
-/** Retained runtime worktrees belong to Paseo: named, counted, never deleted by the CLI. */
-function worktreeNote(count: number): string {
-  return count === 0 ? '' : ` ${String(count)} runtime worktree(s) remain in Paseo; the CLI does not delete them — close them from the runtime panel or with Paseo first.`;
+/**
+ * Retained runtime worktrees and left-behind directories belong to Paseo and the operator: named,
+ * counted, never deleted by the CLI. The remedy depends on whether the runtime panel still exists.
+ */
+function worktreeNote(summary: RuntimeStateSummary, panel: 'available' | 'gone'): string {
+  const parts: string[] = [];
+  if (summary.retainedWorktrees > 0) {
+    parts.push(` ${String(summary.retainedWorktrees)} runtime worktree(s) remain open in Paseo; the CLI does not close them — ${panel === 'available'
+      ? 'close them from the runtime panel first'
+      : 'archive them in Paseo, or re-enable --runtime and close them from the runtime panel'}.`);
+  }
+  if (summary.leftoverDirectories > 0) {
+    parts.push(` ${String(summary.leftoverDirectories)} closed worktree director(ies) were left on disk by a failed teardown; remove them by hand once nothing in them is needed.`);
+  }
+  return parts.join('');
 }
 
 /** Whole-room removal keeps its destructive meaning, but says what runtime history it deletes. */
@@ -502,7 +514,7 @@ async function runtimeRemovalWarning(layout: Layout): Promise<Check[]> {
   if (summary === undefined || summary.projects === 0) return [];
   const active = summary.blockers.length > 0 ? ` It still has active or uncertain work: ${describeBlockers(summary)}.` : '';
   return [warn('room.remove.runtime-state',
-    `Deleting ${layout.roomHome} also deletes runtime coordination history for ${String(summary.projects)} project(s).${active}${worktreeNote(summary.retainedWorktrees)}`,
+    `Deleting ${layout.roomHome} also deletes runtime coordination history for ${String(summary.projects)} project(s).${active}${worktreeNote(summary, 'available')}`,
     'Export it first with: paseo-room export --out <dir>')];
 }
 

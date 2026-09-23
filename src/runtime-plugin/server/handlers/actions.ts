@@ -6,6 +6,7 @@
  * the controller; Supervisor observes status and findings and may route one message to the
  * project's Lead, but cannot transition any assignment.
  */
+import { existsSync } from 'node:fs';
 import { z } from 'zod';
 import { LEAD_ACTION_SCHEMAS, SUPERVISOR_ACTION_SCHEMAS } from '../contracts/actions.js';
 import type { BridgeRequestV1 } from '../contracts/envelope.js';
@@ -50,7 +51,7 @@ async function statusInputs(controller: Controller): Promise<StatusInput[]> {
     const projection = project(store.meta.projectId, replay.events);
     inputs.push({
       projectId: store.meta.projectId, canonicalRoot: store.meta.canonicalRoot, replay, violations: projection.violations,
-      state: projection.state, events: replay.events, liveAvailable: true,
+      state: projection.state, events: replay.events, liveAvailable: true, present: existsSync,
     });
   }
   return inputs;

@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest';
 import type { RuntimeEventV1 } from '../src/runtime-plugin/server/events/schema.js';
 import { project } from '../src/runtime-plugin/server/domain/state.js';
 import {
-  assignmentDetailView, findings, projectStatusView, quiescence, retainedWorktrees, revision, SCOPE_STATEMENT, type StatusInput,
+  assignmentDetailView, findings, projectStatusView, quiescence, revision, SCOPE_STATEMENT, worktreesOnDisk, type StatusInput,
 } from '../src/runtime-plugin/server/domain/views.js';
-import { A, B, candidate, DIGEST, dispatched, ev, HEAD, leased, PROJECT, receipt, wks } from './runtime-fixtures.js';
+import { A, B, BASE, candidate, created, DIGEST, dispatched, ev, HEAD, leased, PROJECT, receipt, wks } from './runtime-fixtures.js';
 
 function input(events: readonly RuntimeEventV1[], change: Partial<StatusInput> = {}): StatusInput {
   const { state, violations } = project(PROJECT, events);
@@ -122,14 +122,14 @@ describe('Phase 2 status views', () => {
     const retained = input([...leased(A, ['src/api']), handoff(A), ...release(A)]);
     expect(findings(retained)).toEqual([expect.objectContaining({ kind: 'worktree-retained', evidence: 'detected', assignmentId: A })]);
     expect(projectStatusView(retained).worktrees[0]).toMatchObject({ retained: true, close: { value: 'open' } });
-    expect(retainedWorktrees(retained.state)).toBe(1);
+    expect(worktreesOnDisk(retained.state)).toEqual({ retained: 1, leftover: 0 });
     expect(quiescence(retained.state).quiescent).toBe(true);
 
     const leftover = input([...leased(A, ['src/api']), handoff(A), ...release(A),
       ev('workspace.close-requested', { intentId: 'c1', workspaceId: wks(A), discardUncommitted: false }, A),
       ev('workspace.close-succeeded', { intentId: 'c1', workspaceId: wks(A), archivedAt: '2026-09-22T12:00:00Z', directoryRemoved: false }, A)]);
     expect(findings(leftover).map(finding => finding.kind)).toEqual(['worktree-cleanup']);
-    expect(retainedWorktrees(leftover.state)).toBe(1);
+    expect(worktreesOnDisk(leftover.state)).toEqual({ retained: 0, leftover: 1 });
 
     const exceeded = input([...leased(A, ['src/api']), handoff(A), ev('scope.exceeded', { candidateCommit: HEAD, paths: ['README.md'] }, A)]);
     expect(findings(exceeded)).toEqual([expect.objectContaining({ kind: 'scope-exceeded', message: expect.stringContaining('README.md') as string })]);
@@ -143,5 +143,72 @@ describe('Phase 2 status views', () => {
     const closing = input([...leased(A, ['src/api']), handoff(A), ...release(A),
       ev('workspace.close-requested', { intentId: 'c1', workspaceId: wks(A), discardUncommitted: false }, A)]);
     expect(quiescence(closing.state).blockers).toContainEqual(expect.objectContaining({ kind: 'worktree', id: wks(A) }));
+  });
+});
+
+describe('Phase 2 status views after review', () => {
+  const handoffAt = (id: string, commit: string, generation = 1): RuntimeEventV1 => ev('report.accepted', {
+    generation, tool: 'handoff', requestId: `req_${id}_${String(generation)}`, fingerprint: DIGEST, receipt: receipt('handoff', 'handed-back'), report: {},
+    candidate: { ...candidate, commit, workspaceId: wks(id) },
+  }, id);
+  const refusedOpen = (id: string): RuntimeEventV1[] => [
+    created(id),
+    ev('assignment.dispatch-requested', { peerProviderId: 'codex-peer', workspaceId: wks(id) }, id),
+    ev('ownership.reserved', { workspaceId: wks(id), baseCommit: BASE }, id),
+    ev('lease.reserved', { workspaceId: wks(id), branch: `paseo-room/${id}`, baseCommit: BASE, scopes: ['src'], serialOnly: [], epoch: 1 }, id),
+    ev('workspace.create-requested', { intentId: 'w', workspaceId: wks(id), idempotencyKey: 'k', baseCommit: BASE, branchName: 'b', worktreeSlug: 's' }, id),
+    ev('workspace.create-refused', { intentId: 'w', workspaceId: wks(id), reason: 'head-mismatch' }, id),
+    ev('workspace.close-requested', { intentId: 'c', workspaceId: wks(id), discardUncommitted: false }, id),
+    ev('workspace.close-failed', { intentId: 'c', workspaceId: wks(id), reason: 'busy' }, id),
+  ];
+
+  it('treats a refused worktree whose close failed as retained, everywhere', () => {
+    const state = input(refusedOpen(A));
+    expect(findings(state)).toEqual([expect.objectContaining({ kind: 'worktree-retained', message: expect.stringContaining('refused and not closed') as string })]);
+    expect(worktreesOnDisk(state.state)).toEqual({ retained: 1, leftover: 0 });
+    expect(projectStatusView(state).worktrees).toEqual([expect.objectContaining({ disposition: 'retained', retained: true })]);
+  });
+
+  it('clears a leftover directory once it is gone from disk', () => {
+    const events = [...leased(A, ['src/api']), handoffAt(A, HEAD),
+      ev('assignment.abandoned', { reason: 'stop' }, A), ev('assignment.close-requested', {}, A),
+      ev('archive.requested', { intentId: 'a', agentId: `peer-${A}` }, A), ev('ownership.releasing', { agentId: `peer-${A}` }, A),
+      ev('archive.succeeded', { intentId: 'a', agentId: `peer-${A}`, archivedAt: '2026-09-22T11:00:00Z', liveStatus: 'closed' }, A),
+      ev('ownership.released', { agentId: `peer-${A}`, archivedAt: '2026-09-22T11:00:00Z' }, A),
+      ev('workspace.close-requested', { intentId: 'c', workspaceId: wks(A), discardUncommitted: false }, A),
+      ev('workspace.close-succeeded', { intentId: 'c', workspaceId: wks(A), archivedAt: '2026-09-22T12:00:00Z', directoryRemoved: false }, A)];
+    expect(findings(input(events)).map(finding => finding.kind)).toEqual(['worktree-cleanup']);
+    const cleaned = input(events, { present: () => false });
+    expect(findings(cleaned)).toEqual([]);
+    expect(projectStatusView(cleaned).worktrees).toEqual([]);
+    expect(worktreesOnDisk(cleaned.state, () => false)).toEqual({ retained: 0, leftover: 0 });
+  });
+
+  it('reports one finding for one unconfirmed worktree create', () => {
+    const events = [...refusedOpen(A).slice(0, 5), ev('workspace.create-uncertain', { intentId: 'w', reason: 'lost' }, A)];
+    expect(findings(input(events)).filter(finding => finding.kind === 'uncertain-effect')).toHaveLength(1);
+  });
+
+  it('names only the writer in Lead\'s workspace as the writer, and lists isolated ones as leases', () => {
+    const view = projectStatusView(input([...leased(A, ['src/api']), ...leased(B, ['docs'])]));
+    expect(view.writer).toBeUndefined();
+    expect(view.leases.map(lease => lease.assignmentId)).toEqual([A, B]);
+    expect(projectStatusView(input(dispatched(A))).writer?.assignmentId).toBe(A);
+  });
+
+  it('offers reclaim only where the projection allows it', () => {
+    expect(projectStatusView(input(leased(A, ['src/api']))).leases[0]?.reclaimable).toBe(true);
+    // An open run intent must settle first.
+    expect(projectStatusView(input(leased(A, ['src/api']).slice(0, -1))).leases[0]?.reclaimable).toBe(false);
+  });
+
+  it('shows scope evidence only for the current candidate', () => {
+    const exceeded = [...leased(A, ['src/api']), handoffAt(A, HEAD), ev('scope.exceeded', { candidateCommit: HEAD, paths: ['README.md'] }, A)];
+    expect(assignmentDetailView(input(exceeded).state, A, 'lead')?.scopeExceeded).toBeDefined();
+    const replaced = [...exceeded, ev('assignment.rework-requested', { instructions: 'narrow it' }, A),
+      ev('reporting.generation-opened', { generation: 2, capabilityHash: DIGEST, turn: 'rework' }, A),
+      ev('run.requested', { intentId: 'r2', generation: 2, promptDigest: DIGEST }, A), ev('run.succeeded', { intentId: 'r2', generation: 2 }, A),
+      handoffAt(A, 'd'.repeat(40), 2)];
+    expect(assignmentDetailView(input(replaced).state, A, 'lead')?.scopeExceeded).toBeUndefined();
   });
 });

@@ -203,6 +203,22 @@ describe('lease reclaim', () => {
   });
 });
 
+describe('panel evidence', () => {
+  it('bounds the live read behind the reclaim offer so a stalled daemon cannot stall the view', async () => {
+    const h = await room();
+    const s = await seat(h);
+    kill(h, s.peer);
+    h.paseo.getAgent = () => new Promise(() => undefined);
+    const handle = new PaseoHandle();
+    handle.supply({} as PaseoApi);
+    const rpc = createRpcHandlers({ controller: h.controller, recovery: new Recovery(h.controller), handle });
+    const started = Date.now();
+    const answer = await rpc.project({ projectId: (await ledger(h)).store.meta.projectId });
+    expect(Date.now() - started).toBeLessThan(4_000);
+    expect(answer).toMatchObject({ data: { leases: [{ assignmentId: s.id, reclaimable: true, peer: 'unknown' }] } });
+  });
+});
+
 describe('Human worktree close', () => {
   it('closes a retained worktree through the RPC with the same refusals as Lead, idempotently', async () => {
     const h = await room();

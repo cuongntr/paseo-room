@@ -222,10 +222,11 @@ describe('runtime deselection and removal', () => {
       ev('ownership.released', { agentId: `peer-${A}`, archivedAt: '2026-09-22T11:00:00Z' }, A),
     ]);
     const preview = await remove(options());
-    expect(preview.checks.find(entry => entry.id === 'room.remove.runtime-state')?.message).toContain('1 runtime worktree(s) remain in Paseo; the CLI does not delete them');
+    expect(preview.checks.find(entry => entry.id === 'room.remove.runtime-state')?.message).toContain('1 runtime worktree(s) remain open in Paseo; the CLI does not close them — close them from the runtime panel first');
     const deselected = await setup(options({ apply: true }));
     expect(deselected.outcome).toBe('ok');
-    expect(deselected.checks.find(entry => entry.id === 'runtime.state-retained')?.message).toContain('1 runtime worktree(s) remain in Paseo');
+    // After deselection the panel is gone, so the remedy names Paseo itself.
+    expect(deselected.checks.find(entry => entry.id === 'runtime.state-retained')?.message).toContain('archive them in Paseo, or re-enable --runtime');
   });
 
   it('warns about runtime history on whole-room removal and still deletes it', async () => {

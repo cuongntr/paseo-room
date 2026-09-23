@@ -7,6 +7,7 @@
  * retried key returns the first answer. No RPC runs a shell command or returns a secret.
  */
 import type { PluginServerContext } from '@getpaseo/plugin/server';
+import { existsSync } from 'node:fs';
 import type { z } from 'zod';
 import {
   runtimeAbandonRpc, runtimeAssignmentRpc, runtimeHealthRpc, runtimeLeaseReclaimRpc, runtimeProjectRpc, runtimeQuarantineRpc, runtimeRecoverRpc,
@@ -16,8 +17,8 @@ import type { RuntimeWarningV1 } from '../shared/rpc.js';
 import { RUNTIME_PLUGIN_ID } from '../shared/identity.js';
 import type { Controller } from './controller.js';
 import { project } from './domain/state.js';
-import { assignmentDetailView, findings, projectStatusView, revision, type StatusInput } from './domain/views.js';
-import type { PaseoApi, PaseoHandle } from './paseo-port.js';
+import { assignmentDetailView, projectStatusView, revision, type StatusInput } from './domain/views.js';
+import { peerStopped, type PaseoApi, type PaseoHandle } from './paseo-port.js';
 import type { Recovery } from './recovery.js';
 import { ProjectStore } from './store/project.js';
 
@@ -55,8 +56,21 @@ async function statusInput(runtime: RpcRuntime, store: ProjectStore): Promise<St
   const projection = project(store.meta.projectId, replay.events);
   return {
     projectId: store.meta.projectId, canonicalRoot: store.meta.canonicalRoot, replay, violations: projection.violations,
-    state: projection.state, events: replay.events, liveAvailable: runtime.handle.available,
+    state: projection.state, events: replay.events, liveAvailable: runtime.handle.available, present: existsSync,
   };
+}
+
+const LIVENESS_MS = 2_000;
+
+/** The value, or null when it failed or did not arrive in time. */
+async function bounded<T>(work: Promise<T>, ms: number): Promise<T | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<null>(resolve => { timer = setTimeout(() => { resolve(null); }, ms); });
+  try {
+    return await Promise.race([work.catch(() => null), timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 const missing = (projectId: string): Answer => error('project_unknown', `No runtime project ${projectId}.`, 'Refresh the project list.');
@@ -92,17 +106,18 @@ export function createRpcHandlers(runtime: RpcRuntime) {
       if (store === undefined) return missing(input.projectId);
       const status = await statusInput(runtime, store);
       const view = projectStatusView(status);
-      // The panel offers a Human reclaim only on live evidence the lease's Peer cannot continue.
-      const leases = [];
-      for (const lease of view.leases) {
+      // Live liveness only decides whether the panel offers a Human reclaim; the view itself stays
+      // local. Leases are read at once and each read is bounded, so a stalled daemon cannot stall
+      // the project view.
+      const leases = await Promise.all(view.leases.map(async lease => {
         let peer: 'archived' | 'gone' | 'live' | 'unknown' = 'unknown';
-        if (runtime.handle.available && lease.agentId !== undefined) {
-          const live = await controller.deps.paseo.getAgent(lease.agentId).catch(() => null);
-          peer = live === null ? 'unknown' : live === undefined ? 'gone' : live.archivedAt !== null && live.status === 'closed' ? 'archived' : 'live';
+        if (runtime.handle.available && lease.reclaimable && lease.agentId !== undefined) {
+          const live = await bounded(controller.deps.paseo.getAgent(lease.agentId), LIVENESS_MS);
+          peer = live === null ? 'unknown' : live === undefined ? 'gone' : peerStopped(live) ? 'archived' : 'live';
         }
-        leases.push({ ...lease, peer });
-      }
-      return answer(runtime, { ...view, leases, findings: findings(status), problems: status.replay.problems.map(problem => ({ file: problem.file, reason: problem.reason })) });
+        return { ...lease, peer };
+      }));
+      return answer(runtime, { ...view, leases, problems: status.replay.problems.map(problem => ({ file: problem.file, reason: problem.reason })) });
     },
 
     async assignment(input: z.infer<typeof runtimeAssignmentRpc.input>): Promise<Answer> {

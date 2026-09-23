@@ -645,3 +645,21 @@ export function project(projectId: string, events: readonly RuntimeEventV1[]): P
   }
   return { state, violations: [] };
 }
+
+/**
+ * Why the projection forbids reclaiming this assignment's lease, or undefined when only live proof
+ * that the prior Peer stopped is still needed. Shared by the controller and the panel.
+ */
+export function reclaimRefusal(state: ProjectState, assignmentId: string): { readonly code: string; readonly message: string } | undefined {
+  const view = state.assignments.get(assignmentId);
+  const owner = state.ownership.get(assignmentId);
+  const record = state.workspaces.get(assignmentId);
+  if (view === undefined || owner?.lease === undefined || record === undefined) return { code: 'lease_missing', message: `Assignment ${assignmentId} holds no worktree lease.` };
+  if (owner.state === 'released' || owner.state === 'reserved') return { code: 'lease_state', message: `The lease is ${owner.state}; only a held or uncertain lease is reclaimed.` };
+  if (TERMINAL_STATES.includes(view.state) || view.closure !== 'open') return { code: 'assignment_state', message: `Assignment ${assignmentId} is ${view.state} (${view.closure}); a decided or closing assignment is not reclaimed.` };
+  if (Object.keys(view.openIntents).length > 0) return { code: 'effect_unresolved', message: 'An effect of this assignment is still unresolved; let recovery settle it first.' };
+  if (record.create !== 'succeeded' || record.close !== 'open' || record.worktreePath === undefined) return { code: 'worktree_unavailable', message: 'The lease\'s worktree is not open.' };
+  if (owner.agentId === undefined && view.peerAgentId === undefined) return { code: 'lease_state', message: 'The lease names no writer to reclaim from.' };
+  if (view.peerProviderId === undefined) return { code: 'lease_state', message: 'The assignment names no Peer provider.' };
+  return undefined;
+}

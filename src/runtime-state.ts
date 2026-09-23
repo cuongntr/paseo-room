@@ -1,7 +1,8 @@
+import { existsSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { project } from './runtime-plugin/server/domain/state.js';
-import { quiescence, retainedWorktrees, type QuiescenceBlocker } from './runtime-plugin/server/domain/views.js';
+import { quiescence, worktreesOnDisk, type QuiescenceBlocker } from './runtime-plugin/server/domain/views.js';
 import { ProjectStore, runtimeRoot } from './runtime-plugin/server/store/project.js';
 
 /**
@@ -13,8 +14,10 @@ export interface RuntimeStateSummary {
   readonly projects: number;
   /** Everything still active or uncertain; a paused ledger counts, since it cannot be proven quiet. */
   readonly blockers: readonly (QuiescenceBlocker & { readonly project: string })[];
-  /** Runtime worktrees that may still be on disk. They are Paseo's; the CLI never deletes them. */
+  /** Runtime worktrees Paseo still lists, awaiting a close. They are Paseo's; the CLI never closes them. */
   readonly retainedWorktrees: number;
+  /** Directories Paseo archived but left behind. The CLI never deletes them either. */
+  readonly leftoverDirectories: number;
 }
 
 export async function inspectRuntimeState(roomHome: string): Promise<RuntimeStateSummary> {
@@ -23,6 +26,7 @@ export async function inspectRuntimeState(roomHome: string): Promise<RuntimeStat
   const blockers: (QuiescenceBlocker & { project: string })[] = [];
   const stores: ProjectStore[] = [];
   let retained = 0;
+  let leftover = 0;
   for (const name of names.sort()) {
     try {
       stores.push(await ProjectStore.open(join(root, 'projects', name)));
@@ -39,9 +43,11 @@ export async function inspectRuntimeState(roomHome: string): Promise<RuntimeStat
       continue;
     }
     for (const blocker of quiescence(projection.state).blockers) blockers.push({ ...blocker, project: store.meta.canonicalRoot });
-    retained += retainedWorktrees(projection.state);
+    const onDisk = worktreesOnDisk(projection.state, existsSync);
+    retained += onDisk.retained;
+    leftover += onDisk.leftover;
   }
-  return { root, projects: names.length, blockers, retainedWorktrees: retained };
+  return { root, projects: names.length, blockers, retainedWorktrees: retained, leftoverDirectories: leftover };
 }
 
 export function describeBlockers(summary: RuntimeStateSummary, limit = 5): string {
