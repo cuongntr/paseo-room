@@ -9,10 +9,22 @@ function list(title: string, items: readonly string[]): string[] {
   return items.length === 0 ? [] : [`${title}:`, ...items.map(item => `- ${item}`), ''];
 }
 
-export function renderBrief(assignmentId: string, input: AssignmentCreateInputV1): string {
+/** The runtime-created worktree a Peer works in, when it was dispatched with isolation. */
+export interface BriefWorktree {
+  readonly path: string;
+  readonly branch: string;
+  readonly serialOnly: readonly string[];
+}
+
+export function renderBrief(assignmentId: string, input: AssignmentCreateInputV1, worktree?: BriefWorktree): string {
   return [
     `Assignment ${assignmentId} — ${input.kind}, ${input.mode}.`,
     '',
+    ...(worktree === undefined ? [] : [
+      `Workspace: your own worktree ${worktree.path} on branch ${worktree.branch}. Other Peers may be writing in their own worktrees at the same time; stay inside your write scope.`,
+      '',
+      ...list('Serial-only paths (one writer at a time)', worktree.serialOnly),
+    ]),
     'Outcome:',
     input.outcome,
     '',

@@ -11,7 +11,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  ASSIGNMENT_LABEL, PARENT_AGENT_ID_LABEL, type AgentSnapshot, type CreateAgentInput, type PaseoPort, type PeerLaunch,
+  ASSIGNMENT_LABEL, CreationConflictError, PARENT_AGENT_ID_LABEL, type AgentSnapshot, type CreateAgentInput, type PaseoPort, type PeerLaunch,
   type WorkspaceSnapshot, type WorktreeWorkspaceRequest,
 } from '../src/runtime-plugin/server/paseo-port.js';
 
@@ -74,9 +74,9 @@ export class FakePaseo implements PaseoPort {
     if (key === undefined) return undefined;
     const known = this.receipts.get(`${kind}:${key}`);
     const fingerprint = canonical(request);
-    if (known !== undefined && known.fingerprint !== fingerprint) throw new Error(`${kind}_request_key_conflict`);
+    if (known !== undefined && known.fingerprint !== fingerprint) throw new CreationConflictError(`${kind}_request_key_conflict`);
     if (known !== undefined) return known.id;
-    if (id !== undefined && [...this.receipts.entries()].some(([name, entry]) => name.startsWith(`${kind}:`) && entry.id === id)) throw new Error(`${kind}_id_conflict`);
+    if (id !== undefined && [...this.receipts.entries()].some(([name, entry]) => name.startsWith(`${kind}:`) && entry.id === id)) throw new CreationConflictError(`${kind}_id_conflict`);
     return undefined;
   }
 

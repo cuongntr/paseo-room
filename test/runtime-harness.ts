@@ -39,7 +39,10 @@ export const readOnlyBrief = (base: string): Record<string, unknown> => ({
   ...writableBrief(base), mode: 'read-only', kind: 'reviewer', writeScope: [], gate: undefined,
 });
 
-export async function harness(options: { readonly associationWaitMs?: number } = {}): Promise<Harness> {
+/** Worktree dispatch is qualified per daemon version; tests that exercise it qualify a fake one. */
+export const QUALIFIED_TEST_DAEMON = '0.0.0-test';
+
+export async function harness(options: { readonly associationWaitMs?: number; readonly worktrees?: boolean } = {}): Promise<Harness> {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'paseo-room-controller-')));
   const repo = join(root, 'repo');
   await mkdir(repo);
@@ -73,7 +76,10 @@ export async function harness(options: { readonly associationWaitMs?: number } =
   };
   paseo.addAgent({ id: 'lead-1', provider: 'codex-lead', cwd: repo, workspaceId: 'ws-1' });
 
-  const controller = new Controller({ runtimeRoot, paseo, git: new GitEvidence(), recognition, correlations, associationWaitMs: options.associationWaitMs ?? 200 });
+  const controller = new Controller({
+    runtimeRoot, paseo, git: new GitEvidence(), recognition, correlations, associationWaitMs: options.associationWaitMs ?? 200,
+    ...(options.worktrees === true ? { daemonVersion: () => QUALIFIED_TEST_DAEMON, qualifiedDaemons: [QUALIFIED_TEST_DAEMON] } : {}),
+  });
   const lead: Caller = { agentId: 'lead-1', providerId: 'codex-lead', role: 'lead', workspaceId: 'ws-1', cwd: repo };
   return { root, repo, base, runtimeRoot, paseo, controller, hooks, lead, git, cleanup: () => rm(root, { recursive: true, force: true }) };
 }

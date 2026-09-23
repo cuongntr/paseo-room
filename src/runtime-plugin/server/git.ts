@@ -143,6 +143,11 @@ export class GitEvidence {
     return { ok: true, head };
   }
 
+  /** Whether `commit` names a commit object in the repository at `root`. */
+  async hasCommit(root: string, commit: string): Promise<boolean> {
+    return (await this.git(root, ['cat-file', '-e', `${commit}^{commit}`])).code === 0;
+  }
+
   /** Whether a path exists at all; Paseo's worktree close may leave the directory behind. */
   async directoryPresent(path: string): Promise<boolean> {
     try {
