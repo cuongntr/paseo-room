@@ -8,7 +8,7 @@
 | Status | Applied |
 | Owner | Repository owner |
 | Created | 2026-09-22 |
-| Accepted | 2026-09-22 — recorded after the fact during Phase 1 execution; repository owner review requested at feature-done |
+| Accepted | 2026-09-23 — repository owner, on review. Recorded after the fact during Phase 1 execution on 2026-09-22 and carried unreviewed through the v0.6.0 release, so this acceptance ratifies deltas that had already shipped. |
 | Applied | 2026-09-22 |
 
 ## 1. Change summary
