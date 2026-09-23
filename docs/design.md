@@ -673,7 +673,8 @@ Claude plugin's `config.systemPrompt` value to the Claude Code SDK preset's appe
 with role `CLAUDE.md` retained as fallback; and Pi ingests the generated file named by
 `--append-system-prompt`. Tests prove the generated carriers, plugin hook composition and live
 registration/status. They do not prove that a process already running when setup changed the
-files reloaded them, or that a resumed Claude session re-enters the creation hook, and neither
+files reloaded them; a resumed Claude session's hook behaviour is observed only on Paseo `0.9.1`
+(see the carrier design's Q-001); and neither
 setup nor verify can prove that a model obeyed instructions in a particular turn. Generated/live
 configuration evidence, vendor-runtime ingestion contracts, and model behavior are three
 different claims.
@@ -715,7 +716,8 @@ fallback.
 
 That fallback is on by default and can be declined. `setup --no-claude-memory-contract` omits
 the contract from the role `CLAUDE.md` files, leaving the plugin as the only Claude carrier. It
-is an opt-out rather than the default precisely because resume behaviour is unproven: the
+is an opt-out rather than the default because resume is only partly proven — observed on Paseo
+`0.9.1` at the configuration level, not for model ingestion or on `0.8.x`: the
 operator chooses to give up that coverage, and the run says so. Only the contract is dropped —
 the operator's own global memory is still folded in, and a file with nothing left to carry is
 removed rather than written empty, so an older contract generation cannot outlive the choice.
@@ -739,8 +741,9 @@ lifecycle and trust rationale is in
 
 This stronger carrier is still bounded evidence: the room proves generated content, live
 plugin registration/status, and deterministic composition, not model obedience. Only newly
-created sessions pass through the hook; resume behavior is unproven, which is why
-`CLAUDE.md` remains by default. Missing or failed plugin state makes Claude setup/verify fail rather than
+created sessions pass through the hook. On Paseo `0.9.1` a resumed session keeps the stored
+prompt and a daemon-restart resume re-enters the hook idempotently, but that is configuration
+evidence on one version, which is why `CLAUDE.md` remains by default. Missing or failed plugin state makes Claude setup/verify fail rather than
 silently claiming the stronger guarantee.
 
 ## 7. Deliberate non-goals

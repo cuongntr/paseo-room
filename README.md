@@ -278,8 +278,9 @@ recreate an existing Claude session after setup or an update.
 have none. Only the contract is dropped, never your own memory, and an earlier generation of it
 is removed rather than left behind. The choice is recorded in `room.json`, so `verify` compares
 against it and rejects the flag itself; `setup` without the flag restores the fallback. Keep the
-fallback unless you have a reason not to: the plugin hook is verified, but whether a *resumed*
-session re-enters it is unproven, and `CLAUDE.md` is what covers that case.
+fallback unless you have a reason not to: the plugin hook is verified, and on Paseo 0.9.1 a
+*resumed* session was observed to keep the room prompt, but that is not proven for every
+supported version or for what the model actually reads, and `CLAUDE.md` is what covers that case.
 
 Pi providers use a strict command tail:
 
