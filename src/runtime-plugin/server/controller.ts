@@ -8,7 +8,7 @@
  * project are serialized in this process, and each append is checked against the projection
  * so an illegal transition can never reach the ledger.
  */
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import type { RuntimeRole } from '../shared/policy.js';
 import { renderBrief, renderContinuation } from './brief.js';
@@ -275,14 +275,16 @@ export class Controller {
 
       const title = peerTitle(view.id);
       const intentId = token('create');
+      // Identities are chosen and recorded before the call (delta P2-D3, Q-P2-04).
+      const identity = { agentId: randomUUID(), idempotencyKey: `${view.id}-g${String(view.reportingGeneration + 1)}-create` };
       this.deps.correlations.expectPeerCreate({ assignmentId: view.id, providerId: input.peerProvider, title, workKind: view.input.kind });
       await this.append(loaded, {
         type: 'agent.create-requested', payloadVersion: 1, assignmentId: view.id, actor: this.plugin, idempotencyKey: intentId,
-        data: { intentId, peerProviderId: input.peerProvider, workspaceId, parentAgentId: caller.agentId, label: view.id },
+        data: { intentId, peerProviderId: input.peerProvider, workspaceId, parentAgentId: caller.agentId, label: view.id, ...identity },
       });
       let agentId: string;
       try {
-        agentId = (await this.deps.paseo.createAgent({ ...launch, provider: input.peerProvider, cwd: caller.cwd, parentAgentId: caller.agentId, title, labels: { [ASSIGNMENT_LABEL]: view.id } })).agentId;
+        agentId = (await this.deps.paseo.createAgent({ ...launch, provider: input.peerProvider, cwd: caller.cwd, parentAgentId: caller.agentId, title, labels: { [ASSIGNMENT_LABEL]: view.id }, ...identity })).agentId;
       } catch (error) {
         this.deps.correlations.forgetPeerCreate(input.peerProvider, title);
         await this.append(loaded, { type: 'agent.create-uncertain', payloadVersion: 1, assignmentId: view.id, actor: this.plugin, data: { intentId, reason: error instanceof Error ? error.message.slice(0, 1_000) || 'unknown' : 'unknown' } });

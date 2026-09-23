@@ -40,7 +40,9 @@ describe('two-step writable dispatch', () => {
     expect(state.ownership.get(id)?.state).toBe('held');
 
     const createCall = h.paseo.calls.find(call => call.operation === 'createAgent');
-    expect(createCall?.args[0]).toMatchObject({ provider: 'codex-peer', parentAgentId: 'lead-1', labels: { 'paseo-room.assignment': id } });
+    expect(createCall?.args[0]).toMatchObject({ provider: 'codex-peer', parentAgentId: 'lead-1', labels: { 'paseo-room.assignment': id }, idempotencyKey: `${id}-g1-create` });
+    // The runtime chose the agent id before the call, and Paseo honoured it.
+    expect(result.ok && result.value.agentId).toBe((createCall?.args[0] as { agentId?: string } | undefined)?.agentId);
     expect(createCall?.args[0]).not.toHaveProperty('prompt');
     const peer = h.paseo.agents.get(result.ok ? result.value.agentId : '');
     expect(peer?.prompts).toHaveLength(1);

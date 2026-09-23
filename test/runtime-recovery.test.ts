@@ -51,6 +51,35 @@ describe('recovery of unresolved dispatch intents', () => {
     expect(child?.status).toBe('closed');
   });
 
+  it('recovers a lost create response by the agent id recorded before the call, with no second agent', async () => {
+    const h = await room();
+    const id = await create(h);
+    h.paseo.faults.set('createAgent', { when: 'after' });
+    await h.controller.dispatch(h.lead, { assignmentId: id, peerProvider: 'codex-peer' });
+    const requested = (await state(h)).events.find(event => event.type === 'agent.create-requested');
+    const chosen = requested?.type === 'agent.create-requested' ? requested.data : undefined;
+    expect(chosen).toMatchObject({ idempotencyKey: `${id}-g1-create`, agentId: expect.stringMatching(/^[0-9a-f-]{36}$/) as string });
+    // A decoy with the same label must not matter once the exact id is known.
+    h.paseo.addAgent({ id: 'decoy', provider: 'codex-peer', labels: { 'paseo-room.assignment': id, 'paseo.parent-agent-id': 'lead-1' } });
+    const [report] = await restarted(h).recoverAll();
+    expect(report?.actions).toEqual([expect.objectContaining({ outcome: 'archived-unbound', detail: `Archived recovered child ${String(chosen?.agentId)}.` })]);
+    expect([...h.paseo.agents.keys()].filter(agent => agent !== 'lead-1' && agent !== 'decoy')).toEqual([chosen?.agentId]);
+    expect(h.paseo.agents.get('decoy')?.status).toBe('idle');
+  });
+
+  it('still recovers a create recorded without identities by its exact label', async () => {
+    const h = await room();
+    const id = await create(h);
+    const loaded = await state(h);
+    const plugin = { source: 'plugin' as const };
+    await h.controller.append(loaded, { type: 'assignment.dispatch-requested', payloadVersion: 1, assignmentId: id, actor: plugin, data: { peerProviderId: 'codex-peer', workspaceId: 'ws-1' } });
+    await h.controller.append(loaded, { type: 'ownership.reserved', payloadVersion: 1, assignmentId: id, actor: plugin, data: { workspaceId: 'ws-1', baseCommit: h.base } });
+    await h.controller.append(loaded, { type: 'agent.create-requested', payloadVersion: 1, assignmentId: id, actor: plugin, data: { intentId: 'create-old', peerProviderId: 'codex-peer', workspaceId: 'ws-1', parentAgentId: 'lead-1', label: id } });
+    h.paseo.addAgent({ id: 'phase1-child', provider: 'codex-peer', labels: { 'paseo-room.assignment': id, 'paseo.parent-agent-id': 'lead-1' } });
+    const [report] = await restarted(h).recoverAll();
+    expect(report?.actions).toEqual([expect.objectContaining({ intent: 'create-old', outcome: 'archived-unbound', detail: 'Archived recovered child phase1-child.' })]);
+  });
+
   it('records a create that never happened as failed and releases the reservation', async () => {
     const h = await room();
     const id = await create(h);

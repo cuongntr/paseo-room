@@ -19,6 +19,13 @@ type Operation =
   | 'createAgent' | 'getAgent' | 'listAgents' | 'run' | 'archive'
   | 'createWorktreeWorkspace' | 'getWorkspace' | 'archiveWorkspace' | 'createAgentInWorkspace';
 
+/** Paseo fingerprints the request's content, not the order its fields were written in. */
+function canonical(value: unknown): string {
+  return JSON.stringify(value, (_key, entry: unknown) => (entry !== null && typeof entry === 'object' && !Array.isArray(entry)
+    ? Object.fromEntries(Object.entries(entry).sort(([a], [b]) => a.localeCompare(b)))
+    : entry));
+}
+
 export interface FakeWorkspace {
   id: string;
   repo: string;
@@ -66,7 +73,7 @@ export class FakePaseo implements PaseoPort {
   private receipt(kind: 'agent' | 'workspace', key: string | undefined, request: unknown, id: string | undefined): string | undefined {
     if (key === undefined) return undefined;
     const known = this.receipts.get(`${kind}:${key}`);
-    const fingerprint = JSON.stringify(request);
+    const fingerprint = canonical(request);
     if (known !== undefined && known.fingerprint !== fingerprint) throw new Error(`${kind}_request_key_conflict`);
     if (known !== undefined) return known.id;
     if (id !== undefined && [...this.receipts.entries()].some(([name, entry]) => name.startsWith(`${kind}:`) && entry.id === id)) throw new Error(`${kind}_id_conflict`);
@@ -74,7 +81,7 @@ export class FakePaseo implements PaseoPort {
   }
 
   private remember(kind: 'agent' | 'workspace', key: string | undefined, request: unknown, id: string): void {
-    if (key !== undefined) this.receipts.set(`${kind}:${key}`, { fingerprint: JSON.stringify(request), id });
+    if (key !== undefined) this.receipts.set(`${kind}:${key}`, { fingerprint: canonical(request), id });
   }
 
   private git(cwd: string, ...args: string[]): string {

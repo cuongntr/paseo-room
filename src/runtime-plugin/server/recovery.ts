@@ -101,11 +101,21 @@ export class Recovery {
     });
   }
 
-  /** Searches only from the unresolved create intent: exact provider, parent and assignment label. */
+  /**
+   * Searches only from the unresolved create intent. When the intent recorded the agent id the
+   * runtime chose, that exact id decides; a create recorded without one (a Phase 1 ledger), or
+   * whose id Paseo does not know, falls back to exact provider, parent and assignment label.
+   */
   private async recoverCreate(loaded: LoadedProject, view: AssignmentView, intentId: string): Promise<RecoveryAction> {
-    const agents = await this.controller.deps.paseo.listAgents();
-    const matches = agents.filter(agent =>
-      agent.labels[ASSIGNMENT_LABEL] === view.id && agent.provider === view.peerProviderId && agent.labels[PARENT_AGENT_ID_LABEL] === view.leadAgentId);
+    const requested = loaded.events.find(event => event.type === 'agent.create-requested' && event.assignmentId === view.id && event.data.intentId === intentId);
+    const chosen = requested?.type === 'agent.create-requested' ? requested.data.agentId : undefined;
+    const exact = chosen === undefined ? undefined : await this.controller.deps.paseo.getAgent(chosen);
+    const ours = (agent: AgentSnapshot): boolean =>
+      agent.labels[ASSIGNMENT_LABEL] === view.id && agent.provider === view.peerProviderId && agent.labels[PARENT_AGENT_ID_LABEL] === view.leadAgentId;
+    if (exact !== undefined && !ours(exact)) {
+      return { assignmentId: view.id, intent: intentId, outcome: 'uncertain', detail: `Agent ${exact.id} does not carry this assignment's provider, parent and label.` };
+    }
+    const matches = exact !== undefined ? [exact] : (await this.controller.deps.paseo.listAgents()).filter(ours);
     if (matches.length === 0) {
       await this.controller.append(loaded, { type: 'agent.create-failed', payloadVersion: 1, assignmentId: view.id, actor: plugin, data: { intentId, reason: 'No agent carries this assignment\'s label.' } });
       return { assignmentId: view.id, intent: intentId, outcome: 'failed', detail: 'The Peer was never created.' };
