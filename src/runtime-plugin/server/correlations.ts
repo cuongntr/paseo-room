@@ -135,13 +135,17 @@ export class CorrelationRegistry {
     }
   }
 
-  /** The durable Peer association for an assignment, found after a restart as well as before. */
-  async findByAssignment(assignmentId: string): Promise<Association | undefined> {
+  /**
+   * The durable Peer association for an assignment, found after a restart as well as before.
+   * After a lease reclaim an assignment has had more than one Peer, so callers that know the
+   * bound agent name it.
+   */
+  async findByAssignment(assignmentId: string, agentId?: string): Promise<Association | undefined> {
     let names: string[];
     try { names = await readdir(this.directory); } catch { return undefined; }
     for (const name of names.filter(entry => entry.endsWith('.json')).sort()) {
       const association = await this.lookup(name.slice(0, -'.json'.length));
-      if (association?.kind === 'peer' && association.assignmentId === assignmentId) return association;
+      if (association?.kind === 'peer' && association.assignmentId === assignmentId && (agentId === undefined || association.agentId === agentId)) return association;
     }
     return undefined;
   }

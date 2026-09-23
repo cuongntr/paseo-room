@@ -81,6 +81,10 @@ async function accept(controller: Controller, loaded: LoadedProject, association
   if (!parsed.ok) throw new Refusal('report_malformed', parsed.message);
 
   // 2. A known durable lifetime binding: this correlation's agent is the assignment's bound Peer.
+  // A Peer its lease was reclaimed from belongs to an earlier epoch: its reports are stale.
+  if (loaded.state.ownership.get(assignmentId)?.lease?.priorAgentIds.includes(association.agentId) === true) {
+    throw new Refusal('report_stale', 'This Peer was replaced when its lease was reclaimed; its reports belong to an earlier epoch.');
+  }
   const view = loaded.state.assignments.get(assignmentId);
   if (view?.peerAgentId !== association.agentId || view.observedProviderId === undefined) {
     throw new Refusal('report_unauthorized', 'This report does not come from the assignment\'s bound Peer.');

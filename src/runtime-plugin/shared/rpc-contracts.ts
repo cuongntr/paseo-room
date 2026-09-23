@@ -60,7 +60,22 @@ export const runtimeQuarantineRpc = defineRpc({
   output: answer(z.strictObject({ quarantined: z.string() })),
 });
 
+/** Human closes a retained worktree (Phase 2 delta P2-D7); discarding its work needs a reason. */
+export const runtimeWorkspaceCloseRpc = defineRpc({
+  name: 'runtime.workspace-close',
+  input: z.strictObject({ projectId, assignmentId, discardUncommitted: z.literal(true).optional(), reason: boundedString().optional(), idempotencyKey })
+    .refine(input => input.discardUncommitted !== true || input.reason !== undefined, { message: 'discardUncommitted needs a reason', path: ['reason'] }),
+  output: answer(z.strictObject({ directoryRemoved: z.boolean() })),
+});
+
+/** Human reclaims a lease whose Peer cannot continue (Phase 2 delta P2-D6). */
+export const runtimeLeaseReclaimRpc = defineRpc({
+  name: 'runtime.lease-reclaim',
+  input: z.strictObject({ projectId, assignmentId, reason: boundedString(), idempotencyKey }),
+  output: answer(z.strictObject({ epoch: z.number().int(), agentId: z.string(), generation: z.number().int() })),
+});
+
 export const RUNTIME_RPCS = [
   runtimeHealthRpc, runtimeProjectRpc, runtimeAssignmentRpc, runtimeRecoverRpc, runtimeAbandonRpc,
-  runtimeResolveOwnershipRpc, runtimeQuarantineRpc,
+  runtimeResolveOwnershipRpc, runtimeQuarantineRpc, runtimeWorkspaceCloseRpc, runtimeLeaseReclaimRpc,
 ] as const;

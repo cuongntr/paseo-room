@@ -18,7 +18,7 @@ import type { CorrelationRegistry } from './correlations.js';
 import { evaluateAcceptance } from './domain/acceptance.js';
 import { sha256 } from './domain/receipts.js';
 import { normalizeScope, parseScope } from './domain/scope.js';
-import { activeLeases, applyEvent, checkEvent, leadWorkspaceWriter, leaseCollision, project, type AssignmentView, type ProjectState } from './domain/state.js';
+import { activeLeases, applyEvent, checkEvent, leadWorkspaceWriter, leaseCollision, project, TERMINAL_STATES as TERMINAL, type AssignmentView, type ProjectState } from './domain/state.js';
 import { validateAssignmentCreate } from './domain/validate.js';
 import { EVENT_SCHEMA, type RuntimeEventV1 } from './events/schema.js';
 import { gateRequestedData, runGate, type GateEvent, type GateOutcome, type GateRequest } from './gate.js';
@@ -529,7 +529,7 @@ export class Controller {
       return refuse('peer_drift', `Peer ${agentId} now runs ${snapshot.provider}/${snapshot.model ?? 'provider-default'}, not the dispatched ${String(view.observedProviderId)}/${String(view.observedModel)}.`);
     }
     if (snapshot.activeTurn || snapshot.status === 'running') return refuse('peer_busy', `Peer ${agentId} is still in a turn.`, true);
-    const association = await this.deps.correlations.findByAssignment(view.id);
+    const association = await this.deps.correlations.findByAssignment(view.id, agentId);
     if (association?.agentId !== agentId) return refuse('peer_unbound', 'The Peer\'s reporting bridge is not associated with this assignment.');
     return done(association.correlationId);
   }
@@ -706,17 +706,112 @@ export class Controller {
   }
 
   /** Lead closes a retained worktree of its own closed assignment (delta P2-D7). */
-  async workspaceClose(caller: Caller, input: { readonly assignmentId: string; readonly discardUncommitted?: true | undefined; readonly reason?: string | undefined }): Promise<ControllerResult<{ readonly closed: boolean }>> {
-    const found = await this.leadAssignment(caller, input.assignmentId);
-    if (!found.ok) return found;
-    return refuse('not_implemented', 'Worktree close arrives with runtime Phase 2.');
+  async workspaceClose(caller: Caller, input: { readonly assignmentId: string; readonly discardUncommitted?: true | undefined; readonly reason?: string | undefined }): Promise<ControllerResult<{ readonly directoryRemoved: boolean }>> {
+    const store = await this.projectFor(caller.cwd);
+    return await this.serial(store.meta.projectId, async () => {
+      const found = await this.leadAssignment(caller, input.assignmentId);
+      if (!found.ok) return found;
+      return await this.closeRetained(found.value.loaded, input.assignmentId, input, this.lead(caller));
+    });
+  }
+
+  /**
+   * Closes a retained worktree on an explicit decision, by Lead or by Human through the panel.
+   * Without `discardUncommitted` only a worktree that is clean at its candidate or base closes;
+   * with it (and a reason) the uncommitted work is destroyed. The branch is always kept.
+   */
+  async closeRetained(loaded: LoadedProject, assignmentId: string, decision: { readonly discardUncommitted?: true | undefined; readonly reason?: string | undefined }, actor: RuntimeEventV1['actor']): Promise<ControllerResult<{ readonly directoryRemoved: boolean }>> {
+    const record = loaded.state.workspaces.get(assignmentId);
+    const view = loaded.state.assignments.get(assignmentId);
+    if (record === undefined || view === undefined) return refuse('workspace_missing', `Assignment ${assignmentId} has no runtime worktree.`);
+    if (record.close === 'succeeded') return refuse('workspace_closed', 'The worktree is already closed.');
+    if (record.close === 'requested' || record.close === 'uncertain') return refuse('workspace_close_uncertain', 'A close of this worktree is still unconfirmed; recovery settles it first.', true);
+    if (loaded.state.ownership.get(assignmentId)?.state !== 'released') {
+      return refuse('writer_not_released', 'The worktree\'s writer is not proven released; close the assignment first.');
+    }
+    if (decision.discardUncommitted === true && (decision.reason === undefined || decision.reason.trim() === '')) return refuse('reason_missing', 'Discarding uncommitted work needs a reason.');
+    if (decision.discardUncommitted !== true && record.worktreePath !== undefined) {
+      const readiness = await this.deps.git.closeReadiness(record.worktreePath, { base: record.baseCommit, ...(view.candidate === undefined ? {} : { candidate: view.candidate.commit }) });
+      if (readiness === 'dirty' || readiness === 'unrecorded-commits') {
+        return refuse('workspace_retained', `The worktree has ${readiness === 'dirty' ? 'uncommitted changes' : 'commits no handoff recorded'}; closing it destroys them. Repeat with discardUncommitted and a reason to discard.`);
+      }
+    }
+    return await this.closeWorkspace(loaded, assignmentId, { discardUncommitted: decision.discardUncommitted === true, ...(decision.reason === undefined ? {} : { reason: decision.reason }) }, actor);
+  }
+
+  /**
+   * After a leased writer is proven released: close its worktree when nothing could be lost,
+   * otherwise retain it and tell Lead how to decide. Call inside the project's queue.
+   */
+  async afterRelease(loaded: LoadedProject, assignmentId: string): Promise<void> {
+    const record = loaded.state.workspaces.get(assignmentId);
+    const view = loaded.state.assignments.get(assignmentId);
+    if (record === undefined || view === undefined || record.create !== 'succeeded' || record.close !== 'open' || record.worktreePath === undefined) return;
+    if (loaded.state.ownership.get(assignmentId)?.state !== 'released') return;
+    const readiness = await this.deps.git.closeReadiness(record.worktreePath, { base: record.baseCommit, ...(view.candidate === undefined ? {} : { candidate: view.candidate.commit }) }).catch(() => 'dirty' as const);
+    if (readiness !== 'dirty' && readiness !== 'unrecorded-commits') {
+      await this.closeWorkspace(loaded, assignmentId, { discardUncommitted: false }).catch(() => undefined);
+      return;
+    }
+    await this.notices.notify(loaded, {
+      kind: 'worktree-retained', class: 'owner', disposition: 'lead-now', assignmentId,
+      text: `The worktree of ${assignmentId} (${record.worktreePath}, branch ${record.branch ?? record.branchName}) was retained: it has ${readiness === 'dirty' ? 'uncommitted changes' : 'commits no handoff recorded'}. Inspect it, then call workspace_close — with discardUncommitted and a reason to discard that work.`,
+      recipient: { agentId: view.leadAgentId, role: 'lead' },
+    }).catch(() => undefined);
   }
 
   /** Lead reclaims a lease whose Peer is proven archived (delta P2-D6). */
-  async leaseReclaim(caller: Caller, input: { readonly assignmentId: string; readonly reason: string }): Promise<ControllerResult<{ readonly epoch: number }>> {
-    const found = await this.leadAssignment(caller, input.assignmentId);
-    if (!found.ok) return found;
-    return refuse('not_implemented', 'Lease reclaim arrives with runtime Phase 2.');
+  async leaseReclaim(caller: Caller, input: { readonly assignmentId: string; readonly reason: string }): Promise<ControllerResult<{ readonly epoch: number; readonly agentId: string; readonly generation: number }>> {
+    const store = await this.projectFor(caller.cwd);
+    return await this.serial(store.meta.projectId, async () => {
+      const found = await this.leadAssignment(caller, input.assignmentId);
+      if (!found.ok) return found;
+      return await this.reclaim(found.value.loaded, input.assignmentId, input.reason, 'lead');
+    });
+  }
+
+  /**
+   * Moves a lease to its next epoch and dispatches a new Peer into the same worktree. Needs Paseo
+   * evidence the prior Peer cannot continue: archived with a closed live status. Human may also
+   * reclaim a Peer Paseo no longer knows at all; nobody may reclaim one Paseo still shows live.
+   * Time, idleness or a turn end never reclaims anything.
+   */
+  async reclaim(loaded: LoadedProject, assignmentId: string, reason: string, decidedBy: 'lead' | 'human'): Promise<ControllerResult<{ readonly epoch: number; readonly agentId: string; readonly generation: number }>> {
+    const view = loaded.state.assignments.get(assignmentId);
+    const owner = loaded.state.ownership.get(assignmentId);
+    const lease = owner?.lease;
+    const record = loaded.state.workspaces.get(assignmentId);
+    if (view === undefined || owner === undefined || lease === undefined || record === undefined) return refuse('lease_missing', `Assignment ${assignmentId} holds no worktree lease.`);
+    if (owner.state === 'released' || owner.state === 'reserved') return refuse('lease_state', `The lease is ${owner.state}; only a held or uncertain lease is reclaimed.`);
+    if (TERMINAL.includes(view.state) || view.closure !== 'open') return refuse('assignment_state', `Assignment ${assignmentId} is ${view.state} (${view.closure}); a decided or closing assignment is not reclaimed.`);
+    if (Object.keys(view.openIntents).length > 0) return refuse('effect_unresolved', 'An effect of this assignment is still unresolved; let recovery settle it first.', true);
+    if (record.create !== 'succeeded' || record.close !== 'open' || record.worktreePath === undefined) return refuse('worktree_unavailable', 'The lease\'s worktree is not open.');
+    if (!await this.deps.git.directoryPresent(record.worktreePath)) return refuse('worktree_unavailable', `The worktree ${record.worktreePath} is gone.`);
+    const prior = owner.agentId ?? view.peerAgentId;
+    if (prior === undefined) return refuse('lease_state', 'The lease names no writer to reclaim from.');
+    const live = await this.deps.paseo.getAgent(prior);
+    const proven = live !== undefined && live.archivedAt !== null && live.status === 'closed';
+    if (!proven && !(decidedBy === 'human' && live === undefined)) {
+      return refuse('writer_not_proven_stopped', live === undefined
+        ? `Paseo no longer knows Peer ${prior}, so it cannot be proven stopped; a Human may reclaim from the panel.`
+        : `Peer ${prior} is ${live.status}${live.archivedAt === null ? ' and not archived' : ''}; archive it in Paseo before reclaiming.`);
+    }
+    const provider = view.peerProviderId;
+    if (provider === undefined) return refuse('lease_state', 'The assignment names no Peer provider.');
+    const launch = await this.deps.paseo.resolveLaunch(provider);
+    if (launch === undefined) return refuse('peer_model_unresolved', `${provider} has no default model and its room profile sets none.`);
+    const epoch = lease.epoch + 1;
+    await this.append(loaded, {
+      type: 'lease.reclaimed', payloadVersion: 1, assignmentId, actor: decidedBy === 'lead' ? { source: 'seat', role: 'lead', agentId: view.leadAgentId, providerId: view.leadProviderId } : { source: 'human' },
+      data: { fromEpoch: lease.epoch, toEpoch: epoch, priorAgentId: prior, decidedBy, reason: reason.slice(0, 1_000) },
+    });
+    const parent: Caller = { agentId: view.leadAgentId, providerId: view.leadProviderId, role: 'lead', workspaceId: null, cwd: loaded.store.meta.canonicalRoot };
+    const launched = await this.launchPeer(loaded, assignmentId, {
+      caller: parent, provider, launch,
+      placement: { kind: 'worktree', workspaceId: lease.workspaceId, path: record.worktreePath, branch: record.branch ?? lease.branch },
+      preface: `You continue assignment ${assignmentId} after the previous Peer stopped (${reason.slice(0, 500)}). The worktree may hold its commits or uncommitted changes: inspect its state before you write.`,
+    });
+    return launched.ok ? done({ epoch, ...launched.value }) : launched;
   }
 
   roomGeneration(): string {
@@ -758,6 +853,7 @@ export class Controller {
     const owner = loaded.state.ownership.get(assignmentId);
     if (owner !== undefined && (owner.state === 'releasing' || owner.state === 'uncertain')) {
       await this.append(loaded, { type: 'ownership.released', payloadVersion: 1, assignmentId, actor: this.plugin, data: { agentId, archivedAt } });
+      await this.afterRelease(loaded, assignmentId);
     }
     return done({ released: true });
   }

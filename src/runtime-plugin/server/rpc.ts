@@ -9,8 +9,8 @@
 import type { PluginServerContext } from '@getpaseo/plugin/server';
 import type { z } from 'zod';
 import {
-  runtimeAbandonRpc, runtimeAssignmentRpc, runtimeHealthRpc, runtimeProjectRpc, runtimeQuarantineRpc, runtimeRecoverRpc,
-  runtimeResolveOwnershipRpc,
+  runtimeAbandonRpc, runtimeAssignmentRpc, runtimeHealthRpc, runtimeLeaseReclaimRpc, runtimeProjectRpc, runtimeQuarantineRpc, runtimeRecoverRpc,
+  runtimeResolveOwnershipRpc, runtimeWorkspaceCloseRpc,
 } from '../shared/rpc-contracts.js';
 import type { RuntimeWarningV1 } from '../shared/rpc.js';
 import { RUNTIME_PLUGIN_ID } from '../shared/identity.js';
@@ -140,6 +140,32 @@ export function createRpcHandlers(runtime: RpcRuntime) {
       });
     }),
 
+    workspaceClose: (input: z.infer<typeof runtimeWorkspaceCloseRpc.input>): Promise<Answer> => once(input.idempotencyKey, async () => {
+      const store = await storeOf(runtime, input.projectId);
+      if (store === undefined) return missing(input.projectId);
+      return await controller.serial(store.meta.projectId, async () => {
+        const loaded = await controller.load(store);
+        if (!loaded.ok) return error(loaded.code, loaded.message, 'Export the project and inspect the named event file.');
+        const closed = await controller.closeRetained(loaded.value, input.assignmentId, input, human);
+        return closed.ok
+          ? answer(runtime, closed.value)
+          : error(closed.code, closed.message, closed.code === 'workspace_retained' ? 'Inspect the worktree; discard only with a reason.' : 'Refresh the assignment view.', closed.retryable);
+      });
+    }),
+
+    leaseReclaim: (input: z.infer<typeof runtimeLeaseReclaimRpc.input>): Promise<Answer> => once(input.idempotencyKey, async () => {
+      const store = await storeOf(runtime, input.projectId);
+      if (store === undefined) return missing(input.projectId);
+      return await controller.serial(store.meta.projectId, async () => {
+        const loaded = await controller.load(store);
+        if (!loaded.ok) return error(loaded.code, loaded.message, 'Export the project and inspect the named event file.');
+        const reclaimed = await controller.reclaim(loaded.value, input.assignmentId, input.reason, 'human');
+        return reclaimed.ok
+          ? answer(runtime, reclaimed.value)
+          : error(reclaimed.code, reclaimed.message, reclaimed.code === 'writer_not_proven_stopped' ? 'Archive the Peer in Paseo first.' : 'Refresh the assignment view.', reclaimed.retryable);
+      });
+    }),
+
     quarantine: (input: z.infer<typeof runtimeQuarantineRpc.input>): Promise<Answer> => once(input.idempotencyKey, async () => {
       const store = await storeOf(runtime, input.projectId);
       if (store === undefined) return missing(input.projectId);
@@ -166,4 +192,6 @@ export function registerRpcs(server: Pick<PluginServerContext, 'handle'>, runtim
   server.handle(runtimeAbandonRpc, async (input, { paseo }) => { supply(paseo); return runtimeAbandonRpc.output.parse(await handlers.abandon(input)); });
   server.handle(runtimeResolveOwnershipRpc, async (input, { paseo }) => { supply(paseo); return runtimeResolveOwnershipRpc.output.parse(await handlers.resolveOwnership(input)); });
   server.handle(runtimeQuarantineRpc, async (input, { paseo }) => { supply(paseo); return runtimeQuarantineRpc.output.parse(await handlers.quarantine(input)); });
+  server.handle(runtimeWorkspaceCloseRpc, async (input, { paseo }) => { supply(paseo); return runtimeWorkspaceCloseRpc.output.parse(await handlers.workspaceClose(input)); });
+  server.handle(runtimeLeaseReclaimRpc, async (input, { paseo }) => { supply(paseo); return runtimeLeaseReclaimRpc.output.parse(await handlers.leaseReclaim(input)); });
 }

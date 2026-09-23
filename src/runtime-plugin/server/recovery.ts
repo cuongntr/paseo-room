@@ -12,13 +12,18 @@
  * is never announced. Recovery judges such a turn exactly as the turn-end handler would, but only
  * on live proof that it is over: the delivered prompt of the open generation, no active turn, and
  * a record Paseo changed after that prompt arrived.
+ *
+ * Phase 2 rows (docs/design/runtime-coordination-phase2.md §7): an unresolved worktree create is
+ * reissued with its recorded id and key and then closed, never adopted; an unresolved close is
+ * settled by Paseo no longer listing the workspace, plus whether its directory is gone; a lease
+ * whose Peer died waits for an explicit reclaim. Nothing is settled by elapsed time.
  */
 import type { Controller, LoadedProject } from './controller.js';
 import type { AssignmentView } from './domain/state.js';
 import { recoverGate } from './gate.js';
 import { settleEndedTurn } from './handlers/turns.js';
 import { checkLeadOwnership } from './ownership.js';
-import { ASSIGNMENT_LABEL, PARENT_AGENT_ID_LABEL, type AgentSnapshot } from './paseo-port.js';
+import { ASSIGNMENT_LABEL, CreationConflictError, PARENT_AGENT_ID_LABEL, type AgentSnapshot, type WorkspaceSnapshot } from './paseo-port.js';
 import type { Spool } from './spool.js';
 import { ProjectStore } from './store/project.js';
 
@@ -74,6 +79,8 @@ export class Recovery {
           if (type === 'agent.create-requested') actions.push(await this.recoverCreate(loaded.value, current, intentId));
           else if (type === 'run.requested') actions.push(await this.recoverRun(loaded.value, current, intentId));
           else if (type === 'archive.requested') actions.push(await this.recoverArchive(loaded.value, current, intentId));
+          else if (type === 'workspace.create-requested') actions.push(await this.recoverWorkspaceCreate(loaded.value, current, intentId));
+          else if (type === 'workspace.close-requested') actions.push(await this.recoverWorkspaceClose(loaded.value, current, intentId));
         }
         const ended = await this.recoverEndedTurn(loaded.value, loaded.value.state.assignments.get(view.id) ?? view);
         if (ended !== undefined) actions.push(ended);
@@ -112,6 +119,10 @@ export class Recovery {
     const exact = chosen === undefined ? undefined : await this.controller.deps.paseo.getAgent(chosen);
     const ours = (agent: AgentSnapshot): boolean =>
       agent.labels[ASSIGNMENT_LABEL] === view.id && agent.provider === view.peerProviderId && agent.labels[PARENT_AGENT_ID_LABEL] === view.leadAgentId;
+    const lease = loaded.state.ownership.get(view.id)?.lease;
+    if (exact !== undefined && lease !== undefined && exact.workspaceId !== lease.workspaceId) {
+      return { assignmentId: view.id, intent: intentId, outcome: 'uncertain', detail: `Agent ${exact.id} sits in workspace ${String(exact.workspaceId)}, not its lease's ${lease.workspaceId}.` };
+    }
     if (exact !== undefined && !ours(exact)) {
       return { assignmentId: view.id, intent: intentId, outcome: 'uncertain', detail: `Agent ${exact.id} does not carry this assignment's provider, parent and label.` };
     }
@@ -173,6 +184,7 @@ export class Recovery {
       const owner = loaded.state.ownership.get(view.id);
       if (owner !== undefined && (owner.state === 'releasing' || owner.state === 'uncertain')) {
         await this.controller.append(loaded, { type: 'ownership.released', payloadVersion: 1, assignmentId: view.id, actor: plugin, data: { agentId, archivedAt: snapshot.archivedAt } });
+        await this.controller.afterRelease(loaded, view.id);
       }
       return { assignmentId: view.id, intent: intentId, outcome: 'succeeded', detail: 'The Peer is archived and closed.' };
     }
@@ -185,6 +197,53 @@ export class Recovery {
       return { assignmentId: view.id, intent: intentId, outcome: 'failed', detail: 'The Peer is still live; Lead may close again.' };
     }
     return { assignmentId: view.id, intent: intentId, outcome: 'unchanged', detail: snapshot === undefined ? 'Paseo no longer knows the Peer; its stop cannot be proven.' : 'The archive is still unconfirmed.' };
+  }
+
+  /**
+   * Reissues the identical worktree request with the recorded id and key (delta P2-D3, §7):
+   * Paseo's receipt returns the workspace it already made, or makes it once. Recovery never
+   * adopts a worktree — Lead was never told the dispatch succeeded — so it is refused and closed.
+   */
+  private async recoverWorkspaceCreate(loaded: LoadedProject, view: AssignmentView, intentId: string): Promise<RecoveryAction> {
+    const record = loaded.state.workspaces.get(view.id);
+    if (record === undefined) return { assignmentId: view.id, intent: intentId, outcome: 'uncertain', detail: 'No worktree record.' };
+    let snapshot: WorkspaceSnapshot;
+    try {
+      snapshot = await this.controller.deps.paseo.createWorktreeWorkspace({
+        workspaceId: record.workspaceId, idempotencyKey: record.idempotencyKey, title: `room ${view.id}`, cwd: loaded.store.meta.canonicalRoot,
+        baseCommit: record.baseCommit, branchName: record.branchName, worktreeSlug: record.worktreeSlug,
+      });
+    } catch (error) {
+      const reason = error instanceof Error ? error.message.slice(0, 1_000) || 'unknown' : 'unknown';
+      if (error instanceof CreationConflictError) {
+        await this.controller.append(loaded, { type: 'workspace.create-failed', payloadVersion: 1, assignmentId: view.id, actor: plugin, data: { intentId, reason } });
+        return { assignmentId: view.id, intent: intentId, outcome: 'failed', detail: `Paseo refused the recorded request: ${reason}` };
+      }
+      return { assignmentId: view.id, intent: intentId, outcome: 'unchanged', detail: `The reissued request was not confirmed: ${reason}` };
+    }
+    if (snapshot.id !== record.workspaceId) {
+      return { assignmentId: view.id, intent: intentId, outcome: 'uncertain', detail: `Paseo answered with workspace ${snapshot.id}, not ${record.workspaceId}.` };
+    }
+    await this.controller.append(loaded, { type: 'workspace.create-refused', payloadVersion: 1, assignmentId: view.id, actor: plugin, data: { intentId, workspaceId: record.workspaceId, reason: 'Recovered after an interrupted dispatch; recovery never adopts a worktree.' } });
+    const closed = await this.controller.closeWorkspace(loaded, view.id, { discardUncommitted: false, reason: 'Recovered after an interrupted dispatch; no Peer was ever placed in it.' }).catch(() => undefined);
+    return { assignmentId: view.id, intent: intentId, outcome: 'archived-unbound', detail: `Closed recovered worktree ${record.workspaceId}${closed?.ok === true ? '' : ' (close unconfirmed)'}.` };
+  }
+
+  /** A close is settled only by Paseo no longer listing the workspace; a live one failed. */
+  private async recoverWorkspaceClose(loaded: LoadedProject, view: AssignmentView, intentId: string): Promise<RecoveryAction> {
+    const record = loaded.state.workspaces.get(view.id);
+    if (record === undefined) return { assignmentId: view.id, intent: intentId, outcome: 'uncertain', detail: 'No worktree record.' };
+    const live = await this.controller.deps.paseo.getWorkspace(record.workspaceId);
+    if (live !== undefined && !live.archiving) {
+      await this.controller.append(loaded, { type: 'workspace.close-failed', payloadVersion: 1, assignmentId: view.id, actor: plugin, data: { intentId, workspaceId: record.workspaceId, reason: 'Paseo still lists the workspace as active.' } });
+      return { assignmentId: view.id, intent: intentId, outcome: 'failed', detail: 'The worktree is still open; it may be closed again.' };
+    }
+    if (live !== undefined) return { assignmentId: view.id, intent: intentId, outcome: 'unchanged', detail: 'Paseo is still archiving the workspace.' };
+    const directoryRemoved = record.worktreePath === undefined || !await this.controller.deps.git.directoryPresent(record.worktreePath);
+    // Paseo lists only active workspaces, so the archive time is known only as "by now".
+    const archivedAt = (this.controller.deps.now?.() ?? new Date()).toISOString();
+    await this.controller.append(loaded, { type: 'workspace.close-succeeded', payloadVersion: 1, assignmentId: view.id, actor: { source: 'paseo' }, data: { intentId, workspaceId: record.workspaceId, archivedAt, directoryRemoved } });
+    return { assignmentId: view.id, intent: intentId, outcome: 'succeeded', detail: directoryRemoved ? 'The worktree is closed and its directory removed.' : 'The worktree is closed but its directory remains for cleanup.' };
   }
 
   private async recoverGateRun(loaded: LoadedProject, assignmentId: string, gateRunId: string): Promise<RecoveryAction> {

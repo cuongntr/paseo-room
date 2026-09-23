@@ -44,7 +44,7 @@ async function locatePeer(controller: Controller, agentId: string): Promise<Loca
  */
 export async function settleEndedTurn(controller: Controller, spool: Spool, loaded: LoadedProject, view: AssignmentView, agentId: string): Promise<'missing' | 'uncertain' | 'waiting' | 'none'> {
   if (view.reportingState !== 'open' || (view.state !== 'active' && view.state !== 'awaiting-permission')) return 'none';
-  const association = await controller.deps.correlations.findByAssignment(view.id);
+  const association = await controller.deps.correlations.findByAssignment(view.id, agentId);
   const pending = association === undefined ? [] : await spool.unresolvedFor(association.correlationId);
   if (pending.length > 0) {
     await controller.append(loaded, { type: 'report.uncertain', payloadVersion: 1, assignmentId: view.id, actor: plugin, data: { generation: view.reportingGeneration, requestId: pending[0] ?? '', reason: 'A report from this turn has not been recorded yet.' } });
