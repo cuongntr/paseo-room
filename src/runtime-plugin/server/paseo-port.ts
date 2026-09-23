@@ -296,7 +296,13 @@ export function sdkPaseoPort(handle: PaseoHandle, waitMs = 10_000): PaseoPort {
     async getAgent(agentId) {
       const paseo = await api();
       const ref = paseo.agents.ref(agentId);
-      await ref.refresh();
+      try {
+        await ref.refresh();
+      } catch (error) {
+        // Paseo 0.9.1 answers an id it has never stored with an error, not an empty record.
+        if (error instanceof Error && error.message === `Agent not found: ${agentId}`) return undefined;
+        throw error;
+      }
       const current = ref.current();
       return current === null ? undefined : toSnapshot(current);
     },

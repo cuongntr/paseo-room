@@ -96,6 +96,21 @@ describe('Paseo handle and SDK port', () => {
     expect(await port.listAgents()).toHaveLength(1);
   });
 
+  it('reads an agent id Paseo never stored as unknown, and still surfaces any other failure', async () => {
+    const handle = new PaseoHandle();
+    handle.supply({
+      agents: {
+        ref: (id: string) => ({
+          refresh: () => Promise.reject(new Error(id === 'gone' ? 'Agent not found: gone' : 'socket closed')),
+          current: () => null,
+        }),
+      },
+    } as unknown as PaseoApi);
+    const port = sdkPaseoPort(handle, 50);
+    expect(await port.getAgent('gone')).toBeUndefined();
+    await expect(port.getAgent('other')).rejects.toThrow('socket closed');
+  });
+
   it('creates worktree workspaces and in-workspace Peers with runtime-chosen identities', async () => {
     const calls: unknown[] = [];
     const current = { workspaceDirectory: '/wt/asg_1', workspaceKind: 'worktree', archivingAt: null };

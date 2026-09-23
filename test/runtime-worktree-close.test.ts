@@ -249,6 +249,28 @@ describe('recovery of Phase 2 intents', () => {
     expect((await h.git('worktree', 'list')).split('\n')).toHaveLength(1);
   });
 
+  it('records a reissued request that Paseo still answers with a failure, and no such workspace, as failed', async () => {
+    const h = await room();
+    const { id } = await reserved(h);
+    h.paseo.faults.set('createWorktreeWorkspace', { when: 'before', error: new Error('Git command failed: cannot lock ref') });
+    const [report] = await restarted(h).recoverAll();
+    expect(report?.actions).toEqual([expect.objectContaining({ intent: 'wsc-crash', outcome: 'failed' })]);
+    const after = await ledger(h);
+    expect(after.state.workspaces.get(id)?.create).toBe('failed');
+    expect(after.state.ownership.get(id)?.state).toBe('released');
+    expect(after.state.assignments.get(id)).toMatchObject({ state: 'blocked', openIntents: {} });
+  });
+
+  it('leaves an unresolved worktree create alone when Paseo can be read neither way', async () => {
+    const h = await room();
+    const { id } = await reserved(h);
+    h.paseo.faults.set('createWorktreeWorkspace', { when: 'before', error: new Error('socket closed') });
+    h.paseo.faults.set('getWorkspace', { when: 'before', error: new Error('socket closed') });
+    const [report] = await restarted(h).recoverAll();
+    expect(report?.actions).toEqual([expect.objectContaining({ intent: 'wsc-crash', outcome: 'unchanged' })]);
+    expect((await ledger(h)).state.workspaces.get(id)?.create).toBe('requested');
+  });
+
   it('replays the receipt of a worktree whose response was lost, so no second worktree appears', async () => {
     const h = await room();
     const created = await h.controller.createAssignment(h.lead, writableBrief(h.base, { writeScope: ['src'], gate }));
@@ -273,6 +295,18 @@ describe('recovery of Phase 2 intents', () => {
     expect(after.state.ownership.get(id)?.state).toBe('released');
     expect(after.state.workspaces.get(id)).toMatchObject({ create: 'succeeded', close: 'succeeded', directoryRemoved: true });
     expect([...h.paseo.agents.values()].filter(agent => agent.id !== 'lead-1')).toHaveLength(1);
+  });
+
+  it('closes the worktree of a leased Peer that was never created', async () => {
+    const h = await room();
+    const created = await h.controller.createAssignment(h.lead, writableBrief(h.base, { writeScope: ['src'], gate }));
+    const id = created.ok ? created.value.assignmentId : '';
+    h.paseo.faults.set('createAgentInWorkspace', { when: 'before', error: new Error('Caller agent lead-1 not found') });
+    expect(await h.controller.dispatch(h.lead, { assignmentId: id, peerProvider: 'codex-peer', isolation: 'worktree' })).toMatchObject({ code: 'create_uncertain' });
+    await restarted(h).recoverAll();
+    const after = await ledger(h);
+    expect(after.state.ownership.get(id)?.state).toBe('released');
+    expect(after.state.workspaces.get(id)).toMatchObject({ close: 'succeeded', directoryRemoved: true });
   });
 
   it('settles a close from the live workspace: still active fails, gone succeeds with directory evidence', async () => {

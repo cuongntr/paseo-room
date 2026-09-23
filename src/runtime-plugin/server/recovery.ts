@@ -14,7 +14,8 @@
  * a record Paseo changed after that prompt arrived.
  *
  * Phase 2 rows (docs/design/runtime-coordination-phase2.md §7): an unresolved worktree create is
- * reissued with its recorded id and key and then closed, never adopted; an unresolved close is
+ * reissued with its recorded id and key and then closed, never adopted — or recorded as failed
+ * when Paseo's receipt replays a failure and it lists no such workspace; an unresolved close is
  * settled by Paseo no longer listing the workspace, plus whether its directory is gone; a lease
  * whose Peer died waits for an explicit reclaim. Nothing is settled by elapsed time.
  */
@@ -129,6 +130,8 @@ export class Recovery {
     const matches = exact !== undefined ? [exact] : (await this.controller.deps.paseo.listAgents()).filter(ours);
     if (matches.length === 0) {
       await this.controller.append(loaded, { type: 'agent.create-failed', payloadVersion: 1, assignmentId: view.id, actor: plugin, data: { intentId, reason: 'No agent carries this assignment\'s label.' } });
+      // A lease released this way never had a Peer: its worktree closes like any other.
+      await this.controller.afterRelease(loaded, view.id);
       return { assignmentId: view.id, intent: intentId, outcome: 'failed', detail: 'The Peer was never created.' };
     }
     const [only] = matches;
@@ -219,7 +222,17 @@ export class Recovery {
         await this.controller.append(loaded, { type: 'workspace.create-failed', payloadVersion: 1, assignmentId: view.id, actor: plugin, data: { intentId, reason } });
         return { assignmentId: view.id, intent: intentId, outcome: 'failed', detail: `Paseo refused the recorded request: ${reason}` };
       }
-      return { assignmentId: view.id, intent: intentId, outcome: 'unchanged', detail: `The reissued request was not confirmed: ${reason}` };
+      // Paseo's receipt replays a definite failure as an error too. With no active workspace of
+      // this id there is nothing a Peer could have been placed in, so the create failed; a
+      // listed one is refused and closed like any recovered worktree. An unreadable list decides
+      // nothing.
+      const live = await this.controller.deps.paseo.getWorkspace(record.workspaceId).catch(() => null);
+      if (live === undefined) {
+        await this.controller.append(loaded, { type: 'workspace.create-failed', payloadVersion: 1, assignmentId: view.id, actor: plugin, data: { intentId, reason: `The reissued request failed (${reason}) and Paseo lists no workspace ${record.workspaceId}.`.slice(0, 1_000) } });
+        return { assignmentId: view.id, intent: intentId, outcome: 'failed', detail: 'Paseo holds a failure for the recorded request and no such workspace.' };
+      }
+      if (live === null) return { assignmentId: view.id, intent: intentId, outcome: 'unchanged', detail: `The reissued request was not confirmed: ${reason}` };
+      snapshot = live;
     }
     if (snapshot.id !== record.workspaceId) {
       return { assignmentId: view.id, intent: intentId, outcome: 'uncertain', detail: `Paseo answered with workspace ${snapshot.id}, not ${record.workspaceId}.` };
