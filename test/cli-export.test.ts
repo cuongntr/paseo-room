@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { runCli } from '../src/cli.js';
 import { exportRuntime } from '../src/export.js';
 import { ProjectStore } from '../src/runtime-plugin/server/store/project.js';
+import { A, leased } from './runtime-fixtures.js';
 import { makeFixture } from './helpers.js';
 
 async function roomWithState() {
@@ -42,6 +43,19 @@ describe('paseo-room export', () => {
     expect((await stat(join(out, 'summary.json'))).mode & 0o777).toBe(0o600);
     // The runtime state itself is untouched.
     expect(await readFile(join(store.eventsDirectory, '000000000009.json'), 'utf8')).toBe('garbage');
+  });
+
+  it('exports Phase 2 lease and worktree events like any other', async () => {
+    const { fixture, store } = await roomWithState();
+    for (const event of leased(A, ['src/api'])) {
+      await store.append({ type: event.type, payloadVersion: 1, actor: event.actor, data: event.data, ...(event.assignmentId === undefined ? {} : { assignmentId: event.assignmentId }) });
+    }
+    const out = join(fixture.home, 'export-phase2');
+    expect((await exportRuntime({ env: fixture.env, out, apply: true })).outcome).toBe('ok');
+    const project = join(out, 'projects', store.directory.split('/').at(-1) ?? '');
+    const types = await Promise.all((await readdir(join(project, 'events'))).sort().map(async file => (JSON.parse(await readFile(join(project, 'events', file), 'utf8')) as { type: string }).type));
+    expect(types).toEqual(expect.arrayContaining(['lease.reserved', 'workspace.create-requested', 'workspace.create-succeeded']));
+    expect(types).toHaveLength(leased(A, ['src/api']).length + 1);
   });
 
   it('includes gate output only on request, defaults under the room home and refuses a non-empty destination', async () => {

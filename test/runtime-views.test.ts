@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest';
 import type { RuntimeEventV1 } from '../src/runtime-plugin/server/events/schema.js';
 import { project } from '../src/runtime-plugin/server/domain/state.js';
 import {
-  assignmentDetailView, findings, projectStatusView, quiescence, revision, type StatusInput,
+  assignmentDetailView, findings, projectStatusView, quiescence, retainedWorktrees, revision, SCOPE_STATEMENT, type StatusInput,
 } from '../src/runtime-plugin/server/domain/views.js';
-import { A, candidate, DIGEST, dispatched, ev, PROJECT, receipt } from './runtime-fixtures.js';
+import { A, B, candidate, DIGEST, dispatched, ev, HEAD, leased, PROJECT, receipt, wks } from './runtime-fixtures.js';
 
 function input(events: readonly RuntimeEventV1[], change: Partial<StatusInput> = {}): StatusInput {
   const { state, violations } = project(PROJECT, events);
@@ -87,5 +87,61 @@ describe('runtime status views', () => {
 
     const pendingNotice = quiescence(project(PROJECT, [ev('notice.pending', { noticeId: 'n1', kind: 'k', class: 'owner', disposition: 'lead-now', text: 'x' })]).state);
     expect(pendingNotice.blockers).toEqual([expect.objectContaining({ kind: 'delivery', id: 'n1' })]);
+  });
+});
+
+describe('Phase 2 status views', () => {
+  const handoff = (id: string): RuntimeEventV1 => ev('report.accepted', {
+    generation: 1, tool: 'handoff', requestId: `req_${id}`, fingerprint: DIGEST, receipt: receipt('handoff', 'handed-back'), report: {},
+    candidate: { ...candidate, workspaceId: wks(id) },
+  }, id);
+  const release = (id: string): RuntimeEventV1[] => [
+    ev('assignment.abandoned', { reason: 'stop' }, id),
+    ev('assignment.close-requested', {}, id),
+    ev('archive.requested', { intentId: `arch-${id}`, agentId: `peer-${id}` }, id),
+    ev('ownership.releasing', { agentId: `peer-${id}` }, id),
+    ev('archive.succeeded', { intentId: `arch-${id}`, agentId: `peer-${id}`, archivedAt: '2026-09-22T11:00:00Z', liveStatus: 'closed' }, id),
+    ev('ownership.released', { agentId: `peer-${id}`, archivedAt: '2026-09-22T11:00:00Z' }, id),
+  ];
+
+  it('shows each lease with its scopes, epoch and evidence, and states that scopes are not containment', () => {
+    const view = projectStatusView(input([...leased(A, ['src/api'], { serialOnly: ['generated'] }), ...leased(B, ['docs'])]));
+    expect(view.leases).toEqual([
+      expect.objectContaining({ assignmentId: A, state: { value: 'held', evidence: 'enforced' }, epoch: 1, scopes: ['src/api'], serialOnly: ['generated'], workspaceId: wks(A), worktreePath: `/wt/${A}` }),
+      expect.objectContaining({ assignmentId: B, scopes: ['docs'] }),
+    ]);
+    expect(view.worktrees.map(worktree => [worktree.assignmentId, worktree.retained, worktree.create])).toEqual([
+      [A, false, { value: 'succeeded', evidence: 'detected' }], [B, false, { value: 'succeeded', evidence: 'detected' }],
+    ]);
+    expect(view.scopeStatement).toBe(SCOPE_STATEMENT);
+    expect(SCOPE_STATEMENT).toContain('do not contain a Peer');
+    expect(view.health.value).toBe('healthy');
+  });
+
+  it('finds a retained worktree, a leftover directory and an exceeded scope, each with a recovery action', () => {
+    const retained = input([...leased(A, ['src/api']), handoff(A), ...release(A)]);
+    expect(findings(retained)).toEqual([expect.objectContaining({ kind: 'worktree-retained', evidence: 'detected', assignmentId: A })]);
+    expect(projectStatusView(retained).worktrees[0]).toMatchObject({ retained: true, close: { value: 'open' } });
+    expect(retainedWorktrees(retained.state)).toBe(1);
+    expect(quiescence(retained.state).quiescent).toBe(true);
+
+    const leftover = input([...leased(A, ['src/api']), handoff(A), ...release(A),
+      ev('workspace.close-requested', { intentId: 'c1', workspaceId: wks(A), discardUncommitted: false }, A),
+      ev('workspace.close-succeeded', { intentId: 'c1', workspaceId: wks(A), archivedAt: '2026-09-22T12:00:00Z', directoryRemoved: false }, A)]);
+    expect(findings(leftover).map(finding => finding.kind)).toEqual(['worktree-cleanup']);
+    expect(retainedWorktrees(leftover.state)).toBe(1);
+
+    const exceeded = input([...leased(A, ['src/api']), handoff(A), ev('scope.exceeded', { candidateCommit: HEAD, paths: ['README.md'] }, A)]);
+    expect(findings(exceeded)).toEqual([expect.objectContaining({ kind: 'scope-exceeded', message: expect.stringContaining('README.md') as string })]);
+    expect(assignmentDetailView(exceeded.state, A, 'lead')).toMatchObject({
+      lease: { epoch: 1 }, worktree: { path: `/wt/${A}` }, scopeExceeded: { value: { candidateCommit: HEAD, paths: ['README.md'] }, evidence: 'detected' },
+    });
+  });
+
+  it('blocks deselection on a held lease or an unresolved worktree close', () => {
+    expect(quiescence(input(leased(A, ['src/api'])).state).blockers).toContainEqual({ kind: 'lease', id: A, detail: 'worktree lease (epoch 1) is held' });
+    const closing = input([...leased(A, ['src/api']), handoff(A), ...release(A),
+      ev('workspace.close-requested', { intentId: 'c1', workspaceId: wks(A), discardUncommitted: false }, A)]);
+    expect(quiescence(closing.state).blockers).toContainEqual(expect.objectContaining({ kind: 'worktree', id: wks(A) }));
   });
 });

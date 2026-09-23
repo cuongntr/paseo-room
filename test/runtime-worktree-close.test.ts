@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { latestCapability } from '../src/runtime-plugin/server/capabilities.js';
 import { Controller, type LoadedProject } from '../src/runtime-plugin/server/controller.js';
 import { createPeerHandlers } from '../src/runtime-plugin/server/handlers/peer.js';
-import { PaseoHandle } from '../src/runtime-plugin/server/paseo-port.js';
+import { PaseoHandle, type PaseoApi } from '../src/runtime-plugin/server/paseo-port.js';
 import { Recovery } from '../src/runtime-plugin/server/recovery.js';
 import { createRpcHandlers } from '../src/runtime-plugin/server/rpc.js';
 import type { HandlerReply } from '../src/runtime-plugin/server/spool.js';
@@ -176,9 +176,13 @@ describe('lease reclaim', () => {
     const s = await seat(h);
     h.paseo.agents.delete(s.peer);
     expect(await h.controller.leaseReclaim(h.lead, { assignmentId: s.id, reason: 'gone' })).toMatchObject({ ok: false, code: 'writer_not_proven_stopped' });
-    const rpc = createRpcHandlers({ controller: h.controller, recovery: new Recovery(h.controller), handle: new PaseoHandle() });
+    const handle = new PaseoHandle();
+    handle.supply({} as PaseoApi);
+    const rpc = createRpcHandlers({ controller: h.controller, recovery: new Recovery(h.controller), handle });
     const loaded = await ledger(h);
     const projectId = loaded.store.meta.projectId;
+    // The panel offers the Human reclaim only on this live evidence.
+    expect(await rpc.project({ projectId })).toMatchObject({ data: { leases: [{ assignmentId: s.id, peer: 'gone' }] } });
     const first = await rpc.leaseReclaim({ projectId, assignmentId: s.id, reason: 'Paseo lost the Peer.', idempotencyKey: 'reclaim-0001' });
     expect(first).toMatchObject({ data: { epoch: 2 } });
     expect(await rpc.leaseReclaim({ projectId, assignmentId: s.id, reason: 'Paseo lost the Peer.', idempotencyKey: 'reclaim-0001' })).toEqual(first);

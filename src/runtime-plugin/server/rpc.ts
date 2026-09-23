@@ -91,7 +91,18 @@ export function createRpcHandlers(runtime: RpcRuntime) {
       const store = await storeOf(runtime, input.projectId);
       if (store === undefined) return missing(input.projectId);
       const status = await statusInput(runtime, store);
-      return answer(runtime, { ...projectStatusView(status), findings: findings(status), problems: status.replay.problems.map(problem => ({ file: problem.file, reason: problem.reason })) });
+      const view = projectStatusView(status);
+      // The panel offers a Human reclaim only on live evidence the lease's Peer cannot continue.
+      const leases = [];
+      for (const lease of view.leases) {
+        let peer: 'archived' | 'gone' | 'live' | 'unknown' = 'unknown';
+        if (runtime.handle.available && lease.agentId !== undefined) {
+          const live = await controller.deps.paseo.getAgent(lease.agentId).catch(() => null);
+          peer = live === null ? 'unknown' : live === undefined ? 'gone' : live.archivedAt !== null && live.status === 'closed' ? 'archived' : 'live';
+        }
+        leases.push({ ...lease, peer });
+      }
+      return answer(runtime, { ...view, leases, findings: findings(status), problems: status.replay.problems.map(problem => ({ file: problem.file, reason: problem.reason })) });
     },
 
     async assignment(input: z.infer<typeof runtimeAssignmentRpc.input>): Promise<Answer> {

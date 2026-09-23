@@ -5,7 +5,9 @@ import { runCli } from '../src/cli.js';
 import { remove, setup, verify, type RunOptions } from '../src/commands.js';
 import { ROLES } from '../src/roles.js';
 import { renderRuntimeManifestFile } from '../src/runtime.js';
+import type { RuntimeEventV1 } from '../src/runtime-plugin/server/events/schema.js';
 import { ProjectStore } from '../src/runtime-plugin/server/store/project.js';
+import { A, candidate, DIGEST, ev, leased, receipt, wks } from './runtime-fixtures.js';
 import { emptyDaemon, fakeClient, makeFixture, RUNNING_STATUS, type FakeDaemon, type Fixture } from './helpers.js';
 
 async function room(daemon: FakeDaemon = emptyDaemon(), status?: unknown): Promise<{ fixture: Fixture; daemon: FakeDaemon; options: (extra?: RunOptions) => RunOptions }> {
@@ -194,6 +196,36 @@ describe('runtime deselection and removal', () => {
     expect(result.outcome).toBe('failed');
     expect(result.checks.find(entry => entry.id === 'runtime.deselect')?.message).toContain('unreadable project metadata');
     expect(await readFile(join(project, 'meta.json'), 'utf8')).toBe('{}');
+  });
+
+  it('refuses deselection while a worktree lease is held, and names retained worktrees it never deletes', async () => {
+    const { fixture, daemon, options } = await room();
+    await setup(options({ runtime: true, apply: true }));
+    const store = await ProjectStore.create(join(fixture.roomHome, 'runtime', 'v1'), { canonicalRoot: '/work/repo', gitCommonDir: '/work/repo/.git' });
+    const append = async (events: readonly RuntimeEventV1[]): Promise<void> => {
+      for (const event of events) await store.append({ type: event.type, payloadVersion: 1, actor: event.actor, data: event.data, ...(event.assignmentId === undefined ? {} : { assignmentId: event.assignmentId }) });
+    };
+    await append(leased(A, ['src/api']));
+    const refused = await setup(options({ apply: true }));
+    expect(refused.outcome).toBe('failed');
+    expect(refused.checks.find(entry => entry.id === 'runtime.deselect')?.message).toContain('worktree lease (epoch 1) is held');
+    expect(daemon.plugins?.map(plugin => plugin.id)).toEqual(['paseo-room-runtime']);
+
+    // Released but retained: quiet enough to deselect, and counted, never deleted.
+    await append([
+      ev('report.accepted', { generation: 1, tool: 'handoff', requestId: 'req_retained1', fingerprint: DIGEST, receipt: receipt('handoff', 'handed-back'), report: {}, candidate: { ...candidate, workspaceId: wks(A) } }, A),
+      ev('assignment.abandoned', { reason: 'stop' }, A),
+      ev('assignment.close-requested', {}, A),
+      ev('archive.requested', { intentId: 'arch-a', agentId: `peer-${A}` }, A),
+      ev('ownership.releasing', { agentId: `peer-${A}` }, A),
+      ev('archive.succeeded', { intentId: 'arch-a', agentId: `peer-${A}`, archivedAt: '2026-09-22T11:00:00Z', liveStatus: 'closed' }, A),
+      ev('ownership.released', { agentId: `peer-${A}`, archivedAt: '2026-09-22T11:00:00Z' }, A),
+    ]);
+    const preview = await remove(options());
+    expect(preview.checks.find(entry => entry.id === 'room.remove.runtime-state')?.message).toContain('1 runtime worktree(s) remain in Paseo; the CLI does not delete them');
+    const deselected = await setup(options({ apply: true }));
+    expect(deselected.outcome).toBe('ok');
+    expect(deselected.checks.find(entry => entry.id === 'runtime.state-retained')?.message).toContain('1 runtime worktree(s) remain in Paseo');
   });
 
   it('warns about runtime history on whole-room removal and still deletes it', async () => {

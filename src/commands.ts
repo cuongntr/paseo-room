@@ -487,8 +487,13 @@ async function runtimeDeselectionCheck(layout: Layout): Promise<Check[]> {
       'Keep --runtime and finish, close or abandon that work first; the runtime state is preserved either way.')];
   }
   return [warn('runtime.state-retained',
-    `Runtime coordination is quiet; its recorded state for ${String(summary.projects)} project(s) stays at ${summary.root}.`,
+    `Runtime coordination is quiet; its recorded state for ${String(summary.projects)} project(s) stays at ${summary.root}.${worktreeNote(summary.retainedWorktrees)}`,
     'Export it with: paseo-room export --out <dir>, or keep it for a later --runtime.')];
+}
+
+/** Retained runtime worktrees belong to Paseo: named, counted, never deleted by the CLI. */
+function worktreeNote(count: number): string {
+  return count === 0 ? '' : ` ${String(count)} runtime worktree(s) remain in Paseo; the CLI does not delete them — close them from the runtime panel or with Paseo first.`;
 }
 
 /** Whole-room removal keeps its destructive meaning, but says what runtime history it deletes. */
@@ -497,7 +502,7 @@ async function runtimeRemovalWarning(layout: Layout): Promise<Check[]> {
   if (summary === undefined || summary.projects === 0) return [];
   const active = summary.blockers.length > 0 ? ` It still has active or uncertain work: ${describeBlockers(summary)}.` : '';
   return [warn('room.remove.runtime-state',
-    `Deleting ${layout.roomHome} also deletes runtime coordination history for ${String(summary.projects)} project(s).${active}`,
+    `Deleting ${layout.roomHome} also deletes runtime coordination history for ${String(summary.projects)} project(s).${active}${worktreeNote(summary.retainedWorktrees)}`,
     'Export it first with: paseo-room export --out <dir>')];
 }
 
