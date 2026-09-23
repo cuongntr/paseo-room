@@ -1062,6 +1062,14 @@ Views:
 - **Settings/Trust:** runtime is room-managed, plugin code is trusted/unsandboxed, external sensors
   are off by default, sensor/network consent is separate, and retention/export boundaries are clear.
 
+Phase 2 adds an **Isolated writers** section to Project: each lease with its epoch, scopes and
+serial-only paths, retained worktrees and left-behind directories, and the statement that scopes
+prevent collisions without containing a Peer. Its Human forms appear only where the runtime would
+accept them — close on a retained worktree, reclaim on a lease the shared projection rule
+(`reclaimCheck`) allows and whose Peer Paseo shows archived or no longer knows, read live with a
+short bound so a stalled daemon cannot stall the view. Each row has its own reason, cleared after
+use; a missing reason is said, and discarding uncommitted work takes a second press.
+
 Data is role-filtered server-side before it reaches client RPC. The panel is an operator surface; it
 is not used as authority evidence by a seat.
 
@@ -1611,6 +1619,7 @@ Q-011 do not block Phases 0–1 because those phases contain no sensor and no wo
 
 | Date | Author | Change |
 |---|---|---|
+| 2026-09-23 | Bytes | §8.1 records the Phase 2 panel section and its guarded Human forms, after the code-review fixes (226b833, 2db759e). |
 | 2026-09-23 | Bytes | Phase 2 implemented and live-qualified on `0.9.1` (delta §9.2); recorded its R3 rehearsal in §14 — Phase 1 downgrade pauses and preserves, restore resumes, deselection refuses a held lease and counts retained worktrees without deleting them. |
 | 2026-09-23 | Repository owner / Bytes | Recorded the wide/dark panel check on the operator's app as passed, closing Phase 1 live qualification, and the onboarding finding that only a Lead created after runtime installation carries the bridge and that a project appears on a Lead's first runtime action. |
 | 2026-09-23 | Bytes | Rehearsed the remaining R3 boundaries live on an isolated `0.9.1` daemon (§14): gate timeout and `SIGKILL` escalation, unresolved agent creation with and without the effect, unresolved delivery with and without the effect, and whole-room `remove --apply`. The lost-delivery case exposed a turn that ends while the plugin is down leaving its assignment `active` forever; recovery now settles it from live evidence through the turn-end handler's own logic. |

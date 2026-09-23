@@ -671,7 +671,8 @@ candidate or the unchanged base. Anything else is kept and Lead is told: `worksp
 `discardUncommitted` and a reason destroys that work. Closing removes the directory and keeps the
 branch. If a Peer dies, `lease_reclaim` — once Paseo shows it archived — dispatches a new Peer into
 the same worktree at the next lease epoch; the old Peer's late reports are refused. The panel offers
-the Human form of both.
+the Human form of both, only where the runtime would accept it, and asks twice before discarding
+work.
 
 Worktree dispatch is enabled per daemon version, only after the live qualification in the Phase 2
 delta §9 passes on that version; `0.9.1` is qualified. On any other version the runtime refuses
@@ -680,7 +681,10 @@ delta §9 passes on that version; `0.9.1` is qualified. On any other version the
 To stop using it, finish, close or abandon the recorded work, then run setup **without**
 `--runtime`. Setup refuses while anything is still active or uncertain — including an isolated
 writer's lease or an unconfirmed worktree create or close — and keeps the recorded state once it
-proceeds. Retained worktrees belong to Paseo: setup and `remove` count them and never delete them. `npx paseo-room export --apply` copies that state out; the export omits gate
+proceeds. Retained worktrees belong to Paseo, and directories a failed teardown left behind are
+yours: setup and `remove` count both and delete neither. Close a retained worktree from the panel
+before deselecting (or archive it in Paseo afterwards); remove a left-behind directory by hand, and
+its finding clears. `npx paseo-room export --apply` copies that state out; the export omits gate
 output unless you add `--include-gate-output`, and briefs or commands written by a seat cannot be
 proven secret-free. `remove --apply` warns about runtime history and then deletes it with the rest
 of the room.

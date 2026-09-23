@@ -310,9 +310,9 @@ These rows extend Phase 1 design §6; the Phase 1 rows stand.
 
 | Unresolved intent | Recovery evidence | Forbidden |
 |---|---|---|
-| `workspace.create-requested` | reissue the identical request with the recorded `workspaceId` and key; the receipt replays or conflicts (P2-D3); then P2-D4 Git proof | adopting a worktree by path, slug or branch name; retrying with a new key |
+| `workspace.create-requested` | reissue the identical request with the recorded `workspaceId` and key; the receipt replays or conflicts (P2-D3). A workspace it returns, or that Paseo lists, is refused and closed (recovery never adopts). It is `workspace.create-failed` only on a conflict, or when the reissue fails with exactly the failure recorded for the first attempt (a replayed receipt) and Paseo lists no such workspace; any other error — a timeout, a create still in flight — leaves it uncertain | adopting a worktree by path, slug or branch name; retrying with a new key; reading a new error as a definite failure |
 | Peer create in a lease | Phase 1 rule, with the lease's `workspaceId` in the expected placement | placing the retry in Lead's workspace |
-| `workspace.close-requested` | live workspace record (`archivedAt`) and directory existence | treating elapsed time as closed; deleting the directory or branch itself |
+| `workspace.close-requested` | Paseo no longer listing the workspace, plus directory existence (a refused worktree's directory is learned before its close is requested; after a crash in that close it is unknown) | treating elapsed time as closed; deleting the directory or branch itself |
 | lease with a dead Peer | Phase 1 archive/`closed` proof, then explicit `lease_reclaim` | reclaim on idle, turn end or timeout |
 
 Restart replays events and reruns only these bounded queries; there is still no background patrol.
@@ -325,12 +325,18 @@ Restart replays events and reruns only these bounded queries; there is still no 
   that has not passed §9**; `0.9.1` is the first candidate. The refusal is a runtime check, not a
   range change.
 - Deselection (Phase 1 design §14) adds one step: no lease is non-released **and** no workspace
-  close is unresolved before the plugin is unregistered.
+  create or close is unresolved before the plugin is unregistered. A retained worktree does not
+  block it; its warning counts retained worktrees and left-behind directories apart and names a
+  remedy that works without the panel.
+- One rule, `worktreeDisposition` (`unresolved`, `active`, `retained`, `leftover`, `gone`), decides
+  what a worktree record means on disk for findings, the panel, CLI counts and deselection. A
+  left-behind directory is re-checked on disk, so removing it by hand clears its finding.
 - Downgrade to a Phase 1 plugin pauses every project holding Phase 2 events (unknown type) and
   preserves them. Restore by reinstalling the Phase 2 plugin; never rewrite events to make a
   downgrade green.
 - Whole-room `remove --apply` keeps its destructive contract; its warning also counts retained
-  runtime worktrees, which it does not delete (they are Paseo's).
+  runtime worktrees and left-behind directories, which it does not delete (they are Paseo's and the
+  operator's).
 
 ## 9. Live Qualification — release blockers
 
@@ -432,6 +438,7 @@ declare `worktree.setup` are still refused.
 
 | Date | Author | Change |
 |---|---|---|
+| 2026-09-23 | Bytes | After code review (0c56cd8, 226b833, 2db759e): §7 now records a worktree create as failed only on a conflict or a replayed recorded failure, never on a new error; §8 names the single worktree-disposition rule, on-disk re-checks of left-behind directories, and the split retained/leftover counts. No event or contract change. |
 | 2026-09-23 | Bytes | Recorded §9.2: L-2 to L-7 and reclaim pass live on an isolated `0.9.1` daemon with `codex-peer`, `claude-peer` and `pi-peer`, after fixing three recovery defects the run exposed; `0.9.1` added to the qualified list. |
 | 2026-09-23 | Repository owner / Bytes | Approved the §3 amendment (Q-P2-01) and landed it: `lead.md` Moving Write Ownership, the `shared-authority.md` Authority Floor, their static tests, `AGENTS.md`, `docs/design.md`, `README.md`, orchestration-hardening Q-003 and PRD Q-011. Design Active; the implementation plan may now be drafted. |
 | 2026-09-23 | Bytes | Ran the §9.1 feasibility probe on an isolated `0.9.1` daemon: resolved Q-P2-05 (the plugin holds `workspace.manage`), confirmed commit-id branch-off, runtime-chosen ids, key replay across restart and child placement through the workspace handle, and observed the silent existing-branch rename that makes P2-D4's Git proof mandatory. |
