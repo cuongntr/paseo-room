@@ -1,7 +1,7 @@
 /**
  * The tool lists each bridge advertises (docs/design/runtime-coordination.md §3.4).
  *
- * Registries are disjoint by construction: Supervisor sees three tools, Lead ten, and a Peer
+ * Registries are disjoint by construction: Supervisor sees three tools, Lead twelve, and a Peer
  * exactly `ask` and `handoff`, with the one handoff detail shape for its bound work kind. The
  * advertised JSON Schemas are for the model's benefit only; the server validates every call
  * strictly and never trusts that a client respected them.
@@ -27,7 +27,7 @@ const DESCRIPTIONS: Readonly<Record<string, string>> = {
   runtime_findings: 'List the conditions the runtime has detected that need attention, with evidence and a recovery action.',
   message_lead: 'Send one message to the Lead that owns this project.',
   assignment_create: 'Create a typed assignment in your current project. It is not dispatched yet.',
-  assignment_dispatch: 'Dispatch a draft assignment to a new Peer on an eligible room Peer provider.',
+  assignment_dispatch: 'Dispatch a draft assignment to a new Peer on an eligible room Peer provider. isolation "worktree" asks the runtime for the Peer\'s own worktree, so it may run beside other isolated writers; the runtime refuses it when scopes overlap, a serial-only path or a writer in your workspace collides, or the cap is reached, and that refusal is final for this dispatch. Scope checks prevent collisions; they do not contain the Peer.',
   assignment_answer: 'Answer a Peer question, or follow up on a blocked handback, with a new Peer turn.',
   assignment_rework: 'Send a handed-back candidate back to its Peer for rework.',
   assignment_accept: 'Accept a handed-back assignment. Red gate evidence needs an override.',
@@ -36,6 +36,8 @@ const DESCRIPTIONS: Readonly<Record<string, string>> = {
   assignment_close: 'Close a decided assignment by archiving its Peer. Your workspace is not closed.',
   assignment_status: 'Read one assignment in detail, or all of yours.',
   gate_run: 'Run the assignment\'s exact gate command independently against the handed-back candidate.',
+  workspace_close: 'Close the worktree of a closed isolated assignment that the runtime retained. discardUncommitted with a reason destroys its uncommitted work; the branch is kept.',
+  lease_reclaim: 'Reclaim an isolated assignment\'s worktree after its Peer is proven archived, and dispatch a new Peer into it at the next lease epoch.',
   ask: 'Ask Lead a blocking question about your current assignment. Your turn should end after this call.',
   handoff: 'Hand your current assignment back to Lead: complete, partial or blocked. This is the only way to report.',
 };

@@ -3,7 +3,7 @@
  * Operation names come from the shared role-policy projection; this module only types payloads.
  */
 import { z } from 'zod';
-import { boundedString } from '../../shared/limits.js';
+import { boundedArray, boundedString } from '../../shared/limits.js';
 import type { LeadOperation, SupervisorOperation } from '../../shared/policy.js';
 import { assignmentCreateSchema } from './assignment.js';
 
@@ -21,7 +21,15 @@ export const SUPERVISOR_ACTION_SCHEMAS = {
 export const LEAD_ACTION_SCHEMAS = {
   assignment_create: assignmentCreateSchema,
   // An eligible exact Peer provider id from the room manifest; the model is never selectable.
-  assignment_dispatch: z.strictObject({ ...assignment, peerProvider: z.string().min(1).max(128) }),
+  // `worktree` asks the runtime for an isolated worktree; the default is Phase 1's shared
+  // workspace. `serialOnly` names paths that admit one writer at a time, quoted from the
+  // repository's own protocol (docs/design/runtime-coordination-phase2.md P2-D1, §5.3).
+  assignment_dispatch: z.strictObject({
+    ...assignment,
+    peerProvider: z.string().min(1).max(128),
+    isolation: z.enum(['lead-workspace', 'worktree']).optional(),
+    serialOnly: boundedArray(boundedString()).optional(),
+  }),
   assignment_answer: z.strictObject({ ...assignment, answer: boundedString() }),
   assignment_rework: z.strictObject({ ...assignment, instructions: boundedString() }),
   assignment_accept: z.strictObject({
@@ -36,4 +44,8 @@ export const LEAD_ACTION_SCHEMAS = {
   assignment_close: z.strictObject(assignment),
   assignment_status: z.strictObject({ assignmentId: assignmentIdSchema.optional() }),
   gate_run: z.strictObject(assignment),
+  // Discarding a retained worktree's uncommitted work is Lead's explicit decision, with a reason.
+  workspace_close: z.strictObject({ ...assignment, discardUncommitted: z.literal(true).optional(), reason: reason.optional() })
+    .refine(input => input.discardUncommitted !== true || input.reason !== undefined, { message: 'discardUncommitted needs a reason', path: ['reason'] }),
+  lease_reclaim: z.strictObject({ ...assignment, reason }),
 } as const satisfies Record<LeadOperation, z.ZodType>;

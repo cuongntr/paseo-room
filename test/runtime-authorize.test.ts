@@ -26,6 +26,7 @@ describe('runtime capability authorization', () => {
       ['supervisor', 'ask'], ['lead', 'handoff'], ['lead', 'ask'],
       ['peer', 'assignment_accept'], ['peer', 'assignment_dispatch'], ['peer', 'room_status'],
       ['peer', 'runtime_findings'], ['peer', 'message_lead'], ['peer', 'assignment_close'], ['peer', 'gate_run'],
+      ['supervisor', 'workspace_close'], ['supervisor', 'lease_reclaim'], ['peer', 'workspace_close'], ['peer', 'lease_reclaim'],
     ];
     for (const [role, operation] of absent) {
       expect(authorizeRole(role, operation, true)).toMatchObject({ ok: false, code: 'unauthorized' });

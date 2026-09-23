@@ -506,6 +506,20 @@ export class Controller {
     });
   }
 
+  /** Lead closes a retained worktree of its own closed assignment (delta P2-D7). */
+  async workspaceClose(caller: Caller, input: { readonly assignmentId: string; readonly discardUncommitted?: true | undefined; readonly reason?: string | undefined }): Promise<ControllerResult<{ readonly closed: boolean }>> {
+    const found = await this.leadAssignment(caller, input.assignmentId);
+    if (!found.ok) return found;
+    return refuse('not_implemented', 'Worktree close arrives with runtime Phase 2.');
+  }
+
+  /** Lead reclaims a lease whose Peer is proven archived (delta P2-D6). */
+  async leaseReclaim(caller: Caller, input: { readonly assignmentId: string; readonly reason: string }): Promise<ControllerResult<{ readonly epoch: number }>> {
+    const found = await this.leadAssignment(caller, input.assignmentId);
+    if (!found.ok) return found;
+    return refuse('not_implemented', 'Lease reclaim arrives with runtime Phase 2.');
+  }
+
   roomGeneration(): string {
     const state = this.deps.recognition.current;
     return state.manifest?.roomGeneration ?? 'unknown';

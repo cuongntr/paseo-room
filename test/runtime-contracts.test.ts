@@ -40,7 +40,7 @@ describe('runtime role policy projection', () => {
     expect(runtimeRolePolicy('supervisor', true).capabilities).toEqual([...SUPERVISOR_OPERATIONS]);
     expect(runtimeRolePolicy('lead', true).capabilities).toEqual([...LEAD_OPERATIONS]);
     expect(runtimeRolePolicy('lead', true).peerReporting).toBeUndefined();
-    expect(LEAD_OPERATIONS).toHaveLength(10);
+    expect(LEAD_OPERATIONS).toHaveLength(12);
     expect(PEER_REPORTING_TOOLS).toEqual(['ask', 'handoff']);
   });
 });
@@ -122,6 +122,42 @@ describe('Peer reporting tool contracts', () => {
     expect(peerReportReceiptSchema.safeParse({ schema: 1, receipt: 'rcpt_1', tool: 'ask', status: 'accepted', assignmentState: 'questioned', assignmentId: 'x' }).success).toBe(false);
     expect(peerReportErrorSchema.safeParse({ schema: 1, error: { code: 'report_stale', message: 'Stale.', retryable: false } }).success).toBe(true);
     expect(peerReportErrorSchema.safeParse({ schema: 1, error: { code: 'report_other', message: 'x', retryable: false } }).success).toBe(false);
+  });
+});
+
+describe('Phase 2 Lead action contracts', () => {
+  const assignmentId = 'asg_abcdefgh';
+
+  it('takes an optional isolation and serial-only paths on dispatch, and nothing else new', () => {
+    const dispatch = LEAD_ACTION_SCHEMAS.assignment_dispatch;
+    expect(dispatch.safeParse({ assignmentId, peerProvider: 'codex-peer' }).success).toBe(true);
+    expect(dispatch.safeParse({ assignmentId, peerProvider: 'codex-peer', isolation: 'worktree', serialOnly: ['package-lock.json'] }).success).toBe(true);
+    expect(dispatch.safeParse({ assignmentId, peerProvider: 'codex-peer', isolation: 'lead-workspace' }).success).toBe(true);
+    expect(dispatch.safeParse({ assignmentId, peerProvider: 'codex-peer', isolation: 'container' }).success).toBe(false);
+    expect(dispatch.safeParse({ assignmentId, peerProvider: 'codex-peer', workspaceId: 'wks_0000000000000000' }).success).toBe(false);
+    expect(dispatch.safeParse({ assignmentId, peerProvider: 'codex-peer', serialOnly: Array.from({ length: 65 }, () => 'a') }).success).toBe(false);
+  });
+
+  it('closes a retained worktree, discarding its work only with a reason', () => {
+    const close = LEAD_ACTION_SCHEMAS.workspace_close;
+    expect(close.safeParse({ assignmentId }).success).toBe(true);
+    expect(close.safeParse({ assignmentId, discardUncommitted: true, reason: 'The Peer\'s draft is superseded.' }).success).toBe(true);
+    expect(close.safeParse({ assignmentId, discardUncommitted: true }).success).toBe(false);
+    expect(close.safeParse({ assignmentId, discardUncommitted: false, reason: 'x' }).success).toBe(false);
+    expect(close.safeParse({ assignmentId, force: true }).success).toBe(false);
+  });
+
+  it('reclaims a lease only with a reason', () => {
+    const reclaim = LEAD_ACTION_SCHEMAS.lease_reclaim;
+    expect(reclaim.safeParse({ assignmentId, reason: 'The Peer was archived mid-turn.' }).success).toBe(true);
+    expect(reclaim.safeParse({ assignmentId }).success).toBe(false);
+    expect(reclaim.safeParse({ assignmentId, reason: 'x', epoch: 2 }).success).toBe(false);
+  });
+
+  it('adds the two operations to Lead only, leaving Supervisor and Peer unchanged', () => {
+    expect(LEAD_OPERATIONS.slice(-2)).toEqual(['workspace_close', 'lease_reclaim']);
+    expect(SUPERVISOR_OPERATIONS).toEqual(['room_status', 'runtime_findings', 'message_lead']);
+    expect(PEER_REPORTING_TOOLS).toEqual(['ask', 'handoff']);
   });
 });
 

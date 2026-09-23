@@ -17,7 +17,7 @@ export const SUPERVISOR_OPERATIONS = ['room_status', 'runtime_findings', 'messag
 export const LEAD_OPERATIONS = [
   'assignment_create', 'assignment_dispatch', 'assignment_answer', 'assignment_rework',
   'assignment_accept', 'assignment_reject', 'assignment_abandon', 'assignment_close',
-  'assignment_status', 'gate_run',
+  'assignment_status', 'gate_run', 'workspace_close', 'lease_reclaim',
 ] as const;
 /** A closed tuple. Adding a Peer operation is an authority and protocol revision, not a patch. */
 export const PEER_REPORTING_TOOLS = ['ask', 'handoff'] as const;

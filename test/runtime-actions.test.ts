@@ -55,6 +55,22 @@ describe('Lead action handlers', () => {
       .toMatchObject({ error: { code: 'unauthorized' } });
   });
 
+  it('lets only the assignment\'s own Lead close a worktree or reclaim a lease', async () => {
+    const { h, lead, leadCorrelation, supervisorCorrelation } = await room();
+    const created = await h.controller.createAssignment(h.lead, writableBrief(h.base));
+    const assignmentId = created.ok ? created.value.assignmentId : '';
+    h.paseo.addAgent({ id: 'lead-2', provider: 'claude-lead', cwd: h.repo });
+    const otherCorrelation = await bind(h, 'lead-2', 'claude-lead');
+    for (const [name, payload] of [['workspace_close', { assignmentId }], ['lease_reclaim', { assignmentId, reason: 'Peer died' }]] as const) {
+      const other = body(await lead[name]?.(request(otherCorrelation, name, payload), { kind: 'action', role: 'lead' }) ?? { ok: false, result: {} });
+      expect(other).toMatchObject({ error: { code: 'unauthorized' } });
+      const supervisor = body(await lead[name]?.(request(supervisorCorrelation, name, payload), { kind: 'action', role: 'lead' }) ?? { ok: false, result: {} });
+      expect(supervisor).toMatchObject({ error: { code: 'unauthorized' } });
+      const own = body(await lead[name]?.(request(leadCorrelation, name, payload), { kind: 'action', role: 'lead' }) ?? { ok: false, result: {} });
+      expect((own.error as { code?: string } | undefined)?.code).not.toBe('unauthorized');
+    }
+  });
+
   it('shows Lead only its own assignments', async () => {
     const { h, lead, leadCorrelation } = await room();
     await h.controller.createAssignment(h.lead, writableBrief(h.base));

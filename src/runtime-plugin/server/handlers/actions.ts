@@ -77,6 +77,8 @@ export function createLeadHandlers(controller: Controller): Record<string, Opera
     assignment_abandon: lead('assignment_abandon', async (caller, input) => fromResult(await controller.abandon(caller, input))),
     assignment_close: lead('assignment_close', async (caller, input) => fromResult(await controller.close(caller, input))),
     gate_run: lead('gate_run', async (caller, input) => fromResult(await controller.gateRun(caller, input))),
+    workspace_close: lead('workspace_close', async (caller, input) => fromResult(await controller.workspaceClose(caller, input))),
+    lease_reclaim: lead('lease_reclaim', async (caller, input) => fromResult(await controller.leaseReclaim(caller, input))),
     assignment_status: lead('assignment_status', async (caller, input) => {
       const store = await controller.projectFor(caller.cwd);
       const loaded = await controller.load(store);
