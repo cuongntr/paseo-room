@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ROLES } from '../src/roles.js';
 import { renderRuntimeManifestFile } from '../src/runtime.js';
-import { PaseoHandle, PaseoUnavailableError, sdkPaseoPort, type PaseoApi } from '../src/runtime-plugin/server/paseo-port.js';
+import { CreationConflictError, PaseoHandle, PaseoUnavailableError, sdkPaseoPort, type PaseoApi } from '../src/runtime-plugin/server/paseo-port.js';
 import { Recognition } from '../src/runtime-plugin/server/recognition.js';
 
 const roots: string[] = [];
@@ -94,6 +94,53 @@ describe('Paseo handle and SDK port', () => {
     expect(sent).toEqual([['brief', { messageId: 'msg-1' }]]);
     expect(await port.archive('a1')).toEqual({ archivedAt: 'now' });
     expect(await port.listAgents()).toHaveLength(1);
+  });
+
+  it('creates worktree workspaces and in-workspace Peers with runtime-chosen identities', async () => {
+    const calls: unknown[] = [];
+    const current = { workspaceDirectory: '/wt/asg_1', workspaceKind: 'worktree', archivingAt: null };
+    let conflict = false;
+    const api = {
+      workspaces: {
+        create: (options: unknown) => {
+          calls.push(['create', options]);
+          if (conflict) return Promise.reject(new Error('workspace_request_key_conflict'));
+          return Promise.resolve({ id: 'wks_00000000000000aa', current: () => current, refresh: () => Promise.resolve(current) });
+        },
+        ref: (id: string) => ({
+          refresh: () => Promise.resolve(id === 'wks_00000000000000aa' ? current : null),
+          agents: { create: (options: unknown) => { calls.push(['agent', id, options]); return Promise.resolve({ id: 'b1c2' }); } },
+        }),
+        archive: (id: string) => Promise.resolve(id === 'wks_00000000000000aa'
+          ? { requestId: 'r', workspaceId: id, archivedAt: 'later', error: null }
+          : { requestId: 'r', workspaceId: id, archivedAt: null, error: 'Workspace not found' }),
+      },
+      agents: { create: (options: unknown) => { calls.push(['plain', options]); return Promise.reject(new Error('agent_id_conflict')); } },
+    } as unknown as PaseoApi;
+    const handle = new PaseoHandle();
+    handle.supply(api);
+    const port = sdkPaseoPort(handle, 50);
+    const request = { workspaceId: 'wks_00000000000000aa', idempotencyKey: 'ws-asg_1-e1', title: 'room asg_1', cwd: '/repo', baseCommit: 'a'.repeat(40), branchName: 'paseo-room/asg_1', worktreeSlug: 'asg_1' };
+    expect(await port.createWorktreeWorkspace(request)).toEqual({ id: 'wks_00000000000000aa', directory: '/wt/asg_1', kind: 'worktree', archiving: false });
+    expect(calls[0]).toEqual(['create', {
+      workspaceId: request.workspaceId, idempotencyKey: request.idempotencyKey, title: 'room asg_1',
+      source: { kind: 'worktree', cwd: '/repo', action: 'branch-off', refName: request.baseCommit, branchName: 'paseo-room/asg_1', worktreeSlug: 'asg_1' },
+    }]);
+    conflict = true;
+    await expect(port.createWorktreeWorkspace(request)).rejects.toBeInstanceOf(CreationConflictError);
+
+    const peer = { provider: 'codex-peer', model: 'm', parentAgentId: 'lead', title: 'Peer asg_1', labels: { 'paseo-room.assignment': 'asg_1' }, agentId: 'b1c2', idempotencyKey: 'asg_1-g1-create' };
+    expect(await port.createAgentInWorkspace('wks_00000000000000aa', peer)).toEqual({ agentId: 'b1c2' });
+    expect(calls.at(-1)).toEqual(['agent', 'wks_00000000000000aa', {
+      config: { provider: 'codex-peer/m' }, parent: 'lead', title: 'Peer asg_1', labels: { 'paseo-room.assignment': 'asg_1' }, agentId: 'b1c2', idempotencyKey: 'asg_1-g1-create',
+    }]);
+    await expect(port.createAgent({ ...peer, cwd: '/repo' })).rejects.toBeInstanceOf(CreationConflictError);
+    expect(calls.at(-1)).toMatchObject(['plain', { agentId: 'b1c2', idempotencyKey: 'asg_1-g1-create', cwd: '/repo' }]);
+
+    expect(await port.getWorkspace('wks_00000000000000aa')).toMatchObject({ directory: '/wt/asg_1' });
+    expect(await port.getWorkspace('wks_00000000000000bb')).toBeUndefined();
+    expect(await port.archiveWorkspace('wks_00000000000000aa')).toEqual({ archivedAt: 'later' });
+    await expect(port.archiveWorkspace('wks_00000000000000bb')).rejects.toThrow('Workspace not found');
   });
 
   it('resolves the Peer launch from the room profile, else the provider default model, and never guesses', async () => {

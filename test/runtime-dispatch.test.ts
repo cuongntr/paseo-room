@@ -154,3 +154,51 @@ describe('two-step writable dispatch', () => {
     expect((await readdir(h.repo)).sort()).toEqual(['.git', 'README.md']);
   });
 });
+
+describe('fake Paseo workspaces reproduce the Phase 2 probe', () => {
+  const request = (h: Harness, change: Record<string, string> = {}) => ({
+    workspaceId: 'wks_00000000000000aa', idempotencyKey: 'ws-asg_1-e1', title: 'room asg_1', cwd: h.repo, baseCommit: h.base,
+    branchName: 'paseo-room/asg_1', worktreeSlug: 'asg_1', ...change,
+  });
+
+  it('replays a key, conflicts on a changed request or a reused id, and keeps one worktree', async () => {
+    const h = await room();
+    const first = await h.paseo.createWorktreeWorkspace(request(h));
+    expect(first).toMatchObject({ id: 'wks_00000000000000aa', kind: 'worktree' });
+    expect(await h.paseo.createWorktreeWorkspace(request(h))).toEqual(first);
+    await expect(h.paseo.createWorktreeWorkspace(request(h, { title: 'different' }))).rejects.toThrow('workspace_request_key_conflict');
+    await expect(h.paseo.createWorktreeWorkspace(request(h, { idempotencyKey: 'other' }))).rejects.toThrow('workspace_id_conflict');
+    expect((await h.git('worktree', 'list')).split('\n')).toHaveLength(2);
+    expect(await h.git('-C', first.directory ?? '', 'rev-parse', 'HEAD')).toBe(h.base);
+  });
+
+  it('branches from an existing branch under a renamed branch instead of the requested base', async () => {
+    const h = await room();
+    await h.git('branch', 'paseo-room/asg_1');
+    await writeFile(join(h.repo, 'next.txt'), 'x');
+    await h.git('add', '.');
+    await h.git('commit', '-q', '-m', 'next');
+    const moved = await h.git('rev-parse', 'HEAD');
+    const created = await h.paseo.createWorktreeWorkspace(request(h, { baseCommit: moved }));
+    expect(await h.git('-C', created.directory ?? '', 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('paseo-room/asg_1-2');
+    expect(await h.git('-C', created.directory ?? '', 'rev-parse', 'HEAD')).toBe(h.base);
+  });
+
+  it('places a parented child in the named workspace with no prompt, and archive removes the directory but keeps the branch', async () => {
+    const h = await room();
+    const workspace = await h.paseo.createWorktreeWorkspace(request(h));
+    const input = { provider: 'codex-peer', model: 'm', parentAgentId: 'lead-1', title: 'Peer asg_1', labels: { 'paseo-room.assignment': 'asg_1' }, agentId: '0b8f6c2e-8f1a-4c1e-9a55-3c1d2e4f5a6b', idempotencyKey: 'asg_1-g1-create' };
+    const { agentId } = await h.paseo.createAgentInWorkspace(workspace.id, input);
+    expect(agentId).toBe(input.agentId);
+    expect(await h.paseo.createAgentInWorkspace(workspace.id, input)).toEqual({ agentId });
+    await expect(h.paseo.createAgentInWorkspace(workspace.id, { ...input, title: 'x' })).rejects.toThrow('agent_request_key_conflict');
+    expect(await h.paseo.getAgent(agentId)).toMatchObject({
+      workspaceId: workspace.id, cwd: workspace.directory, lastUserMessageAt: null, labels: { 'paseo.parent-agent-id': 'lead-1' },
+    });
+    expect(await h.paseo.archiveWorkspace(workspace.id)).toMatchObject({ archivedAt: expect.any(String) as string });
+    expect(await h.paseo.getWorkspace(workspace.id)).toBeUndefined();
+    expect((await h.paseo.getAgent(agentId))?.status).toBe('closed');
+    expect(await h.git('worktree', 'list')).not.toContain('asg_1');
+    expect(await h.git('rev-parse', '--verify', 'paseo-room/asg_1')).toBe(h.base);
+  });
+});

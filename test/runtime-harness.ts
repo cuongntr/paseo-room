@@ -62,12 +62,14 @@ export async function harness(options: { readonly associationWaitMs?: number } =
 
   const paseo = new FakePaseo();
   paseo.workspaceFor = () => 'ws-1';
+  paseo.worktreeRoot = join(root, 'worktrees');
   // Paseo runs every plugin's before-hooks and opens the session while it creates the agent.
   paseo.onCreate = async (input, agentId) => {
     const decorated = transformAgentCreate({ config: { provider: input.provider, cwd: input.cwd, title: input.title } }, hooks);
     const id = decorated?.env?.[CORRELATION_ENV];
     if (id === undefined) return;
-    await handleSessionOpen({ agentId, workspaceId: 'ws-1', provider: input.provider, cwd: input.cwd, reason: 'create', purpose: 'interactive', env: { [CORRELATION_ENV]: id } }, hooks);
+    const workspaceId = paseo.agents.get(agentId)?.workspaceId ?? null;
+    await handleSessionOpen({ agentId, workspaceId, provider: input.provider, cwd: input.cwd, reason: 'create', purpose: 'interactive', env: { [CORRELATION_ENV]: id } }, hooks);
   };
   paseo.addAgent({ id: 'lead-1', provider: 'codex-lead', cwd: repo, workspaceId: 'ws-1' });
 

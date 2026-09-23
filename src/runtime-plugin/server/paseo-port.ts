@@ -56,6 +56,49 @@ export interface CreateAgentInput extends PeerLaunch {
   readonly parentAgentId: string;
   readonly title: string;
   readonly labels: Readonly<Record<string, string>>;
+  /**
+   * Chosen by the runtime and recorded before the call, so a lost response is recovered by
+   * reissuing the identical request: Paseo's creation receipt replays it (delta P2-D3).
+   */
+  readonly agentId?: string;
+  readonly idempotencyKey?: string;
+}
+
+/** A Paseo worktree workspace cut from an exact commit, with runtime-chosen identities (P2-D3, P2-D4). */
+export interface WorktreeWorkspaceRequest {
+  readonly workspaceId: string;
+  readonly idempotencyKey: string;
+  readonly title: string;
+  /** The project's canonical root: the repository the worktree is cut from. */
+  readonly cwd: string;
+  readonly baseCommit: string;
+  readonly branchName: string;
+  readonly worktreeSlug: string;
+}
+
+/** The fields of a live workspace the runtime treats as evidence. Git proves the rest. */
+export interface WorkspaceSnapshot {
+  readonly id: string;
+  readonly directory: string | null;
+  readonly kind: string;
+  readonly archiving: boolean;
+}
+
+/**
+ * Paseo refused a creation because its receipt already records a different request under this
+ * key, or this id for another key. Never retried with a new key: that would be a second creation.
+ */
+export class CreationConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'CreationConflictError';
+  }
+}
+
+const CONFLICT = /_(?:request_key|id)_conflict\b/;
+
+function conflictOr(error: unknown): unknown {
+  return error instanceof Error && CONFLICT.test(error.message) ? new CreationConflictError(error.message) : error;
 }
 
 export interface PaseoPort {
@@ -73,6 +116,17 @@ export interface PaseoPort {
   /** Starts a turn with `text`; `messageId` ties the delivered prompt to its reporting generation. */
   run(agentId: string, text: string, messageId: string): Promise<void>;
   archive(agentId: string): Promise<{ readonly archivedAt: string }>;
+  /** Creates (or, for a replayed key, returns) a worktree workspace. Throws CreationConflictError on a receipt conflict. */
+  createWorktreeWorkspace(request: WorktreeWorkspaceRequest): Promise<WorkspaceSnapshot>;
+  /** The active workspace with this id, or undefined once Paseo no longer lists it (archived or unknown). */
+  getWorkspace(workspaceId: string): Promise<WorkspaceSnapshot | undefined>;
+  /** Archives a workspace; for a worktree Paseo runs teardown and removes the directory, keeping the branch. */
+  archiveWorkspace(workspaceId: string): Promise<{ readonly archivedAt: string }>;
+  /**
+   * Creates a Peer inside an explicit workspace, with `parentAgentId` as its parent: without the
+   * workspace handle Paseo would place a parented child in the caller's workspace (P2-D8).
+   */
+  createAgentInWorkspace(workspaceId: string, input: Omit<CreateAgentInput, 'cwd'>): Promise<{ readonly agentId: string }>;
   /**
    * Whether a prompt with this message id is in the agent's timeline. `unknown` whenever the
    * evidence is incomplete: recovery never infers delivery from a lifecycle notification.
@@ -141,6 +195,32 @@ export function toSnapshot(raw: RawSnapshot): AgentSnapshot {
   };
 }
 
+type RawWorkspace = NonNullable<ReturnType<ReturnType<PaseoApi['workspaces']['ref']>['current']>>;
+
+function toWorkspace(id: string, raw: RawWorkspace | null): WorkspaceSnapshot {
+  return {
+    id,
+    directory: raw?.workspaceDirectory ?? null,
+    kind: raw?.workspaceKind ?? 'unknown',
+    archiving: raw?.archivingAt !== undefined && raw.archivingAt !== null,
+  };
+}
+
+function agentConfig(input: PeerLaunch & { readonly provider: string }) {
+  return {
+    provider: `${input.provider}/${input.model}`,
+    ...(input.modeId === undefined ? {} : { modeId: input.modeId }),
+    ...(input.thinkingOptionId === undefined ? {} : { thinkingOptionId: input.thinkingOptionId }),
+  };
+}
+
+function identities(input: { readonly agentId?: string; readonly idempotencyKey?: string }) {
+  return {
+    ...(input.agentId === undefined ? {} : { agentId: input.agentId }),
+    ...(input.idempotencyKey === undefined ? {} : { idempotencyKey: input.idempotencyKey }),
+  };
+}
+
 /** The production port over the subprocess PaseoApi. */
 export function sdkPaseoPort(handle: PaseoHandle, waitMs = 10_000): PaseoPort {
   const api = (): Promise<PaseoApi> => handle.acquire(waitMs);
@@ -165,16 +245,53 @@ export function sdkPaseoPort(handle: PaseoHandle, waitMs = 10_000): PaseoPort {
     },
     async createAgent(input) {
       const paseo = await api();
-      const created = await paseo.agents.create({
-        config: {
-          provider: `${input.provider}/${input.model}`,
-          ...(input.modeId === undefined ? {} : { modeId: input.modeId }),
-          ...(input.thinkingOptionId === undefined ? {} : { thinkingOptionId: input.thinkingOptionId }),
-        },
-        cwd: input.cwd, parent: input.parentAgentId,
-        title: input.title, labels: { ...input.labels },
-      });
-      return { agentId: created.id };
+      try {
+        const created = await paseo.agents.create({
+          config: agentConfig(input), cwd: input.cwd, parent: input.parentAgentId,
+          title: input.title, labels: { ...input.labels }, ...identities(input),
+        });
+        return { agentId: created.id };
+      } catch (error) {
+        throw conflictOr(error);
+      }
+    },
+    async createAgentInWorkspace(workspaceId, input) {
+      const paseo = await api();
+      try {
+        const created = await paseo.workspaces.ref(workspaceId).agents.create({
+          config: agentConfig(input), parent: input.parentAgentId,
+          title: input.title, labels: { ...input.labels }, ...identities(input),
+        });
+        return { agentId: created.id };
+      } catch (error) {
+        throw conflictOr(error);
+      }
+    },
+    async createWorktreeWorkspace(request) {
+      const paseo = await api();
+      try {
+        const created = await paseo.workspaces.create({
+          workspaceId: request.workspaceId, idempotencyKey: request.idempotencyKey, title: request.title,
+          source: {
+            kind: 'worktree', cwd: request.cwd, action: 'branch-off', refName: request.baseCommit,
+            branchName: request.branchName, worktreeSlug: request.worktreeSlug,
+          },
+        });
+        return toWorkspace(created.id, created.current() ?? await created.refresh());
+      } catch (error) {
+        throw conflictOr(error);
+      }
+    },
+    async getWorkspace(workspaceId) {
+      const paseo = await api();
+      const current = await paseo.workspaces.ref(workspaceId).refresh();
+      return current === null ? undefined : toWorkspace(workspaceId, current);
+    },
+    async archiveWorkspace(workspaceId) {
+      const paseo = await api();
+      const result = await paseo.workspaces.archive(workspaceId);
+      if (result.error !== null || result.archivedAt === null) throw new Error(result.error ?? 'Paseo returned no archive time for the workspace.');
+      return { archivedAt: result.archivedAt };
     },
     async getAgent(agentId) {
       const paseo = await api();
