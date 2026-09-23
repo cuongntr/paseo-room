@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Active |
+| Status | Archived |
 | Plan-ready | PASS — 2026-09-18 — Repository owner |
 | Owner | Repository owner |
 | Routing decision | [Technical Design routing decision](../design/claude-strong-contract-carrier.md#routing-decision): brownfield; required preview-API dependency, trusted-plugin boundary, prompt-carrier change; plan → converter |
@@ -182,3 +182,4 @@ guard/UI track and do not affect any work package here.
 |---|---|---|
 | 2026-09-18 | Bytes | Created Active with three work packages for the accepted strong Claude carrier: plugin source and composition rule, managed files with fail-closed registration and verification, and carrier documentation. |
 | 2026-09-18 | Bytes | Phase 1 implementation completed: WP-001 through WP-003 delivered and the full `npm run verify` gate passed; plan remains Active pending repository-owner feature-done confirmation and archival. |
+| 2026-09-23 | Repository owner | Confirmed feature-done and archived. WP-001 through WP-003 shipped in `v0.2.0` (commit `3ed2881`); the carrier has since been live-qualified on Paseo `0.8.0` and `0.9.1` under the [runtime coordination design](../design/runtime-coordination.md) §14. Design Q-001 (resume re-invocation) stays open and non-blocking in the [Technical Design](../design/claude-strong-contract-carrier.md). |

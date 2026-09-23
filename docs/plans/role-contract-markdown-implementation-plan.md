@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Active |
+| Status | Archived |
 | Plan-ready | PASS — 2026-09-16 — Repository owner |
 | Owner | Repository owner |
 | Routing decision | [Accepted PRD routing decision](../product/role-contract-and-plugin-prd.md#routing-decision): brownfield; generated-contract, packaging, multi-session, and phased-delivery risks; plan → converter; Phase 1 only |
@@ -115,3 +115,4 @@ No open question blocks conversion. PRD Q-003 through Q-006 remain deferred to t
 | 2026-09-16 | Bytes | Clarified WP ownership for forced test updates versus documentation cleanup, closed the non-prompt inventory, pinned reviewed documentation evidence, and added CI inheritance requirements after plan review. |
 | 2026-09-16 | Repository owner | Activated and froze Phase 1 scope after `plan-ready-for-beads` passed with no blocking question. |
 | 2026-09-18 | Bytes | Reference only, frozen scope unchanged: see [change-001 — Strong Claude contract carrier](role-contract-markdown-change-001-strong-claude-carrier.md), which supersedes the optional Phase-2 plugin feasibility gate for the Claude system-prompt carrier alone. |
+| 2026-09-23 | Repository owner | Confirmed feature-done and archived. WP-001 through WP-004 shipped in `v0.1.0` (commits `424d351`, `af12ff8`, `573dc88`; bead graph closed in `086c89a`). The PRD's Phase 2 plugin gate was superseded for the Claude carrier by change-001 and is otherwise not pursued. |

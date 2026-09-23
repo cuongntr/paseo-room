@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Active |
+| Status | Archived |
 | Plan-ready | PASS — 2026-09-18 — Repository owner |
 | Owner | Repository owner |
 | Routing decision | [Technical Design routing decision](../design/orchestration-quality-hardening.md#routing-decision): brownfield; contract and capability-boundary risks; plan → converter |
@@ -123,3 +123,4 @@ No numeric coverage threshold is introduced because the repository has no covera
 | Date | Author | Change |
 |---|---|---|
 | 2026-09-18 | Bytes | Created and activated with six work packages after design-ready and plan-ready self-review; scope frozen for conversion. |
+| 2026-09-23 | Repository owner | Confirmed feature-done and archived. All six work packages shipped in `v0.1.0` (commits `8422a74`, `7a5ed65`; bead graph closed in `890ccb8`). Q-002's conservative one-writer answer is carried forward into the runtime coordination Phase 2 decision, not reopened here. |
