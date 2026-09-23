@@ -37,6 +37,33 @@ async function locatePeer(controller: Controller, agentId: string): Promise<Loca
   return undefined;
 }
 
+/**
+ * Judges a Peer turn that has ended. Callers hold the project's serial lane. The turn-end event
+ * drains the spool first; recovery cannot (a drain waits on the same lane), so any report still
+ * unresolved there is recorded as uncertain rather than missing — never the other way round.
+ */
+export async function settleEndedTurn(controller: Controller, spool: Spool, loaded: LoadedProject, view: AssignmentView, agentId: string): Promise<'missing' | 'uncertain' | 'waiting' | 'none'> {
+  if (view.reportingState !== 'open' || (view.state !== 'active' && view.state !== 'awaiting-permission')) return 'none';
+  const association = await controller.deps.correlations.findByAssignment(view.id);
+  const pending = association === undefined ? [] : await spool.unresolvedFor(association.correlationId);
+  if (pending.length > 0) {
+    await controller.append(loaded, { type: 'report.uncertain', payloadVersion: 1, assignmentId: view.id, actor: plugin, data: { generation: view.reportingGeneration, requestId: pending[0] ?? '', reason: 'A report from this turn has not been recorded yet.' } });
+    return 'uncertain';
+  }
+  if (view.state === 'awaiting-permission') {
+    const live = await controller.deps.paseo.getAgent(agentId).catch(() => undefined);
+    if (live?.pendingPermissions.some(permission => permission.id === view.awaitingPermissionId) === true) return 'waiting';
+    await controller.append(loaded, { type: 'permission.resolved', payloadVersion: 1, assignmentId: view.id, actor: { source: 'paseo' }, data: { generation: view.reportingGeneration, permissionRequestId: view.awaitingPermissionId ?? 'unknown', outcome: 'other' } });
+  }
+  await controller.append(loaded, { type: 'report.missing', payloadVersion: 1, assignmentId: view.id, actor: plugin, data: { generation: view.reportingGeneration } });
+  await controller.notices.notify(loaded, {
+    kind: 'report-missing', class: 'owner', disposition: 'lead-now', assignmentId: view.id,
+    text: `The Peer on ${view.id} ended its turn without an accepted ask or handoff. Anything in its final message is not a report; answer with a follow-up or abandon the assignment.`,
+    recipient: { agentId: view.leadAgentId, role: 'lead' },
+  });
+  return 'missing';
+}
+
 export interface TurnHandlers {
   turnEnded(event: PluginLifecycleEvents['agent.turn_ended']): Promise<'missing' | 'uncertain' | 'waiting' | 'none'>;
   permissionRequested(event: PluginLifecycleEvents['agent.permission_requested']): Promise<boolean>;
@@ -58,27 +85,7 @@ export function createTurnHandlers(controller: Controller, spool: Spool): TurnHa
     async turnEnded(event) {
       // Let every report this turn sent reach a terminal reply before judging the turn.
       await spool.schedule();
-      return await within(event.agent.id, 'none' as const, async (loaded, view) => {
-        if (view.reportingState !== 'open' || (view.state !== 'active' && view.state !== 'awaiting-permission')) return 'none';
-        const association = await controller.deps.correlations.findByAssignment(view.id);
-        const pending = association === undefined ? [] : await spool.unresolvedFor(association.correlationId);
-        if (pending.length > 0) {
-          await controller.append(loaded, { type: 'report.uncertain', payloadVersion: 1, assignmentId: view.id, actor: plugin, data: { generation: view.reportingGeneration, requestId: pending[0] ?? '', reason: 'A report from this turn has not been recorded yet.' } });
-          return 'uncertain';
-        }
-        if (view.state === 'awaiting-permission') {
-          const live = await controller.deps.paseo.getAgent(event.agent.id).catch(() => undefined);
-          if (live?.pendingPermissions.some(permission => permission.id === view.awaitingPermissionId) === true) return 'waiting';
-          await controller.append(loaded, { type: 'permission.resolved', payloadVersion: 1, assignmentId: view.id, actor: { source: 'paseo' }, data: { generation: view.reportingGeneration, permissionRequestId: view.awaitingPermissionId ?? 'unknown', outcome: 'other' } });
-        }
-        await controller.append(loaded, { type: 'report.missing', payloadVersion: 1, assignmentId: view.id, actor: plugin, data: { generation: view.reportingGeneration } });
-        await controller.notices.notify(loaded, {
-          kind: 'report-missing', class: 'owner', disposition: 'lead-now', assignmentId: view.id,
-          text: `The Peer on ${view.id} ended its turn without an accepted ask or handoff. Anything in its final message is not a report; answer with a follow-up or abandon the assignment.`,
-          recipient: { agentId: view.leadAgentId, role: 'lead' },
-        });
-        return 'missing';
-      });
+      return await within(event.agent.id, 'none' as const, async (loaded, view) => await settleEndedTurn(controller, spool, loaded, view, event.agent.id));
     },
 
     async permissionRequested(event) {

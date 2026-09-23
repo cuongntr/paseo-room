@@ -989,6 +989,7 @@ record write failed. Recovery converges the record to observed reality or asks f
 | agent `run()`/prompt | fresh agent turn/timeline evidence tied to the captured reporting generation and exact dispatched prompt; absent or ambiguous evidence remains uncertain | blind resend, opening a later generation, or inferring delivery from a lifecycle notification |
 | reporting-tool permission | live provider permission state for the bound agent and exact tool name | treating a pending or denied permission as a missing report, or answering it on the seat's behalf |
 | Peer reporting action | durable accepted-action/receipt event bound to the lifetime identity and captured reporting generation; an unresolved spool request retains that generation and is revalidated against fresh live facts | reparsing direct/canonical/projected messages, assigning an old request to a newer generation, or treating turn completion as a report |
+| Peer turn end missed while the plugin was down | the open generation's prompt in the timeline, no active turn, status `idle`/`error`/`closed`, and a Paseo record updated after that prompt; judged by the turn-end handler's logic, `report.uncertain` while any spool request is unresolved | treating a lifecycle notification as the only evidence of a turn end, or recording `report.missing` over an unresolved report |
 | gate run | atomically published terminal result sidecar plus candidate/workspace identity | treating plugin restart, missing result, or a reused numeric PID as pass/fail/stopped |
 | agent archive/writer release | successful archive result plus corroborating live Paseo status | treating assignment close, idle, turn completion, acceptance, rejection, abandonment or time as stopped |
 | Phase 2 workspace close | live workspace status from Paseo after writer release | reusing path because a timeout elapsed |
@@ -1365,7 +1366,7 @@ restored afterwards). Every probe agent was archived.
 | Deselect, re-enable, export | Setup without `--runtime` on quiet state unregistered the plugin and kept 3 projects; `--runtime` restored it; `export --apply` wrote 3 projects, no omissions, no gate output. | pass |
 | Daemon restart | At the operator's request a detached script ran `paseo daemon restart` (PID 219117 → 1040391) and then the checks: carrier and runtime reloaded to `running`, `verify` ok, and the full matrix on all three paths returned identical codes with each original receipt replayed from the durable ledger. A second, independent daemon start (PID 1046382) also reloaded the runtime to `running`. | pass |
 | Panel | First mobile load failed with "Unknown Lucide icon": the app resolves icons by Lucide component name, so `workflow` had to be `Workflow` (fixed, with a naming test). After the fix the operator's mobile app (compact layout, light theme) showed the Room runtime surface: manifest `ready`, all three projects `healthy`, the Trust section, legible theme colours. | pass (mobile, light) |
-| Not rehearsed live | Whole-room `remove --apply` (would delete the operator's real room; covered by CLI tests); visual panel check on wide/compact and light/dark (needs the operator's eyes). | pending |
+| Not rehearsed live | Visual panel check on wide/compact and light/dark (needs the operator's eyes; Paseo serves no web client to drive it headlessly). Whole-room `remove --apply` was rehearsed on 2026-09-23 against an isolated daemon — see §14. | pending (panel only) |
 
 R3 rehearsal (risk owner: repository owner; rehearsal selected in §14) on the live daemon: plugin reload —
 pass; plugin disable (`verify` fails, carrier and room unaffected) and re-enable — pass; daemon restart —
@@ -1408,6 +1409,8 @@ generation-fencing and receipt-replay matrix must pass on every exact provider p
 
 Phase 2 remains descriptive, not authorized. It requires a separate design delta and an approved
 canonical Lead-contract change that grants only runtime-managed, worktree-isolated concurrency.
+That delta is drafted in [runtime-coordination-phase2.md](runtime-coordination-phase2.md) (Draft,
+awaiting the owner's decision on its §3 amendment).
 
 - PRD REQ-010 and REQ-011;
 - multiple writable Peers;
@@ -1499,8 +1502,46 @@ with no `permission.awaiting` and a gate exiting `0`:
 | `claude-peer` | `claude-sonnet-5[1m]`, `bypassPermissions`, thinking `high` | The case that exposed the dropped `modeId`: this seat stalls on its first tool call without it. |
 | `pi-peer` | `openai-codex/gpt-5.6-sol`, thinking `medium`, `currentModeId: null` | No `pi-peer` model declares `isDefault`, so dispatch refuses unless the operator sets the profile model — the earlier `peer_model_unresolved` refusals. Pi has no per-tool approval gate, so carrying no mode is harmless here rather than an omission. |
 
-Still not rehearsed on any point, unchanged from the Phase 1 record: unresolved agent creation
-or delivery, gate timeout termination, and whole-room `remove --apply`.
+**Remaining R3 boundaries rehearsed live — 2026-09-23.** The three boundaries left above were
+rehearsed on a real `0.9.1` daemon started from an isolated home (`HOME`/`PASEO_HOME` in a scratch
+directory, listening on its own port), set up with `setup --agent codex --agent claude --agent pi
+--runtime` and the operator's agent homes as read-only sources. Paseo provider ids are global only
+per daemon, so this is the first point at which destructive removal could run without touching the
+operator's room. Lead actions went through a runtime-created `codex-lead`'s own associated spool
+correlation; Peers were real runtime-dispatched `codex-peer` agents, and — because an isolated room
+holds no role credentials — the Peer `handoff` was issued on the Peer's own correlation and
+capability after committing the candidate by hand. Faults were injected by `SIGKILL` of the runtime
+plugin process only (identified by its inotify watch on the isolated spool), never of the daemon.
+
+| Boundary | Evidence (event ledger) | Result |
+|---|---|---|
+| Gate timeout | Command `sleep 300 & sleep 300; wait`, 5 s: `gate.finished` with `timedOut: true`, `termination: signaled`, `SIGTERM` at ~5 s; the shell and both background children were gone. | pass |
+| Gate escalation | Command ignoring `TERM` in itself and a subshell, 3 s: the group survived `SIGTERM` for the 5 s grace, then `termination: killed`, `SIGKILL` at ~8 s, no survivor. | pass |
+| Create, effect never happened | Plugin killed on `agent.create-requested`: Paseo created nothing. Paseo does not restart a killed plugin (`failed`); after `plugin reload`, recovery wrote `agent.create-failed`, the assignment went `blocked` and the reservation was released. | pass |
+| Create, result lost | Plugin killed when Paseo persisted the labelled child: after reload, `agent.create-succeeded` → `binding.refused` ("recovery never adopts a Peer") → archive → `ownership.released`; the child never received a prompt; the assignment is `uncertain`. | pass |
+| Delivery never happened | Plugin killed on `run.requested`: the Peer's complete timeline had no prompt, so recovery wrote `run.failed` (`blocked`, ownership still held while the Peer lives). Nothing was resent. | pass |
+| Delivery, result lost | Plugin killed when Paseo recorded the user message: recovery found the exact message id and wrote `run.succeeded`; the Peer's timeline holds exactly one prompt. | pass after fix |
+| Whole-room `remove --apply` | With one assignment still `uncertain`, dry run and apply both warned about role-owned credentials and about runtime history with active/uncertain work, and pointed at `export --out`. Apply removed 9 providers, 9 profiles, both plugins and the room home; the daemon kept running with `pluginsEnabled` untouched. The operator's `~/.paseo/config.json` and room tree hashed identically before and after. | pass |
+
+The lost-delivery row exposed a real defect. Its Peer's turn ended (here with a provider `401`,
+since the isolated role home has no credentials) while the plugin was dead. Paseo announces a turn end
+once, fire-and-forget, so the runtime never heard it: recovery settled the run, but the assignment
+stayed `active` with its generation open — Lead could neither abandon it (`active` is not
+abandonable) nor dispatch another writer. A daemon restart during a Peer turn produces the same
+state. Recovery now judges such a turn exactly as the turn-end handler would, but only on live proof
+that it is over — the open generation's prompt delivered, no active turn, a status of `idle`,
+`error` or `closed`, and Paseo's record updated after that prompt — and records `report.uncertain`
+rather than `report.missing` while any spool request from the Peer is still unresolved. Re-run
+live after the fix, the stuck assignment became `report.missing` → `blocked` with a Lead notice.
+
+Operational findings: a plugin that restarts receives Paseo's API handle only from the next lifecycle
+event, so until any agent starts, ends or is created, its tools answer `runtime_unavailable`
+(retryable) and start-up recovery waits; a runtime export written to its default location lives
+inside the room home, so `remove --apply` deletes it — the warning's `export --out <dir>` is the
+safe form.
+
+Still not rehearsed live: nothing on the R3 list. The visual panel check above remains an operator
+task.
 
 **R3 decision:** rehearsal is selected because this introduces persistent state and coordinated
 plugin/agent effects with weak rollback. The repository owner is risk owner. Before release, fault
@@ -1545,6 +1586,7 @@ Q-011 do not block Phases 0–1 because those phases contain no sensor and no wo
 
 | Date | Author | Change |
 |---|---|---|
+| 2026-09-23 | Bytes | Rehearsed the remaining R3 boundaries live on an isolated `0.9.1` daemon (§14): gate timeout and `SIGKILL` escalation, unresolved agent creation with and without the effect, unresolved delivery with and without the effect, and whole-room `remove --apply`. The lost-delivery case exposed a turn that ends while the plugin is down leaving its assignment `active` forever; recovery now settles it from live evidence through the turn-end handler's own logic. |
 | 2026-09-23 | Bytes | Rehearsed all three exact Peer families on Paseo `0.9.1` and recorded the per-family launch evidence in §14. `pi-peer` declares no default model at the provider, so dispatch depends on the operator setting one on the room profile; Pi has no per-tool approval gate, so it needs no `modeId`. |
 | 2026-09-23 | Bytes | Carried the room profile's `modeId` and `thinkingOptionId` into Peer creation alongside the model. Dispatch read the operator's model but not their launch mode, so a runtime-dispatched Peer took the provider's interactive default and an ask-before-each-tool seat stalled on its first call with nobody to answer — the behaviour previously filed as an operator problem. No new authority: the runtime still chooses none of the three. |
 | 2026-09-23 | Bytes | Widened the preview range to `>=0.8.0 <0.10.0` and live-qualified Paseo `0.9.1`: a full dispatch/handoff/gate/accept/archive cycle is recorded in §14 from the event ledger. Upgrading the daemon exposed that `daemon status --json` no longer reports `cliVersion`, which broke every command until the status reader was loosened; the CLI/daemon comparison was kept by asking the executable for its own version. Also gave the Claude carrier its own `claude.paseo-range` check so an unsupported daemon fails as a room check instead of a daemon refusal during apply. |

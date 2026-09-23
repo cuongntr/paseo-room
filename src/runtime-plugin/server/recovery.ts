@@ -7,12 +7,19 @@
  * archive, a published sidecar for a gate. Ambiguous evidence stays uncertain. Recovery never
  * adopts an agent by title or cwd, never resends a prompt, never opens a later generation and
  * never signals a process.
+ *
+ * Paseo's lifecycle events are fire-and-forget, so a Peer turn that ends while this plugin is down
+ * is never announced. Recovery judges such a turn exactly as the turn-end handler would, but only
+ * on live proof that it is over: the delivered prompt of the open generation, no active turn, and
+ * a record Paseo changed after that prompt arrived.
  */
 import type { Controller, LoadedProject } from './controller.js';
 import type { AssignmentView } from './domain/state.js';
 import { recoverGate } from './gate.js';
+import { settleEndedTurn } from './handlers/turns.js';
 import { checkLeadOwnership } from './ownership.js';
-import { ASSIGNMENT_LABEL, PARENT_AGENT_ID_LABEL } from './paseo-port.js';
+import { ASSIGNMENT_LABEL, PARENT_AGENT_ID_LABEL, type AgentSnapshot } from './paseo-port.js';
+import type { Spool } from './spool.js';
 import { ProjectStore } from './store/project.js';
 
 export interface RecoveryAction {
@@ -36,7 +43,7 @@ function lastIntent(loaded: LoadedProject, assignmentId: string, type: 'archive.
 }
 
 export class Recovery {
-  constructor(private readonly controller: Controller) {}
+  constructor(private readonly controller: Controller, private readonly spool?: Spool) {}
 
   async recoverAll(): Promise<RecoveryReport[]> {
     const stores = await ProjectStore.list(this.controller.deps.runtimeRoot, this.controller.deps.now);
@@ -68,6 +75,8 @@ export class Recovery {
           else if (type === 'run.requested') actions.push(await this.recoverRun(loaded.value, current, intentId));
           else if (type === 'archive.requested') actions.push(await this.recoverArchive(loaded.value, current, intentId));
         }
+        const ended = await this.recoverEndedTurn(loaded.value, loaded.value.state.assignments.get(view.id) ?? view);
+        if (ended !== undefined) actions.push(ended);
         const current = loaded.value.state.assignments.get(view.id) ?? view;
         if (current.closure === 'uncertain' && !Object.values(current.openIntents).includes('archive.requested')) {
           const intentId = lastIntent(loaded.value, current.id, 'archive.requested');
@@ -110,6 +119,21 @@ export class Recovery {
     await this.controller.append(loaded, { type: 'binding.refused', payloadVersion: 1, assignmentId: view.id, actor: plugin, data: { agentId: only.id, reason: 'Recovered after an interrupted dispatch; recovery never adopts a Peer.' } });
     await this.controller.archiveUnbound(loaded, view.id, only.id);
     return { assignmentId: view.id, intent: intentId, outcome: 'archived-unbound', detail: `Archived recovered child ${only.id}.` };
+  }
+
+  /** A turn whose end nobody announced: judged only once live evidence proves it is over. */
+  private async recoverEndedTurn(loaded: LoadedProject, view: AssignmentView): Promise<RecoveryAction | undefined> {
+    const agentId = view.peerAgentId;
+    if (this.spool === undefined || agentId === undefined || view.reportingState !== 'open') return undefined;
+    if ((view.state !== 'active' && view.state !== 'awaiting-permission') || Object.values(view.openIntents).includes('run.requested')) return undefined;
+    const live = await this.controller.deps.paseo.getAgent(agentId);
+    if (live === undefined || !turnIsOver(live)) return undefined;
+    const intent = `turn-g${String(view.runGeneration)}`;
+    if (await this.controller.deps.paseo.promptDelivered(agentId, `${view.id}-g${String(view.runGeneration)}`) !== 'delivered') return undefined;
+    const outcome = await settleEndedTurn(this.controller, this.spool, loaded, view, agentId);
+    if (outcome === 'missing') return { assignmentId: view.id, intent, outcome: 'failed', detail: 'The Peer turn ended unannounced, without an accepted report.' };
+    if (outcome === 'uncertain') return { assignmentId: view.id, intent, outcome: 'uncertain', detail: 'The Peer turn ended unannounced with a report still unresolved.' };
+    return { assignmentId: view.id, intent, outcome: 'unchanged', detail: 'The Peer is waiting on a reporting permission.' };
   }
 
   /** Delivery is proven only by the exact message id in the Peer's timeline. */
@@ -163,4 +187,11 @@ export class Recovery {
     await this.controller.append(loaded, { type: 'gate.uncertain', payloadVersion: 1, assignmentId, actor: plugin, data: { gateRunId, reason } });
     return { assignmentId, intent: gateRunId, outcome: 'uncertain', detail: reason };
   }
+}
+
+/** No turn is running and Paseo changed the record after the last prompt arrived. */
+function turnIsOver(live: AgentSnapshot): boolean {
+  if (live.activeTurn || (live.status !== 'idle' && live.status !== 'error' && live.status !== 'closed')) return false;
+  if (live.lastUserMessageAt === null) return false;
+  return Date.parse(live.updatedAt) > Date.parse(live.lastUserMessageAt);
 }

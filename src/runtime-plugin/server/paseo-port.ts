@@ -32,6 +32,8 @@ export interface AgentSnapshot {
   readonly status: 'initializing' | 'idle' | 'running' | 'error' | 'closed';
   readonly activeTurn: boolean;
   readonly lastUserMessageAt: string | null;
+  /** When Paseo last changed this agent's record; compared with `lastUserMessageAt` only. */
+  readonly updatedAt: string;
   readonly labels: Readonly<Record<string, string>>;
   readonly archivedAt: string | null;
   readonly pendingPermissions: readonly PermissionSnapshot[];
@@ -132,6 +134,7 @@ export function toSnapshot(raw: RawSnapshot): AgentSnapshot {
     status: raw.status,
     activeTurn: raw.activeTurn !== undefined && raw.activeTurn !== null,
     lastUserMessageAt: raw.lastUserMessageAt,
+    updatedAt: raw.updatedAt,
     labels: { ...raw.labels },
     archivedAt: raw.archivedAt ?? null,
     pendingPermissions: raw.pendingPermissions.map(permission => ({ id: permission.id, name: permission.name })),

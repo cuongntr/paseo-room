@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { latestCapability } from '../src/runtime-plugin/server/capabilities.js';
 import { createPeerHandlers } from '../src/runtime-plugin/server/handlers/peer.js';
 import { createTurnHandlers, reportingToolOf } from '../src/runtime-plugin/server/handlers/turns.js';
+import { Recovery } from '../src/runtime-plugin/server/recovery.js';
 import { Spool } from '../src/runtime-plugin/server/spool.js';
 import { harness, writableBrief, type Harness } from './runtime-harness.js';
 
@@ -59,6 +60,51 @@ describe('turn end without a report', () => {
     const { h, id, peer, spool } = await dispatched();
     const stuck = Object.assign(Object.create(spool) as Spool, { unresolvedFor: () => Promise.resolve(['req_pending01']), schedule: () => Promise.resolve() });
     expect(await createTurnHandlers(h.controller, stuck).turnEnded(ended(peer))).toBe('uncertain');
+    expect((await view(h, id)).view).toMatchObject({ state: 'uncertain', reportingState: 'uncertain' });
+  });
+});
+
+describe('a turn that ended while the runtime was down', () => {
+  // Paseo announces a turn end once, fire-and-forget; a plugin that was not running never hears it.
+  const recover = (h: Harness, spool: Spool) => new Recovery(h.controller, spool).recoverAll();
+
+  it('is judged on recovery as a missing report once live evidence proves the turn is over', async () => {
+    const { h, id, peer, spool } = await dispatched();
+    h.paseo.endTurn(peer);
+    const [report] = await recover(h, spool);
+    expect(report?.actions).toEqual([expect.objectContaining({ assignmentId: id, intent: 'turn-g1', outcome: 'failed' })]);
+    expect((await view(h, id)).view).toMatchObject({ state: 'blocked', reportingState: 'consumed' });
+    expect(h.paseo.agents.get('lead-1')?.prompts.at(-1)?.text).toContain('without an accepted ask or handoff');
+    // Settled once: a second pass finds nothing left to judge and never prompts the Peer again.
+    expect((await recover(h, spool))[0]?.actions).toEqual([]);
+    expect(h.paseo.agents.get(peer)?.prompts).toHaveLength(1);
+  });
+
+  it('leaves a turn alone while it runs, or before Paseo has recorded anything after the prompt', async () => {
+    const { h, id, peer, spool } = await dispatched();
+    expect((await recover(h, spool))[0]?.actions).toEqual([]);
+    const live = h.paseo.agents.get(peer);
+    if (live === undefined) throw new Error('missing');
+    live.activeTurn = false;
+    live.status = 'idle';
+    expect((await recover(h, spool))[0]?.actions).toEqual([]);
+    expect((await view(h, id)).view?.state).toBe('active');
+  });
+
+  it('does not judge a turn whose prompt it cannot find in the timeline', async () => {
+    const { h, id, peer, spool } = await dispatched();
+    h.paseo.endTurn(peer);
+    h.paseo.timelineOverride = 'unknown';
+    expect((await recover(h, spool))[0]?.actions).toEqual([]);
+    expect((await view(h, id)).view?.state).toBe('active');
+  });
+
+  it('records uncertain, never missing, while a report from the turn is still in the spool', async () => {
+    const { h, id, peer, spool } = await dispatched();
+    h.paseo.endTurn(peer);
+    const stuck = Object.assign(Object.create(spool) as Spool, { unresolvedFor: () => Promise.resolve(['req_pending01']) });
+    const [report] = await recover(h, stuck);
+    expect(report?.actions).toEqual([expect.objectContaining({ outcome: 'uncertain' })]);
     expect((await view(h, id)).view).toMatchObject({ state: 'uncertain', reportingState: 'uncertain' });
   });
 });

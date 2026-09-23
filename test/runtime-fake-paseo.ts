@@ -14,6 +14,7 @@ export interface FakeAgent {
   status: AgentSnapshot['status'];
   activeTurn: boolean;
   lastUserMessageAt: string | null;
+  updatedAt: string;
   labels: Record<string, string>;
   archivedAt: string | null;
   pendingPermissions: { id: string; name: string }[];
@@ -34,7 +35,7 @@ export class FakePaseo implements PaseoPort {
   addAgent(agent: Partial<FakeAgent> & { id: string; provider: string }): FakeAgent {
     const full: FakeAgent = {
       model: this.models[agent.provider] ?? 'model-x', cwd: '/repo', workspaceId: 'ws-1', status: 'idle', activeTurn: false,
-      lastUserMessageAt: null, labels: {}, archivedAt: null, pendingPermissions: [], prompts: [], ...agent,
+      lastUserMessageAt: null, updatedAt: '2026-09-22T09:00:00.000Z', labels: {}, archivedAt: null, pendingPermissions: [], prompts: [], ...agent,
     };
     this.agents.set(full.id, full);
     return full;
@@ -52,7 +53,7 @@ export class FakePaseo implements PaseoPort {
   private snapshot(agent: FakeAgent): AgentSnapshot {
     return {
       id: agent.id, provider: agent.provider, model: agent.model, cwd: agent.cwd, workspaceId: agent.workspaceId, status: agent.status,
-      activeTurn: agent.activeTurn, lastUserMessageAt: agent.lastUserMessageAt, labels: { ...agent.labels },
+      activeTurn: agent.activeTurn, lastUserMessageAt: agent.lastUserMessageAt, updatedAt: agent.updatedAt, labels: { ...agent.labels },
       archivedAt: agent.archivedAt, pendingPermissions: agent.pendingPermissions.map(permission => ({ ...permission })),
     };
   }
@@ -87,6 +88,7 @@ export class FakePaseo implements PaseoPort {
       if (agent === undefined || agent.status === 'closed') throw new Error(`agent ${agentId} cannot receive a turn`);
       agent.prompts.push({ text, messageId });
       agent.lastUserMessageAt = '2026-09-22T10:00:00.000Z';
+      agent.updatedAt = agent.lastUserMessageAt;
       agent.status = 'running';
       agent.activeTurn = true;
     });
@@ -99,6 +101,7 @@ export class FakePaseo implements PaseoPort {
       agent.archivedAt = '2026-09-22T11:00:00.000Z';
       agent.status = 'closed';
       agent.activeTurn = false;
+      agent.updatedAt = agent.archivedAt;
       return { archivedAt: agent.archivedAt };
     });
   }
@@ -131,7 +134,7 @@ export class FakePaseo implements PaseoPort {
   /** Test helper: finish the agent's turn. */
   endTurn(agentId: string): void {
     const agent = this.agents.get(agentId);
-    if (agent) { agent.status = 'idle'; agent.activeTurn = false; }
+    if (agent) { agent.status = 'idle'; agent.activeTurn = false; agent.updatedAt = '2026-09-22T10:05:00.000Z'; }
   }
 }
 

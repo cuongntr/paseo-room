@@ -62,7 +62,7 @@ export function createRuntimeContext(location: RoomLocation, nodePath = process.
     correlations,
     handle,
     controller,
-    recovery: new Recovery(controller),
+    recovery: new Recovery(controller, spool),
     hooks: {
       recognition, correlations, nodePath, runtimeRoot: location.runtimeRoot,
       bridgeScript: join(location.pluginDirectory, 'server', 'bridge', 'bridge.mjs'),
