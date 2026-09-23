@@ -1,7 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { RUNTIME_PASEO_RANGE, RUNTIME_PLUGIN_ID } from '../src/runtime-plugin/shared/identity.js';
+import { QUALIFIED_WORKTREE_DAEMONS, RUNTIME_PASEO_RANGE, RUNTIME_PLUGIN_ID } from '../src/runtime-plugin/shared/identity.js';
+import { satisfies } from 'semver';
 import { runtimePluginInventory } from './package-inventory.js';
 
 const pluginRoot = join(import.meta.dirname, '..', 'src', 'runtime-plugin');
@@ -75,6 +76,12 @@ describe('runtime plugin module boundary', () => {
     const manifest = JSON.parse(await readFile(join(pluginRoot, 'paseo-plugin.json'), 'utf8')) as unknown;
     expect(manifest).toEqual({ id: RUNTIME_PLUGIN_ID, requirements: { paseo: RUNTIME_PASEO_RANGE } });
     expect(RUNTIME_PLUGIN_ID).not.toBe('paseo-room-claude-carrier');
+  });
+
+  it('qualifies worktree dispatch only on live-qualified versions inside the plugin range', () => {
+    // Each entry needs its own live record (docs/design/runtime-coordination-phase2.md §9.2).
+    expect(QUALIFIED_WORKTREE_DAEMONS).toEqual(['0.9.1']);
+    for (const version of QUALIFIED_WORKTREE_DAEMONS) expect(satisfies(version, RUNTIME_PASEO_RANGE), version).toBe(true);
   });
 
   it('keeps code modules out of the plugin root and inside the host-supplied import set', async () => {

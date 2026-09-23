@@ -674,7 +674,8 @@ the same worktree at the next lease epoch; the old Peer's late reports are refus
 the Human form of both.
 
 Worktree dispatch is enabled per daemon version, only after the live qualification in the Phase 2
-delta §9 passes on that version.
+delta §9 passes on that version; `0.9.1` is qualified. On any other version the runtime refuses
+`worktree_unqualified` and dispatch without isolation still works.
 
 To stop using it, finish, close or abandon the recorded work, then run setup **without**
 `--runtime`. Setup refuses while anything is still active or uncertain — including an isolated

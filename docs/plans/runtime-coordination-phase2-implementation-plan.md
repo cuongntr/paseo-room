@@ -291,5 +291,6 @@ Q-P2-01, Q-P2-05 (resolved) and Q-P2-03, Q-P2-04 (settled in §2) do not block a
 
 | Date | Author | Change |
 |---|---|---|
+| 2026-09-23 | Bytes | Executed WP-001–WP-008; every bead closed. Live qualification (delta §9.2) and the R3 rehearsal (Technical Design §14) passed on Paseo `0.9.1`, after fixing three recovery defects the live run exposed (2d2841c); `0.9.1` is qualified. Implementation deltas are recorded in [change-002](runtime-coordination-change-002-phase2-implementation-deltas.md), awaiting the repository owner's review; the plan stays Active until then. |
 | 2026-09-23 | Bytes | Passed `plan-ready-for-beads` and activated; Phase 2 scope frozen (WP-001–WP-008). |
 | 2026-09-23 | Bytes | Created Draft from the Active Phase 2 delta: eight work packages covering the scope checker, contracts/events/projection, Git worktree proofs, the Paseo workspace port, worktree dispatch with collision refusal, close/reclaim/recovery, status/panel/docs, and live qualification with R3 rehearsal. |

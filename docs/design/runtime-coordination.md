@@ -1417,7 +1417,8 @@ Phase 2 is authorized by its own design delta,
 amendment — granting only runtime-managed, worktree-isolated concurrency — the repository owner
 approved and landed on 2026-09-23. The delta governs; the list below is the original scope. It is
 implemented by the [Phase 2 plan](../plans/runtime-coordination-phase2-implementation-plan.md)
-and enabled per qualified daemon version (delta §8, §9).
+and enabled per qualified daemon version (delta §8, §9); `0.9.1` qualified live on 2026-09-23
+(delta §9.2).
 
 - PRD REQ-010 and REQ-011;
 - multiple writable Peers;
@@ -1556,6 +1557,17 @@ no `paseo_room` bridge — and a runtime project exists only after a Lead's firs
 (even the read-only `assignment_status`). An operator enabling runtime on an existing room should
 open a fresh Lead and have its first message make one runtime call.
 
+**Phase 2 R3 rehearsal — 2026-09-23.** On the same isolated `0.9.1` daemon as the Phase 2 live
+qualification ([delta §9.2](runtime-coordination-phase2.md#92-live-qualification--2026-09-23)), with a
+ledger holding every Phase 2 event type:
+
+| Boundary | Evidence | Result |
+|---|---|---|
+| Downgrade to Phase 1 | The Phase 1 package (commit `2b7a901`) set up over the room: its plugin paused the project with `unknown-type` for the first Phase 2 event file and answered `project_paused`; the 296 event files hashed identically before and after. | pass |
+| Restore | The Phase 2 package set up again: the project resumed with its leases, retained worktrees and history, no event rewritten. | pass |
+| Deselection with work | Setup without `--runtime` refused while a lease was held, naming `worktree lease (epoch 1) is held`. | pass |
+| Deselection with retained worktrees | With every writer released, it proceeded, unregistered the plugin, kept the 386 event files, and warned that 2 runtime worktrees (one retained with an unrecorded commit, one left by a failed teardown) remain in Paseo and are not deleted; both stayed in `git worktree list`. `remove` (dry run) gave the same count. | pass |
+
 **R3 decision:** rehearsal is selected because this introduces persistent state and coordinated
 plugin/agent effects with weak rollback. The repository owner is risk owner. Before release, fault
 injection must exercise every intent/result boundary and a real daemon must rehearse plugin reload,
@@ -1599,6 +1611,7 @@ Q-011 do not block Phases 0–1 because those phases contain no sensor and no wo
 
 | Date | Author | Change |
 |---|---|---|
+| 2026-09-23 | Bytes | Phase 2 implemented and live-qualified on `0.9.1` (delta §9.2); recorded its R3 rehearsal in §14 — Phase 1 downgrade pauses and preserves, restore resumes, deselection refuses a held lease and counts retained worktrees without deleting them. |
 | 2026-09-23 | Repository owner / Bytes | Recorded the wide/dark panel check on the operator's app as passed, closing Phase 1 live qualification, and the onboarding finding that only a Lead created after runtime installation carries the bridge and that a project appears on a Lead's first runtime action. |
 | 2026-09-23 | Bytes | Rehearsed the remaining R3 boundaries live on an isolated `0.9.1` daemon (§14): gate timeout and `SIGKILL` escalation, unresolved agent creation with and without the effect, unresolved delivery with and without the effect, and whole-room `remove --apply`. The lost-delivery case exposed a turn that ends while the plugin is down leaving its assignment `active` forever; recovery now settles it from live evidence through the turn-end handler's own logic. |
 | 2026-09-23 | Bytes | Rehearsed all three exact Peer families on Paseo `0.9.1` and recorded the per-family launch evidence in §14. `pi-peer` declares no default model at the provider, so dispatch depends on the operator setting one on the room profile; Pi has no per-tool approval gate, so it needs no `modeId`. |

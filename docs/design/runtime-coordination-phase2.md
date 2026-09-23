@@ -378,6 +378,46 @@ L-4, the dirty/teardown-failure halves of L-5, L-6 with held leases, and L-7.
 Deterministic tests cover everything else against the fake port, including the §5.5 oracle and a
 crash at every new intent/result boundary.
 
+### 9.2 Live qualification — 2026-09-23
+
+Run against the implemented runtime (WP-001–WP-007) on a real Paseo `0.9.1` daemon started from an
+isolated home — its own `HOME`/`PASEO_HOME` and port — set up with
+`setup --agent codex --agent claude --agent pi --runtime` and a build that listed `0.9.1` as
+qualified. Lead actions went through a runtime-created `codex-lead`'s own spool correlation. The
+isolated role homes hold no credentials, so every Peer turn fails with a provider `401` (Codex after
+about 17 s, Claude and Pi at once); where a handback was needed, the Peer's commit was made in its
+worktree and `handoff` sent on the Peer's own correlation and capability inside that window, exactly
+as the Phase 1 R3 rehearsal did. Evidence is from the event ledger, `git worktree list` and Paseo's
+persisted agent records, never from agent prose. The operator's room and `~/.paseo/config.json`
+hashed identically before and after.
+
+| Item | Observed | Result |
+|---|---|---|
+| Version gate | The plugin read `0.9.1` from its host `@getpaseo/server` package; worktree dispatch ran. The deterministic suite proves an unknown version refuses `worktree_unqualified`. | pass |
+| L-2 create and prove | Each dispatch recorded `lease.reserved` → `workspace.create-requested` (runtime `wks_` id, key `ws-<id>-e1`) → `workspace.create-succeeded` after the Git proof; `HEAD` was the exact base and the branch `paseo-room/<id>`. Paseo sanitised the slug (`asg_x` → `asg-x`), which the runtime never relies on. | pass |
+| L-3 cross-workspace parentage | `codex-peer`, `claude-peer` and `pi-peer` were each created through the workspace handle: `paseo.parent-agent-id` = Lead, the lease's `workspaceId`, `cwd` inside the worktree, no prior prompt. The `paseo_room` reporter with its correlation arrived on all three; Claude's persisted `systemPrompt` began with the room contract marker (`paseo-room-contract:sha256:9ac233cb…`); Pi's append travels in its provider command. | pass |
+| L-4 three writers | `src/api`, `src/web` and `docs` held at once in three worktrees, each handed back; `docs` ran its runtime gate inside the worktree and was accepted, `src/web` accepted. Refused before any event, worktree or agent: `lease_cap` (fourth), `writer_exclusive` (dispatch without isolation), `scope_overlap` (`src`, and `SRC/API/v2` by case folding), `serial_path` (declared by the requester and by the holder), `writer_uncertain` (another lease uncertain). A candidate touching `README.md` outside `tools` recorded `scope.exceeded`, and acceptance required the override. | pass |
+| L-5 close | A clean worktree closed on release with `directoryRemoved: true`, branch kept. One with an uncommitted file, and one with a commit no handoff recorded, were retained with a `worktree-retained` notice to Lead; `workspace_close` refused without discard and closed with `discardUncommitted` and a reason. A `paseo.json` `worktree.teardown` of `exit 3` archived the workspace and left the directory: `directoryRemoved: false`. | pass |
+| L-6 restart | `paseo daemon restart` with three held leases (and, in an earlier restart, two held plus one unconfirmed worktree create): the assignment/lease/worktree view was identical before and after, `git worktree list` unchanged, no duplicate workspace; the unconfirmed create settled as below. | pass after fixes |
+| L-7 setup | A base whose `paseo.json` declares `worktree.setup` refused `worktree_setup_unobservable` with no event; a blank setup string dispatched. | pass |
+| Reclaim | `lease_reclaim` refused while Paseo showed the Peer `closed` but not archived; after an archive it moved the lease to epoch 2 and placed a new Peer in the same worktree under Lead; the replaced Peer's late call failed `report_stale`. | pass |
+
+Three defects were found and fixed in the same change (2d2841c), each with a regression test:
+Paseo answers `agents.ref(id).refresh()` for a never-stored id with `Agent not found: <id>`, which
+made exact-id create recovery abort start-up recovery; Paseo's creation receipt replays a definite
+failure as an error, which left an unconfirmed worktree create uncertain for ever (now
+`workspace.create-failed` when Paseo also lists no such workspace); and a lease released by a
+recovered `agent.create-failed` did not close its clean worktree.
+
+Operational findings: after a daemon restart Paseo does not load a stored Lead until it runs again,
+so creating a parented Peer fails `Caller agent … not found` (recorded `agent.create-uncertain`, then
+`agent.create-failed` by recovery) — a Lead that is actually working never meets this; and a plugin
+reinstalled by setup receives Paseo's handle, and runs start-up recovery, only at the next lifecycle
+event, as in Phase 1.
+
+On this evidence `0.9.1` joins `QUALIFIED_WORKTREE_DAEMONS`. Q-P2-02 stays open: repositories that
+declare `worktree.setup` are still refused.
+
 ## 10. Open Questions
 
 | ID | Question | Owner | Status |
@@ -392,6 +432,7 @@ crash at every new intent/result boundary.
 
 | Date | Author | Change |
 |---|---|---|
+| 2026-09-23 | Bytes | Recorded §9.2: L-2 to L-7 and reclaim pass live on an isolated `0.9.1` daemon with `codex-peer`, `claude-peer` and `pi-peer`, after fixing three recovery defects the run exposed; `0.9.1` added to the qualified list. |
 | 2026-09-23 | Repository owner / Bytes | Approved the §3 amendment (Q-P2-01) and landed it: `lead.md` Moving Write Ownership, the `shared-authority.md` Authority Floor, their static tests, `AGENTS.md`, `docs/design.md`, `README.md`, orchestration-hardening Q-003 and PRD Q-011. Design Active; the implementation plan may now be drafted. |
 | 2026-09-23 | Bytes | Ran the §9.1 feasibility probe on an isolated `0.9.1` daemon: resolved Q-P2-05 (the plugin holds `workspace.manage`), confirmed commit-id branch-off, runtime-chosen ids, key replay across restart and child placement through the workspace handle, and observed the silent existing-branch rename that makes P2-D4's Git proof mandatory. |
 | 2026-09-23 | Bytes | Created Draft from Paseo `0.9.1` source: isolation as a dispatch mode, runtime-chosen workspace ids with durable creation receipts, Git proof after branch-off, setup refusal while setup is unobservable, epoch-fenced leases, gated worktree close, cross-workspace parentage through the workspace handle, an in-repo conservative scope checker (Q-011), and the proposed Lead/Authority-Floor amendment awaiting owner approval. |

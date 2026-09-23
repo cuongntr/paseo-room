@@ -19,6 +19,6 @@ export const RUNTIME_PASEO_RANGE = '>=0.8.0 <0.10.0';
  * Daemon versions on which worktree dispatch passed live qualification
  * (docs/design/runtime-coordination-phase2.md §9). Any other version — or one the plugin cannot
  * read — refuses `isolation: 'worktree'` with `worktree_unqualified`; it is a runtime check, not a
- * change of the plugin's range.
+ * change of the plugin's range. `0.9.1`: delta §9.2, 2026-09-23.
  */
-export const QUALIFIED_WORKTREE_DAEMONS: readonly string[] = [];
+export const QUALIFIED_WORKTREE_DAEMONS: readonly string[] = ['0.9.1'];
