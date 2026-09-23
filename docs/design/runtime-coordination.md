@@ -312,6 +312,12 @@ implementation plan, but its behavior is fixed here:
 - runtime adds no model-selection policy or authority. Human/operator-owned room/provider configuration
   determines the exact model; Lead may choose an eligible exact Peer provider but cannot name, change,
   waive or substitute its model. Runtime records observed identity and refuses assignment drift;
+- the same rule governs how the seat launches. Runtime carries the room profile's `modeId` and
+  `thinkingOptionId` into Peer creation exactly as the operator set them, and chooses neither. It
+  reads them only from the room profile, never from a provider default: a provider's default mode
+  is Paseo's choice for a seat a human is watching, and a dispatched Peer is not one. A Peer
+  launched into a mode that asks before each tool stalls on its first call with nobody to answer,
+  so omitting the mode would silently substitute an operator choice, not decline to make one;
 - the plugin requires Paseo `>=0.8.0 <0.10.0`. `0.8.0` and `0.9.1` are the live-tested points:
   Q-003a proved reporter delivery and invocation on all three exact Peer providers on `0.8.0`, and
   the `0.9.1` widening rests on the host contract being demonstrably the same one — see §14 — plus
@@ -1530,6 +1536,7 @@ Q-011 do not block Phases 0–1 because those phases contain no sensor and no wo
 
 | Date | Author | Change |
 |---|---|---|
+| 2026-09-23 | Bytes | Carried the room profile's `modeId` and `thinkingOptionId` into Peer creation alongside the model. Dispatch read the operator's model but not their launch mode, so a runtime-dispatched Peer took the provider's interactive default and an ask-before-each-tool seat stalled on its first call with nobody to answer — the behaviour previously filed as an operator problem. No new authority: the runtime still chooses none of the three. |
 | 2026-09-23 | Bytes | Widened the preview range to `>=0.8.0 <0.10.0` and live-qualified Paseo `0.9.1`: a full dispatch/handoff/gate/accept/archive cycle is recorded in §14 from the event ledger. Upgrading the daemon exposed that `daemon status --json` no longer reports `cliVersion`, which broke every command until the status reader was loosened; the CLI/daemon comparison was kept by asking the executable for its own version. Also gave the Claude carrier its own `claude.paseo-range` check so an unsupported daemon fails as a room check instead of a daemon refusal during apply. |
 | 2026-09-22 | Bytes | Recorded the Phase 1 release qualification on Paseo `0.8.0` across all three exact Peer paths, including two defects it found and the fixes (hoisted plugin entries; operator-owned `provider/model` Peer creation). Q-003b resolved across plugin reload and, after the operator-requested daemon restart, across daemon restart. |
 | 2026-09-22 | Repository owner / Bytes | Activated the design after exact-Peer carrier qualification: split Q-003 into resolved Q-003a (carrier feasibility) and open Q-003b (server semantics, now a Phase 1 exit criterion), resolved Q-005 as preview range `>=0.8.0 <0.9.0`, and added the pending-tool-permission state after observing that Claude gates a reporting call while Codex and Pi do not. |

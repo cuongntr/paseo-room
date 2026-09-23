@@ -1,6 +1,6 @@
 /** An in-memory Paseo for runtime controller tests. Deterministic; every call is logged. */
 import {
-  ASSIGNMENT_LABEL, PARENT_AGENT_ID_LABEL, type AgentSnapshot, type CreateAgentInput, type PaseoPort,
+  ASSIGNMENT_LABEL, PARENT_AGENT_ID_LABEL, type AgentSnapshot, type CreateAgentInput, type PaseoPort, type PeerLaunch,
 } from '../src/runtime-plugin/server/paseo-port.js';
 
 type Operation = 'createAgent' | 'getAgent' | 'listAgents' | 'run' | 'archive';
@@ -105,10 +105,15 @@ export class FakePaseo implements PaseoPort {
 
   /** Operator-owned model per provider; `null` means the provider declares none. */
   readonly peerModels: Record<string, string | null> = {};
+  /** Operator-owned launch mode per provider, as the room profile would carry it. */
+  readonly peerModes: Record<string, string> = {};
 
-  resolveModel(provider: string): Promise<string | undefined> {
+  resolveLaunch(provider: string): Promise<PeerLaunch | undefined> {
     const configured = this.peerModels[provider];
-    return Promise.resolve(configured === null ? undefined : configured ?? this.models[provider] ?? 'model-x');
+    if (configured === null) return Promise.resolve(undefined);
+    const model = configured ?? this.models[provider] ?? 'model-x';
+    const modeId = this.peerModes[provider];
+    return Promise.resolve({ model, ...(modeId === undefined ? {} : { modeId }) });
   }
 
   /** Set to force a timeline answer, e.g. `unknown` when history is incomplete. */

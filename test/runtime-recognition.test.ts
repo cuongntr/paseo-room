@@ -96,19 +96,41 @@ describe('Paseo handle and SDK port', () => {
     expect(await port.listAgents()).toHaveLength(1);
   });
 
-  it('resolves the Peer model from the room profile, else the provider default, and never guesses', async () => {
+  it('resolves the Peer launch from the room profile, else the provider default model, and never guesses', async () => {
+    const created: unknown[] = [];
     const make = (profiles: unknown[], models: unknown[]) => {
       const handle = new PaseoHandle();
       handle.supply({
         config: { get: () => Promise.resolve({ config: { agentProfiles: profiles } }) },
         providers: { listModels: () => Promise.resolve({ models }) },
+        agents: { create: (options: unknown) => { created.push(options); return Promise.resolve({ id: 'a1' }); } },
       } as unknown as PaseoApi);
       return sdkPaseoPort(handle, 50);
     };
     const defaults = [{ id: 'a' }, { id: 'b', isDefault: true }];
-    expect(await make([{ id: 'room-claude-peer', provider: 'claude-peer', model: 'sonnet' }], defaults).resolveModel('claude-peer')).toBe('sonnet');
-    expect(await make([{ id: 'room-codex-peer', provider: 'codex-peer' }], defaults).resolveModel('codex-peer')).toBe('b');
-    expect(await make([], [{ id: 'a' }]).resolveModel('pi-peer')).toBeUndefined();
+
+    // Mode and thinking option ride with the model: a Peer nobody is sitting beside must launch
+    // in the mode the operator chose for that seat, not the provider's interactive default.
+    const claude = [{ id: 'room-claude-peer', provider: 'claude-peer', model: 'sonnet', modeId: 'bypassPermissions', thinkingOptionId: 'high' }];
+    expect(await make(claude, defaults).resolveLaunch('claude-peer'))
+      .toEqual({ model: 'sonnet', modeId: 'bypassPermissions', thinkingOptionId: 'high' });
+
+    // A profile without a model still contributes its mode, over the provider's default model.
+    expect(await make([{ id: 'room-codex-peer', provider: 'codex-peer', modeId: 'full-access' }], defaults).resolveLaunch('codex-peer'))
+      .toEqual({ model: 'b', modeId: 'full-access' });
+    expect(await make([{ id: 'room-codex-peer', provider: 'codex-peer' }], defaults).resolveLaunch('codex-peer')).toEqual({ model: 'b' });
+    expect(await make([], [{ id: 'a' }]).resolveLaunch('pi-peer')).toBeUndefined();
+
+    // An empty string is not a choice.
+    expect(await make([{ id: 'room-pi-peer', provider: 'pi-peer', model: 'm', modeId: '' }], defaults).resolveLaunch('pi-peer')).toEqual({ model: 'm' });
+
+    const port = make(claude, defaults);
+    const launch = await port.resolveLaunch('claude-peer');
+    if (launch === undefined) throw new Error('fixture needs a launch');
+    await port.createAgent({ ...launch, provider: 'claude-peer', cwd: '/repo', parentAgentId: 'lead', title: 't', labels: {} });
+    expect(created.at(-1)).toMatchObject({
+      config: { provider: 'claude-peer/sonnet', modeId: 'bypassPermissions', thinkingOptionId: 'high' },
+    });
   });
 
   it('keeps every agent SDK call inside the Paseo port module', async () => {

@@ -129,12 +129,16 @@ describe('two-step writable dispatch', () => {
     expect((await ledger(unsent, other)).view).toMatchObject({ state: 'uncertain', reportingState: 'uncertain' });
   });
 
-  it('creates the Peer on the operator-owned model and refuses when none is configured', async () => {
+  it('creates the Peer on the operator-owned model and mode, and refuses when no model is configured', async () => {
     const h = await room();
     h.paseo.peerModels['codex-peer'] = 'gpt-operator';
+    // A dispatched Peer runs unattended, so the seat's own launch mode has to reach creation:
+    // the provider's interactive default would stall it on its first tool call.
+    h.paseo.peerModes['codex-peer'] = 'full-access';
     const id = await assignment(h);
     expect((await h.controller.dispatch(h.lead, { assignmentId: id, peerProvider: 'codex-peer' })).ok).toBe(true);
-    expect(h.paseo.calls.find(call => call.operation === 'createAgent')?.args[0]).toMatchObject({ provider: 'codex-peer', model: 'gpt-operator' });
+    expect(h.paseo.calls.find(call => call.operation === 'createAgent')?.args[0])
+      .toMatchObject({ provider: 'codex-peer', model: 'gpt-operator', modeId: 'full-access' });
     expect((await ledger(h, id)).view?.observedModel).toBe('gpt-operator');
 
     const none = await room();

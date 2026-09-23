@@ -37,10 +37,19 @@ export interface AgentSnapshot {
   readonly pendingPermissions: readonly PermissionSnapshot[];
 }
 
-export interface CreateAgentInput {
-  readonly provider: string;
-  /** Resolved from operator-owned configuration only; the runtime never picks a model itself. */
+/**
+ * How the operator configured this seat to launch. Every field is theirs: the runtime reads them
+ * and never chooses one. `modeId` matters as much as the model for a seat nobody is sitting
+ * beside — a Peer launched into a mode that asks before each tool stalls on its first call.
+ */
+export interface PeerLaunch {
   readonly model: string;
+  readonly modeId?: string;
+  readonly thinkingOptionId?: string;
+}
+
+export interface CreateAgentInput extends PeerLaunch {
+  readonly provider: string;
   readonly cwd: string;
   readonly parentAgentId: string;
   readonly title: string;
@@ -49,11 +58,11 @@ export interface CreateAgentInput {
 
 export interface PaseoPort {
   /**
-   * The model an exact room provider runs, from operator-owned configuration: the room profile's
-   * model when the operator set one, else the provider's declared default. Undefined when neither
-   * exists — dispatch then refuses rather than choosing.
+   * How an exact room provider launches, from operator-owned configuration: the room profile's
+   * model, mode and thinking option, falling back to the provider's declared default model only.
+   * Undefined when no model exists anywhere — dispatch then refuses rather than choosing.
    */
-  resolveModel(provider: string): Promise<string | undefined>;
+  resolveLaunch(provider: string): Promise<PeerLaunch | undefined>;
   /** Creates an agent with no initial prompt; the first turn is always a separate `run`. */
   createAgent(input: CreateAgentInput): Promise<{ readonly agentId: string }>;
   /** A fresh snapshot from Paseo, or undefined when Paseo knows no such agent. */
@@ -133,19 +142,33 @@ export function toSnapshot(raw: RawSnapshot): AgentSnapshot {
 export function sdkPaseoPort(handle: PaseoHandle, waitMs = 10_000): PaseoPort {
   const api = (): Promise<PaseoApi> => handle.acquire(waitMs);
   return {
-    async resolveModel(provider) {
+    async resolveLaunch(provider) {
       const paseo = await api();
       const config = await paseo.config.get();
       const profiles = (config.config as { agentProfiles?: readonly Record<string, unknown>[] }).agentProfiles ?? [];
       const profile = profiles.find(entry => entry.id === `room-${provider}` && entry.provider === provider);
-      if (typeof profile?.model === 'string' && profile.model !== '') return profile.model;
+      const text = (value: unknown): string | undefined => (typeof value === 'string' && value !== '' ? value : undefined);
+      // Mode and thinking option come only from the room profile: a provider default for either
+      // is Paseo's choice for interactive use, not the operator's choice for this seat.
+      const settings = {
+        ...(text(profile?.modeId) === undefined ? {} : { modeId: text(profile?.modeId) as string }),
+        ...(text(profile?.thinkingOptionId) === undefined ? {} : { thinkingOptionId: text(profile?.thinkingOptionId) as string }),
+      };
+      const chosen = text(profile?.model);
+      if (chosen !== undefined) return { model: chosen, ...settings };
       const listed = await paseo.providers.listModels(provider) as { models?: readonly { id: string; isDefault?: boolean }[] };
-      return listed.models?.find(model => model.isDefault === true)?.id;
+      const fallback = listed.models?.find(model => model.isDefault === true)?.id;
+      return fallback === undefined ? undefined : { model: fallback, ...settings };
     },
     async createAgent(input) {
       const paseo = await api();
       const created = await paseo.agents.create({
-        config: { provider: `${input.provider}/${input.model}` }, cwd: input.cwd, parent: input.parentAgentId,
+        config: {
+          provider: `${input.provider}/${input.model}`,
+          ...(input.modeId === undefined ? {} : { modeId: input.modeId }),
+          ...(input.thinkingOptionId === undefined ? {} : { thinkingOptionId: input.thinkingOptionId }),
+        },
+        cwd: input.cwd, parent: input.parentAgentId,
         title: input.title, labels: { ...input.labels },
       });
       return { agentId: created.id };
