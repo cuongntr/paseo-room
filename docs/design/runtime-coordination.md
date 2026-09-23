@@ -1366,7 +1366,7 @@ restored afterwards). Every probe agent was archived.
 | Deselect, re-enable, export | Setup without `--runtime` on quiet state unregistered the plugin and kept 3 projects; `--runtime` restored it; `export --apply` wrote 3 projects, no omissions, no gate output. | pass |
 | Daemon restart | At the operator's request a detached script ran `paseo daemon restart` (PID 219117 → 1040391) and then the checks: carrier and runtime reloaded to `running`, `verify` ok, and the full matrix on all three paths returned identical codes with each original receipt replayed from the durable ledger. A second, independent daemon start (PID 1046382) also reloaded the runtime to `running`. | pass |
 | Panel | First mobile load failed with "Unknown Lucide icon": the app resolves icons by Lucide component name, so `workflow` had to be `Workflow` (fixed, with a naming test). After the fix the operator's mobile app (compact layout, light theme) showed the Room runtime surface: manifest `ready`, all three projects `healthy`, the Trust section, legible theme colours. | pass (mobile, light) |
-| Not rehearsed live | Visual panel check on wide/compact and light/dark (needs the operator's eyes; Paseo serves no web client to drive it headlessly). Whole-room `remove --apply` was rehearsed on 2026-09-23 against an isolated daemon — see §14. | pending (panel only) |
+| Panel, wide and dark | 2026-09-23, operator's desktop app, wide layout, dark theme, on the operator's room: the empty state (`Manifest: ready`, `No runtime projects yet.`), then — after a runtime-created Lead's first `assignment_status` created the project — `/home/cmc-admin/Work/dx-one` `healthy` in the healthy colour, and the Trust and data section, all legible with no overflow. Whole-room `remove --apply` was rehearsed against an isolated daemon — see §14. | pass |
 
 R3 rehearsal (risk owner: repository owner; rehearsal selected in §14) on the live daemon: plugin reload —
 pass; plugin disable (`verify` fails, carrier and room unaffected) and re-enable — pass; daemon restart —
@@ -1540,8 +1540,14 @@ event, so until any agent starts, ends or is created, its tools answer `runtime_
 inside the room home, so `remove --apply` deletes it — the warning's `export --out <dir>` is the
 safe form.
 
-Still not rehearsed live: nothing on the R3 list. The visual panel check above remains an operator
-task.
+Still not rehearsed live: nothing on the R3 list, and the wide/dark panel check passed on the
+operator's app the same day (§12), which closes Phase 1's live qualification.
+
+Onboarding finding from that check: a Lead gains the runtime tools only if it was *created* while
+the runtime plugin was running — a Lead opened before `setup --runtime` has the room contract but
+no `paseo_room` bridge — and a runtime project exists only after a Lead's first runtime action
+(even the read-only `assignment_status`). An operator enabling runtime on an existing room should
+open a fresh Lead and have its first message make one runtime call.
 
 **R3 decision:** rehearsal is selected because this introduces persistent state and coordinated
 plugin/agent effects with weak rollback. The repository owner is risk owner. Before release, fault
@@ -1586,6 +1592,7 @@ Q-011 do not block Phases 0–1 because those phases contain no sensor and no wo
 
 | Date | Author | Change |
 |---|---|---|
+| 2026-09-23 | Repository owner / Bytes | Recorded the wide/dark panel check on the operator's app as passed, closing Phase 1 live qualification, and the onboarding finding that only a Lead created after runtime installation carries the bridge and that a project appears on a Lead's first runtime action. |
 | 2026-09-23 | Bytes | Rehearsed the remaining R3 boundaries live on an isolated `0.9.1` daemon (§14): gate timeout and `SIGKILL` escalation, unresolved agent creation with and without the effect, unresolved delivery with and without the effect, and whole-room `remove --apply`. The lost-delivery case exposed a turn that ends while the plugin is down leaving its assignment `active` forever; recovery now settles it from live evidence through the turn-end handler's own logic. |
 | 2026-09-23 | Bytes | Rehearsed all three exact Peer families on Paseo `0.9.1` and recorded the per-family launch evidence in §14. `pi-peer` declares no default model at the provider, so dispatch depends on the operator setting one on the room profile; Pi has no per-tool approval gate, so it needs no `modeId`. |
 | 2026-09-23 | Bytes | Carried the room profile's `modeId` and `thinkingOptionId` into Peer creation alongside the model. Dispatch read the operator's model but not their launch mode, so a runtime-dispatched Peer took the provider's interactive default and an ask-before-each-tool seat stalled on its first call with nobody to answer — the behaviour previously filed as an operator problem. No new authority: the runtime still chooses none of the three. |
