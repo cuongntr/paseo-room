@@ -109,6 +109,19 @@ describe('Paseo handle and SDK port', () => {
     const port = sdkPaseoPort(handle, 50);
     expect(await port.getAgent('gone')).toBeUndefined();
     await expect(port.getAgent('other')).rejects.toThrow('socket closed');
+
+    // Deleted between list and read: skipped, never an aborted recovery.
+    const listing = new PaseoHandle();
+    listing.supply({
+      agents: {
+        list: () => Promise.resolve({ entries: [{ agent: { id: 'gone' } }, { agent: { id: 'here' } }] }),
+        ref: (id: string) => ({
+          refresh: () => (id === 'gone' ? Promise.reject(new Error('agent not found: gone')) : Promise.resolve()),
+          current: () => (id === 'here' ? { id, provider: 'p', model: null, cwd: '/', workspaceId: null, status: 'idle', activeTurn: null, lastUserMessageAt: null, updatedAt: 'now', labels: {}, archivedAt: null, pendingPermissions: [] } : null),
+        }),
+      },
+    } as unknown as PaseoApi);
+    expect((await sdkPaseoPort(listing, 50).listAgents()).map(agent => agent.id)).toEqual(['here']);
   });
 
   it('creates worktree workspaces and in-workspace Peers with runtime-chosen identities', async () => {

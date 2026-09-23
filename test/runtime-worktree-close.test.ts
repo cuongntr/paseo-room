@@ -249,16 +249,31 @@ describe('recovery of Phase 2 intents', () => {
     expect((await h.git('worktree', 'list')).split('\n')).toHaveLength(1);
   });
 
-  it('records a reissued request that Paseo still answers with a failure, and no such workspace, as failed', async () => {
+  it('records a create as failed only when the reissue replays the recorded failure and no such workspace exists', async () => {
     const h = await room();
-    const { id } = await reserved(h);
-    h.paseo.faults.set('createWorktreeWorkspace', { when: 'before', error: new Error('Git command failed: cannot lock ref') });
-    const [report] = await restarted(h).recoverAll();
-    expect(report?.actions).toEqual([expect.objectContaining({ intent: 'wsc-crash', outcome: 'failed' })]);
+    const created = await h.controller.createAssignment(h.lead, writableBrief(h.base, { writeScope: ['src'], gate }));
+    const id = created.ok ? created.value.assignmentId : '';
+    const definite = new Error('Git command failed: cannot lock ref');
+    h.paseo.faults.set('createWorktreeWorkspace', { when: 'before', error: definite });
+    expect(await h.controller.dispatch(h.lead, { assignmentId: id, peerProvider: 'codex-peer', isolation: 'worktree' })).toMatchObject({ code: 'workspace_uncertain' });
+    // A different error — a timeout, a create still in flight — proves nothing.
+    h.paseo.faults.set('createWorktreeWorkspace', { when: 'before', error: new Error('request timed out') });
+    expect((await restarted(h).recoverAll())[0]?.actions).toEqual([expect.objectContaining({ outcome: 'unchanged' })]);
+    expect((await ledger(h)).state.workspaces.get(id)?.create).toBe('uncertain');
+    h.paseo.faults.set('createWorktreeWorkspace', { when: 'before', error: definite });
+    expect((await restarted(h).recoverAll())[0]?.actions).toEqual([expect.objectContaining({ outcome: 'failed' })]);
     const after = await ledger(h);
     expect(after.state.workspaces.get(id)?.create).toBe('failed');
     expect(after.state.ownership.get(id)?.state).toBe('released');
     expect(after.state.assignments.get(id)).toMatchObject({ state: 'blocked', openIntents: {} });
+  });
+
+  it('never records a crashed create as failed from an error alone', async () => {
+    const h = await room();
+    const { id } = await reserved(h);
+    h.paseo.faults.set('createWorktreeWorkspace', { when: 'before', error: new Error('Git command failed: cannot lock ref') });
+    expect((await restarted(h).recoverAll())[0]?.actions).toEqual([expect.objectContaining({ intent: 'wsc-crash', outcome: 'unchanged' })]);
+    expect((await ledger(h)).state.workspaces.get(id)?.create).toBe('requested');
   });
 
   it('leaves an unresolved worktree create alone when Paseo can be read neither way', async () => {

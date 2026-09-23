@@ -195,6 +195,15 @@ export function toSnapshot(raw: RawSnapshot): AgentSnapshot {
   };
 }
 
+/**
+ * Paseo 0.9.1 answers a read of an id it never stored (or no longer stores) with an error
+ * ("Agent not found: <id>") rather than an empty record. A stored agent that is merely not loaded
+ * is still read normally, so this never mistakes a sleeping Peer for a gone one.
+ */
+function isAgentNotFound(error: unknown): boolean {
+  return error instanceof Error && /\bagent\s+not\s+found\b/i.test(error.message);
+}
+
 type RawWorkspace = NonNullable<ReturnType<ReturnType<PaseoApi['workspaces']['ref']>['current']>>;
 
 function toWorkspace(id: string, raw: RawWorkspace | null): WorkspaceSnapshot {
@@ -299,8 +308,7 @@ export function sdkPaseoPort(handle: PaseoHandle, waitMs = 10_000): PaseoPort {
       try {
         await ref.refresh();
       } catch (error) {
-        // Paseo 0.9.1 answers an id it has never stored with an error, not an empty record.
-        if (error instanceof Error && error.message === `Agent not found: ${agentId}`) return undefined;
+        if (isAgentNotFound(error)) return undefined;
         throw error;
       }
       const current = ref.current();
@@ -313,7 +321,13 @@ export function sdkPaseoPort(handle: PaseoHandle, waitMs = 10_000): PaseoPort {
       const snapshots: AgentSnapshot[] = [];
       for (const id of ids) {
         const ref = paseo.agents.ref(id);
-        await ref.refresh();
+        try {
+          await ref.refresh();
+        } catch (error) {
+          // Deleted between the list and this read: it is simply no longer there.
+          if (isAgentNotFound(error)) continue;
+          throw error;
+        }
         const current = ref.current();
         if (current !== null) snapshots.push(toSnapshot(current));
       }

@@ -183,6 +183,19 @@ describe('worktree dispatch', () => {
     expect(h.paseo.calls.filter(call => call.operation === 'createAgentInWorkspace')).toEqual([]);
   });
 
+  it('records the directory a refused worktree leaves when its teardown fails', async () => {
+    const h = await room();
+    h.paseo.teardownFails = true;
+    await writeFile(join(h.repo, 'next.txt'), 'x');
+    await h.git('add', '.');
+    await h.git('commit', '-q', '-m', 'next');
+    const moved = await h.git('rev-parse', 'HEAD');
+    h.paseo.transformWorkspace = request => ({ ...request, baseCommit: moved });
+    const id = await assignment(h, { writeScope: ['src'] });
+    expect(await h.controller.dispatch(h.lead, isolated(id))).toMatchObject({ code: 'workspace_refused' });
+    expect((await ledger(h)).state.workspaces.get(id)).toMatchObject({ create: 'refused', close: 'succeeded', directoryRemoved: false });
+  });
+
   it('catches Paseo branching from an existing branch of the same name', async () => {
     const h = await room();
     const id = await assignment(h, { writeScope: ['src'] });

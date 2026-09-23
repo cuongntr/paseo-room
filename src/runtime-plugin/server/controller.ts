@@ -401,7 +401,7 @@ export class Controller {
     if (problem !== undefined || proof === undefined || !proof.ok) {
       const reason = (problem ?? 'unknown').slice(0, 1_000);
       await this.append(loaded, { type: 'workspace.create-refused', payloadVersion: 1, assignmentId, actor: this.plugin, data: { intentId, workspaceId: lease.workspaceId, reason } });
-      if (snapshot.id === lease.workspaceId) await this.closeWorkspace(loaded, assignmentId, { discardUncommitted: false, reason: 'The worktree failed its proof; no Peer was ever placed in it.' }).catch(() => undefined);
+      if (snapshot.id === lease.workspaceId) await this.closeWorkspace(loaded, assignmentId, { discardUncommitted: false, reason: 'The worktree failed its proof; no Peer was ever placed in it.' }, undefined, snapshot.directory).catch(() => undefined);
       return refuse('workspace_refused', `The worktree Paseo created failed its proof and was closed without a Peer: ${reason}`);
     }
     const branch = proof.branch ?? lease.branch;
@@ -416,9 +416,11 @@ export class Controller {
    * Requests a workspace close and records its evidence. Paseo's close runs teardown and removes
    * the directory with `git worktree remove --force`, so callers decide readiness first.
    */
-  async closeWorkspace(loaded: LoadedProject, assignmentId: string, decision: { readonly discardUncommitted: boolean; readonly reason?: string }, actor: RuntimeEventV1['actor'] = this.plugin): Promise<ControllerResult<{ readonly directoryRemoved: boolean }>> {
+  async closeWorkspace(loaded: LoadedProject, assignmentId: string, decision: { readonly discardUncommitted: boolean; readonly reason?: string }, actor: RuntimeEventV1['actor'] = this.plugin, directoryHint?: string | null): Promise<ControllerResult<{ readonly directoryRemoved: boolean }>> {
     const record = loaded.state.workspaces.get(assignmentId);
     if (record === undefined) return refuse('workspace_missing', `Assignment ${assignmentId} has no runtime worktree.`);
+    // A refused worktree never recorded its path: learn it before Paseo forgets the workspace.
+    const directory = record.worktreePath ?? directoryHint ?? (await this.deps.paseo.getWorkspace(record.workspaceId).catch(() => undefined))?.directory ?? undefined;
     const intentId = token('wsx');
     await this.append(loaded, {
       type: 'workspace.close-requested', payloadVersion: 1, assignmentId, actor, idempotencyKey: intentId,
@@ -432,15 +434,9 @@ export class Controller {
       await this.append(loaded, { type: 'workspace.close-uncertain', payloadVersion: 1, assignmentId, actor: this.plugin, data: { intentId, workspaceId: record.workspaceId, reason } });
       return refuse('workspace_close_uncertain', 'Paseo did not confirm the worktree close; recovery will check the live workspace and its directory.', true);
     }
-    const directoryRemoved = record.worktreePath === undefined ? !await this.directoryOf(record.workspaceId) : !await this.deps.git.directoryPresent(record.worktreePath);
+    const directoryRemoved = directory === undefined || !await this.deps.git.directoryPresent(directory);
     await this.append(loaded, { type: 'workspace.close-succeeded', payloadVersion: 1, assignmentId, actor: { source: 'paseo' }, data: { intentId, workspaceId: record.workspaceId, archivedAt, directoryRemoved } });
     return done({ directoryRemoved });
-  }
-
-  /** A refused worktree never recorded a path; Paseo's own record is gone once it is archived. */
-  private async directoryOf(workspaceId: string): Promise<boolean> {
-    const live = await this.deps.paseo.getWorkspace(workspaceId).catch(() => undefined);
-    return live?.directory !== undefined && live.directory !== null && await this.deps.git.directoryPresent(live.directory);
   }
 
   /**

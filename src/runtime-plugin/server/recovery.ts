@@ -222,23 +222,27 @@ export class Recovery {
         await this.controller.append(loaded, { type: 'workspace.create-failed', payloadVersion: 1, assignmentId: view.id, actor: plugin, data: { intentId, reason } });
         return { assignmentId: view.id, intent: intentId, outcome: 'failed', detail: `Paseo refused the recorded request: ${reason}` };
       }
-      // Paseo's receipt replays a definite failure as an error too. With no active workspace of
-      // this id there is nothing a Peer could have been placed in, so the create failed; a
-      // listed one is refused and closed like any recovered worktree. An unreadable list decides
-      // nothing.
+      // Paseo's receipt replays a definite failure as the same error. Only that — the reissue
+      // failing exactly as the recorded attempt did — with no active workspace of this id proves
+      // the create failed. Any other error (a timeout, a create still in flight) decides nothing,
+      // and a listed workspace is refused and closed like any recovered worktree.
       const live = await this.controller.deps.paseo.getWorkspace(record.workspaceId).catch(() => null);
-      if (live === undefined) {
-        await this.controller.append(loaded, { type: 'workspace.create-failed', payloadVersion: 1, assignmentId: view.id, actor: plugin, data: { intentId, reason: `The reissued request failed (${reason}) and Paseo lists no workspace ${record.workspaceId}.`.slice(0, 1_000) } });
-        return { assignmentId: view.id, intent: intentId, outcome: 'failed', detail: 'Paseo holds a failure for the recorded request and no such workspace.' };
-      }
       if (live === null) return { assignmentId: view.id, intent: intentId, outcome: 'unchanged', detail: `The reissued request was not confirmed: ${reason}` };
+      if (live === undefined) {
+        const recorded = loaded.events.filter(event => event.type === 'workspace.create-uncertain' && event.assignmentId === view.id && event.data.intentId === intentId).at(-1);
+        if (recorded?.type !== 'workspace.create-uncertain' || recorded.data.reason !== reason) {
+          return { assignmentId: view.id, intent: intentId, outcome: 'unchanged', detail: `The reissued request failed (${reason}) but is not the recorded failure; it may still be in flight.` };
+        }
+        await this.controller.append(loaded, { type: 'workspace.create-failed', payloadVersion: 1, assignmentId: view.id, actor: plugin, data: { intentId, reason: `Paseo replayed the recorded failure (${reason}) and lists no workspace ${record.workspaceId}.`.slice(0, 1_000) } });
+        return { assignmentId: view.id, intent: intentId, outcome: 'failed', detail: 'Paseo holds a definite failure for the recorded request and no such workspace.' };
+      }
       snapshot = live;
     }
     if (snapshot.id !== record.workspaceId) {
       return { assignmentId: view.id, intent: intentId, outcome: 'uncertain', detail: `Paseo answered with workspace ${snapshot.id}, not ${record.workspaceId}.` };
     }
     await this.controller.append(loaded, { type: 'workspace.create-refused', payloadVersion: 1, assignmentId: view.id, actor: plugin, data: { intentId, workspaceId: record.workspaceId, reason: 'Recovered after an interrupted dispatch; recovery never adopts a worktree.' } });
-    const closed = await this.controller.closeWorkspace(loaded, view.id, { discardUncommitted: false, reason: 'Recovered after an interrupted dispatch; no Peer was ever placed in it.' }).catch(() => undefined);
+    const closed = await this.controller.closeWorkspace(loaded, view.id, { discardUncommitted: false, reason: 'Recovered after an interrupted dispatch; no Peer was ever placed in it.' }, undefined, snapshot.directory).catch(() => undefined);
     return { assignmentId: view.id, intent: intentId, outcome: 'archived-unbound', detail: `Closed recovered worktree ${record.workspaceId}${closed?.ok === true ? '' : ' (close unconfirmed)'}.` };
   }
 
