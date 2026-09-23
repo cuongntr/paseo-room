@@ -25,7 +25,11 @@ That design is in git history before the `v2` rewrite. Do not reintroduce it.
   `remove --apply` deletes the room home, including role-owned credential files, after warning.
 - **Compatibility is one check.** `paseo daemon status --json` must report a running daemon,
   matching CLI and daemon versions, and `>= 0.8.0-beta.1`; a selection containing Claude or Pi
-  raises that floor to `>= 0.8.0`.
+  raises that floor to `>= 0.8.0`. Read that output loosely — it is a CLI's own shape, not a
+  versioned protocol type, and `0.9` already dropped `cliVersion` and added a `localDaemon` state.
+  Where status states no CLI version, `checkDaemon` asks the same executable it just ran; never
+  drop the CLI/daemon comparison, which is what catches a daemon nobody restarted after an
+  upgrade.
 - **Copy operator config only where the adapter contract requires it.** Never rewrite an operator
   home. Codex copies configuration and overrides the minimum; Pi omits package and extension
   declarations so startup cannot install or discover them. Claude role `settings.json` is instead

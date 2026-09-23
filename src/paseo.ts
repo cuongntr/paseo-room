@@ -15,11 +15,19 @@ export function minimumPaseoVersion(agents: readonly AgentId[], runtime = false)
   return runtime || agents.includes('pi') || agents.includes('claude') ? PI_MINIMUM_VERSION : MINIMUM_VERSION;
 }
 
+/**
+ * Read `daemon status --json` for only the four facts compatibility turns on, and read them
+ * loosely: this is a CLI's human-facing output, not a versioned protocol type, and it has already
+ * changed shape once. `0.8.x` reported `cliVersion`; `0.9.x` dropped it and gained a supervisor
+ * `pid` separate from `workerPid`, so the caller supplies the CLI version instead. `localDaemon`
+ * is a plain string because its state names are Paseo's to extend — `0.9.x` added `not_ready` —
+ * and every name but `running` means the same thing to this tool.
+ */
 const statusSchema = z.object({
   listen: z.string().min(1),
-  localDaemon: z.enum(['running', 'stopped', 'stale_pid', 'unresponsive']),
-  cliVersion: z.string(),
-  daemonVersion: z.string().nullable(),
+  localDaemon: z.string().min(1),
+  cliVersion: z.string().optional(),
+  daemonVersion: z.string().nullish(),
 });
 
 export interface Daemon {
@@ -39,8 +47,12 @@ export function normalizeUrl(listen: string): string | undefined {
   return `ws://${local}:${port}`;
 }
 
-/** The whole compatibility story: is Paseo running, and is it new enough? */
-export function assessStatus(raw: unknown, minimumVersion = MINIMUM_VERSION): DaemonResult {
+/**
+ * The whole compatibility story: is Paseo running, and is it new enough? `cliVersion` is the
+ * executable's own version, used only when the status output no longer carries one; comparing it
+ * to the daemon is what catches an upgraded CLI whose daemon was never restarted.
+ */
+export function assessStatus(raw: unknown, minimumVersion = MINIMUM_VERSION, cliVersion?: string): DaemonResult {
   const parsed = statusSchema.safeParse(raw);
   if (!parsed.success) {
     return { checks: [fail('paseo.status', 'Paseo status output was not understood.', 'Upgrade Paseo, then run: paseo daemon status --json')] };
@@ -49,8 +61,8 @@ export function assessStatus(raw: unknown, minimumVersion = MINIMUM_VERSION): Da
   if (status.localDaemon !== 'running') {
     return { checks: [fail('paseo.daemon', `Paseo daemon is ${status.localDaemon}.`, 'Start it with: paseo daemon start')] };
   }
-  const cli = valid(status.cliVersion);
-  const daemon = status.daemonVersion === null ? null : valid(status.daemonVersion);
+  const cli = valid(status.cliVersion ?? cliVersion);
+  const daemon = status.daemonVersion == null ? null : valid(status.daemonVersion);
   if (!cli || !daemon) {
     return { checks: [fail('paseo.version', 'Paseo did not report a usable version.', 'Upgrade Paseo to a release that reports semver versions.')] };
   }
@@ -79,8 +91,15 @@ export async function checkDaemon(layout: Layout, env: NodeJS.ProcessEnv = proce
   if (!output.ok) {
     return { checks: [fail('paseo.status', 'Could not read Paseo daemon status.', 'Run: paseo daemon status --json')] };
   }
-  try { return assessStatus(JSON.parse(output.stdout), minimumVersion); }
+  let status: unknown;
+  try { status = JSON.parse(output.stdout); }
   catch { return assessStatus(undefined, minimumVersion); }
+  // Paseo 0.9 stopped reporting the CLI version in status, so ask the same executable we just
+  // ran. Only then: a status that still carries one needs no second process.
+  const reported = (status as { cliVersion?: unknown } | null)?.cliVersion;
+  if (typeof reported === 'string') return assessStatus(status, minimumVersion);
+  const version = await probe(binary, ['--version'], { HOME: layout.home, PATH: layout.searchPath });
+  return assessStatus(status, minimumVersion, version.ok ? version.stdout.trim() : undefined);
 }
 
 const configSchema = z.object({

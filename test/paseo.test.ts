@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { assessStatus, minimumPaseoVersion, normalizeUrl, providerMatches, MINIMUM_VERSION, PI_MINIMUM_VERSION } from '../src/paseo.js';
 import type { Provider } from '../src/agents/types.js';
-import { RUNNING_STATUS as running } from './helpers.js';
+import { RUNNING_STATUS as running, RUNNING_STATUS_09 as running09 } from './helpers.js';
 
 describe('normalizeUrl', () => {
   it('accepts host:port and normalises wildcard hosts to loopback', () => {
@@ -37,6 +37,25 @@ describe('assessStatus', () => {
 
   it('fails on unreadable status output', () => {
     expect(assessStatus({ nope: true }).checks[0]?.id).toBe('paseo.status');
+  });
+
+  it('reads the 0.9 status shape, which no longer states the CLI version', () => {
+    // Paseo 0.9 dropped cliVersion from `daemon status --json`, so the caller supplies it and the
+    // CLI/daemon comparison — the whole point of which is catching a daemon that was never
+    // restarted after an upgrade — still happens.
+    expect(assessStatus(running09, PI_MINIMUM_VERSION, '0.9.1').daemon)
+      .toEqual({ url: 'ws://127.0.0.1:6767', version: '0.9.1' });
+    expect(assessStatus(running09, PI_MINIMUM_VERSION, '0.9.2').checks[0]?.message)
+      .toContain('running daemon is 0.9.1');
+    expect(assessStatus(running09, PI_MINIMUM_VERSION).checks[0]?.id).toBe('paseo.version');
+
+    // State names are Paseo's to extend: 0.9 added not_ready, and an unreachable daemon reports
+    // no version at all rather than null.
+    expect(assessStatus({ ...running09, localDaemon: 'not_ready' }, PI_MINIMUM_VERSION, '0.9.1').checks[0]?.message)
+      .toContain('not_ready');
+    const unreachable: Record<string, unknown> = { ...running09 };
+    delete unreachable.daemonVersion;
+    expect(assessStatus(unreachable, PI_MINIMUM_VERSION, '0.9.1').checks[0]?.id).toBe('paseo.version');
   });
 });
 

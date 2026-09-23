@@ -13,8 +13,16 @@ export const RUNNING_STATUS = {
   listen: '127.0.0.1:6767', localDaemon: 'running', cliVersion: '0.8.1', daemonVersion: '0.8.1',
 };
 
+/** Paseo `0.9` dropped `cliVersion` and gained a supervisor `pid` beside the worker's. */
+export const RUNNING_STATUS_09 = {
+  listen: '127.0.0.1:6767', localDaemon: 'running', daemonVersion: '0.9.1',
+  connectedDaemon: 'reachable', pid: 100, workerPid: 101,
+};
+
 /** A throwaway $HOME with Codex, Claude, and Pi homes plus fake executables. */
-export async function makeFixture(options: { readonly paseoStatus?: unknown } = {}): Promise<Fixture> {
+export async function makeFixture(
+  options: { readonly paseoStatus?: unknown; readonly paseoCliVersion?: string } = {},
+): Promise<Fixture> {
   const home = await mkdtemp(join(tmpdir(), 'paseo-room-'));
   const bin = join(home, 'bin');
   await mkdir(bin, { recursive: true });
@@ -38,7 +46,18 @@ export async function makeFixture(options: { readonly paseoStatus?: unknown } = 
   }));
   await writeFile(adapterEntry, 'export default function adapter() {}\n');
 
-  await script(join(bin, 'paseo'), JSON.stringify(options.paseoStatus ?? RUNNING_STATUS));
+  // The real executable answers `--version` with a bare version, and that is the only place a
+  // 0.9 CLI still states its own.
+  await writeFile(join(bin, 'paseo'), [
+    '#!/bin/sh',
+    'if [ "$1" = "--version" ]; then',
+    `  echo '${options.paseoCliVersion ?? '0.8.1'}'`,
+    '  exit 0',
+    'fi',
+    `echo '${JSON.stringify(options.paseoStatus ?? RUNNING_STATUS)}'`,
+    '',
+  ].join('\n'));
+  await chmod(join(bin, 'paseo'), 0o755);
   await script(join(bin, 'codex'), JSON.stringify({ models: [{ id: 'gpt-5.6-sol', multi_agent_version: 2 }] }));
   await script(join(bin, 'claude'), '{}');
   await script(join(bin, 'pi'), [

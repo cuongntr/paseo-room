@@ -10,7 +10,7 @@ import { renderMarker } from '../src/room.js';
 import { contractDigest, renderInstructions } from '../src/room/instructions.js';
 import { ROOM_SKILL_NAME } from '../src/room/skills.js';
 import type { AgentId, Role } from '../src/roles.js';
-import { emptyDaemon, fakeClient, makeFixture, RUNNING_STATUS, script, type FakeDaemon } from './helpers.js';
+import { emptyDaemon, fakeClient, makeFixture, RUNNING_STATUS, RUNNING_STATUS_09, script, type FakeDaemon } from './helpers.js';
 
 async function run(argv: readonly string[], env: NodeJS.ProcessEnv, daemon: FakeDaemon): Promise<{ code: number; out: string; err: string }> {
   let out = '';
@@ -358,6 +358,24 @@ describe('paseo-room CLI', () => {
     expect(result.code).toBe(1);
     expect(result.out).toContain('older than the required');
     expect(daemon.connects).toBe(0);
+  });
+
+  it('sets up against a Paseo 0.9 daemon, whose status no longer states the CLI version', async () => {
+    const fixture = await makeFixture({ paseoStatus: RUNNING_STATUS_09, paseoCliVersion: '0.9.1' });
+    const daemon = emptyDaemon();
+    const result = await run(['setup', '--apply'], fixture.env, daemon);
+    expect(result.code).toBe(0);
+    expect(result.out).toContain('Paseo 0.9.1 is running');
+    expect(daemon.connects).toBe(1);
+
+    // The CLI/daemon comparison survives the shape change: it now reads the executable's own
+    // version, so a CLI upgraded past its unrestarted daemon is still caught.
+    const stale = await makeFixture({ paseoStatus: RUNNING_STATUS_09, paseoCliVersion: '0.9.2' });
+    const staleDaemon = emptyDaemon();
+    const refused = await run(['setup', '--apply'], stale.env, staleDaemon);
+    expect(refused.code).toBe(1);
+    expect(refused.out).toContain('running daemon is 0.9.1');
+    expect(staleDaemon.connects).toBe(0);
   });
 
   it('rejects an unknown command and reports an unknown agent', async () => {
