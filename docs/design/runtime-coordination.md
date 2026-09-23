@@ -1467,11 +1467,25 @@ number alone:
 | Plugin manifest schema | added an optional `description` |
 | Plugin subprocess | added session re-attach and API `dispose()` |
 
-Directly proved on an isolated `0.9.1` daemon: the daemon refuses the plugin at `<0.9.0` and loads
-it to `running` with no log errors at `<0.10.0`, and the CLI's own `config.get`/provider patch/
-profile write/`removeProviders`/`listPlugins` path round-trips against it. Not re-rehearsed on
-`0.9.1`: a live dispatch, reporting turn, gate run or archive. Those remain qualified on `0.8.0`
-only, which is why the bound stays exclusive at the next minor rather than opening upward.
+Directly proved on an isolated `0.9.1` daemon: it refuses the plugin at `<0.9.0` and loads it to
+`running` with no log errors at `<0.10.0`, and the CLI's own `config.get`/provider patch/profile
+write/`removeProviders`/`listPlugins` path round-trips against it.
+
+The operator then upgraded their own daemon to `0.9.1`, which exposed one real defect the package
+diff could not: `daemon status --json` no longer reports `cliVersion`, so every command failed the
+compatibility check until the status reader was loosened. With that fixed, a full cycle was
+rehearsed live on `0.9.1` against a throwaway repository, and the event ledger — not the Lead's
+prose — is the evidence. In one assignment it recorded: two-step dispatch
+(`agent.create-requested`/`-succeeded`, then `binding.published` carrying the observed
+`gpt-5.6-sol`, `ownership.held`, `reporting.generation-opened`, and only then `run.requested`);
+a Peer `handoff` accepted as `report.accepted`; Lead notice delivery (`notice.pending` →
+`notice.sent`); a gate run finishing `exitCode 0`, `termination: "exited"`, `timedOut: false`, with
+an output digest and masked tail attachment; `assignment.accepted` with a reason; and the
+archive-then-release ordering `archive.requested` → `ownership.releasing` → `archive.succeeded` →
+`ownership.released`. `0.9.1` is therefore a live-qualified point in the same sense `0.8.0` is.
+
+Still not rehearsed on either point, unchanged from the Phase 1 record: unresolved agent creation
+or delivery, gate timeout termination, and whole-room `remove --apply`.
 
 **R3 decision:** rehearsal is selected because this introduces persistent state and coordinated
 plugin/agent effects with weak rollback. The repository owner is risk owner. Before release, fault
@@ -1494,7 +1508,7 @@ draft wording.
 | Q-003a | On each exact Codex, Claude and Pi room-provider path, can a runtime-managed Peer receive an injected reporting MCP server and invoke `ask` with schema-valid arguments? | Maintainer + Repository owner | resolved 2026-09-22 — a disposable probe on Paseo `0.8.0` delivered the reporter to exact `claude-peer`, `codex-peer` and `pi-peer`; each listed the tools and called `ask` with exactly the declared fields. Pi's `PI_MCP_CONFIG_MODE=exclusive` did not block delivery. Claude required an explicit permission approval naming `mcp__<server>__ask`; Codex and Pi did not |
 | Q-003b | Do the server's refusal, idempotency and recovery semantics hold on every exact provider path? | Maintainer | resolved 2026-09-22 on `claude-peer`, `codex-peer` and `pi-peer` across plugin reload and daemon restart (see Phase 1 release qualification). Original scope: open — Phase 1 exit criterion, not a Phase 0 blocker; `handoff`, wrong-kind, failed-precondition, malformed/unknown-field, stale-generation, duplicate-identical, reused-request-ID conflict, misattributed, no-call and durable receipt replay across reload/daemon restart require the real validating server and cannot be proven by a probe that always accepts |
 | Q-004 | Is an immutable clean commit an acceptable required handoff for runtime-managed writable work? | Repository owner | resolved 2026-09-22 — yes; every runtime-managed writable handoff requires a clean immutable Git commit, avoiding shadow source storage and candidate ambiguity |
-| Q-005 | What exact Paseo patch becomes the runtime minimum after reporting-call recovery and the remaining lifecycle/client surfaces are proven? | Maintainer | resolved 2026-09-22, widened 2026-09-23 — preview range `>=0.8.0 <0.10.0`. `0.8.0` carries the full exact-Peer qualification from Q-003a; `0.9.1` was admitted on the §14 host-contract evidence and a load/config round-trip, not on a fresh dispatch rehearsal. The exclusive upper bound reflects that `0.10.0` is unqualified. Phase 4 decides whether runtime leaves preview |
+| Q-005 | What exact Paseo patch becomes the runtime minimum after reporting-call recovery and the remaining lifecycle/client surfaces are proven? | Maintainer | resolved 2026-09-22, widened 2026-09-23 — preview range `>=0.8.0 <0.10.0`. `0.8.0` carries the full exact-Peer qualification from Q-003a; `0.9.1` carries the same class of evidence: §14 records a full live cycle on it. The exclusive upper bound reflects that `0.10.0` is unqualified. Phase 4 decides whether runtime leaves preview |
 | Q-006 | Does the Phase 1 panel require a client version floor higher than the server floor? | Maintainer | resolved 2026-09-22 — no; a `0.8.0` app loaded the panel contribution and completed typed RPC against a `0.8.0` daemon |
 | Q-007 | Should runtime ship in the same npm package under a distinct plugin ID or as a separately versioned package? | Repository owner | decided 2026-09-22 on PRD acceptance — same npm package and release, separate plugin ID/directory |
 | Q-008 | Where does the exact gate command come from when a repository has no `WORKSPACE_PROTOCOL.md`? | Repository owner | decided 2026-09-22 on PRD acceptance — Lead must place it in the complete assignment brief; the runtime never invents one |
@@ -1516,7 +1530,7 @@ Q-011 do not block Phases 0–1 because those phases contain no sensor and no wo
 
 | Date | Author | Change |
 |---|---|---|
-| 2026-09-23 | Bytes | Widened the preview range to `>=0.8.0 <0.10.0` for Paseo `0.9.1` on host-contract evidence recorded in §14, and gave the Claude carrier its own `claude.paseo-range` check so an unsupported daemon fails as a room check instead of a daemon refusal during apply. |
+| 2026-09-23 | Bytes | Widened the preview range to `>=0.8.0 <0.10.0` and live-qualified Paseo `0.9.1`: a full dispatch/handoff/gate/accept/archive cycle is recorded in §14 from the event ledger. Upgrading the daemon exposed that `daemon status --json` no longer reports `cliVersion`, which broke every command until the status reader was loosened; the CLI/daemon comparison was kept by asking the executable for its own version. Also gave the Claude carrier its own `claude.paseo-range` check so an unsupported daemon fails as a room check instead of a daemon refusal during apply. |
 | 2026-09-22 | Bytes | Recorded the Phase 1 release qualification on Paseo `0.8.0` across all three exact Peer paths, including two defects it found and the fixes (hoisted plugin entries; operator-owned `provider/model` Peer creation). Q-003b resolved across plugin reload and, after the operator-requested daemon restart, across daemon restart. |
 | 2026-09-22 | Repository owner / Bytes | Activated the design after exact-Peer carrier qualification: split Q-003 into resolved Q-003a (carrier feasibility) and open Q-003b (server semantics, now a Phase 1 exit criterion), resolved Q-005 as preview range `>=0.8.0 <0.9.0`, and added the pending-tool-permission state after observing that Claude gates a reporting call while Codex and Pi do not. |
 | 2026-09-22 | Repository owner | Recorded PRD acceptance: the requirements source is now Accepted, and carried answers Q-007, Q-008, Q-012 and Q-013 became design decisions. This design stays Draft until Q-003 and Q-005 close. |

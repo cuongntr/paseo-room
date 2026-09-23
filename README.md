@@ -612,7 +612,7 @@ npx paseo-room verify
 - **Trust.** Like the carrier, the runtime is trusted, unsandboxed code running in your daemon.
   Enable Paseo plugins yourself; `paseo-room` never does. It is not an operating-system sandbox and
   cannot stop a process running as your user.
-- **Range.** Runtime requires Paseo `>=0.8.0 <0.10.0`. `0.8.0` and `0.9.1` are the qualified
+- **Range.** Runtime requires Paseo `>=0.8.0 <0.10.0`. `0.8.0` and `0.9.1` are both live-qualified
   points, so a daemon outside that range is refused for runtime while the baseline room keeps
   working.
 - **Lead** gains room tools such as `assignment_create`, `assignment_dispatch`, `assignment_answer`,
