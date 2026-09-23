@@ -1490,7 +1490,16 @@ an output digest and masked tail attachment; `assignment.accepted` with a reason
 archive-then-release ordering `archive.requested` → `ownership.releasing` → `archive.succeeded` →
 `ownership.released`. `0.9.1` is therefore a live-qualified point in the same sense `0.8.0` is.
 
-Still not rehearsed on either point, unchanged from the Phase 1 record: unresolved agent creation
+All three exact Peer families were then rehearsed on `0.9.1`, each running the same 22-event cycle
+with no `permission.awaiting` and a gate exiting `0`:
+
+| Peer | Observed launch | Note |
+|---|---|---|
+| `codex-peer` | `gpt-5.6-sol`, `full-access` | Provider declares a default model, so the profile need not. |
+| `claude-peer` | `claude-sonnet-5[1m]`, `bypassPermissions`, thinking `high` | The case that exposed the dropped `modeId`: this seat stalls on its first tool call without it. |
+| `pi-peer` | `openai-codex/gpt-5.6-sol`, thinking `medium`, `currentModeId: null` | No `pi-peer` model declares `isDefault`, so dispatch refuses unless the operator sets the profile model — the earlier `peer_model_unresolved` refusals. Pi has no per-tool approval gate, so carrying no mode is harmless here rather than an omission. |
+
+Still not rehearsed on any point, unchanged from the Phase 1 record: unresolved agent creation
 or delivery, gate timeout termination, and whole-room `remove --apply`.
 
 **R3 decision:** rehearsal is selected because this introduces persistent state and coordinated
@@ -1536,6 +1545,7 @@ Q-011 do not block Phases 0–1 because those phases contain no sensor and no wo
 
 | Date | Author | Change |
 |---|---|---|
+| 2026-09-23 | Bytes | Rehearsed all three exact Peer families on Paseo `0.9.1` and recorded the per-family launch evidence in §14. `pi-peer` declares no default model at the provider, so dispatch depends on the operator setting one on the room profile; Pi has no per-tool approval gate, so it needs no `modeId`. |
 | 2026-09-23 | Bytes | Carried the room profile's `modeId` and `thinkingOptionId` into Peer creation alongside the model. Dispatch read the operator's model but not their launch mode, so a runtime-dispatched Peer took the provider's interactive default and an ask-before-each-tool seat stalled on its first call with nobody to answer — the behaviour previously filed as an operator problem. No new authority: the runtime still chooses none of the three. |
 | 2026-09-23 | Bytes | Widened the preview range to `>=0.8.0 <0.10.0` and live-qualified Paseo `0.9.1`: a full dispatch/handoff/gate/accept/archive cycle is recorded in §14 from the event ledger. Upgrading the daemon exposed that `daemon status --json` no longer reports `cliVersion`, which broke every command until the status reader was loosened; the CLI/daemon comparison was kept by asking the executable for its own version. Also gave the Claude carrier its own `claude.paseo-range` check so an unsupported daemon fails as a room check instead of a daemon refusal during apply. |
 | 2026-09-22 | Bytes | Recorded the Phase 1 release qualification on Paseo `0.8.0` across all three exact Peer paths, including two defects it found and the fixes (hoisted plugin entries; operator-owned `provider/model` Peer creation). Q-003b resolved across plugin reload and, after the operator-requested daemon restart, across daemon restart. |
