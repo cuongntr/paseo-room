@@ -6,6 +6,7 @@
  * engine starts on the first event or call that brings Paseo's handle, and a failed start is
  * retried on the next one. It decides nothing about assignments and writes nothing Paseo owns.
  */
+import { homedir } from 'node:os';
 import type { AttentionSettings, SensorMode } from '../../shared/attention.js';
 import type { GitEvidence } from '../git.js';
 import type { PaseoPort } from '../paseo-port.js';
@@ -26,6 +27,11 @@ const LEDGER_CACHE_MS = 60_000;
 const ITEM_MEMORY = 500;
 const LETTER_EXCERPT = 240;
 
+/** A path for display: the home directory shown as `~`. */
+export function homeRelative(path: string, home = homedir()): string {
+  return home !== '' && (path === home || path.startsWith(`${home}/`)) ? `~${path.slice(home.length)}` : path;
+}
+
 export type Verdict = 'useful' | 'noise' | 'unknown';
 
 export interface Incident {
@@ -36,6 +42,7 @@ export interface Incident {
   readonly projectKey: string;
   subjects: readonly string[];
   text: string;
+  summary: string;
   evidence: string;
   readonly openedAt: number;
   updatedAt: number;
@@ -258,6 +265,7 @@ export class AttentionEngine {
         known.count += 1;
         known.evidence = condition.evidence;
         known.text = condition.text;
+        known.summary = condition.summary;
         known.subjects = condition.subjects;
         known.updatedAt = now;
         await this.log.append({ type: 'incident.updated', id: known.id, kind: known.kind, level: known.level, projectKey: known.projectKey, subjects: known.subjects, count: known.count });
@@ -266,7 +274,7 @@ export class AttentionEngine {
       const recipient = this.recipientFor(condition);
       const incident: Incident = {
         id: letterId(), key: condition.key, kind: condition.kind, level: condition.level, projectKey: condition.projectKey,
-        subjects: condition.subjects, text: condition.text, evidence: condition.evidence, openedAt: now, updatedAt: now, closedAt: undefined, count: 1, recipient,
+        subjects: condition.subjects, text: condition.text, summary: condition.summary, evidence: condition.evidence, openedAt: now, updatedAt: now, closedAt: undefined, count: 1, recipient,
       };
       this.incidents.set(condition.key, incident);
       this.remember(incident.id, { recipient, projectKey: incident.projectKey, kind: incident.kind });
@@ -379,16 +387,19 @@ export class AttentionEngine {
     const now = this.time;
     const seatView = (seat: Seat): SeatView => ({
       agentId: seat.agentId, role: seat.role, provider: seat.provider, title: seat.title, state: seat.state, cwd: seat.cwd,
-      parentAgentId: seat.parentAgentId, pendingPermissions: seat.pending.size,
-      ...(seat.lastTurn === undefined ? {} : { lastTurn: { outcome: seat.lastTurn.outcome, endedAgo: age(now - seat.lastTurn.endedAt) } }),
+      displayCwd: homeRelative(seat.cwd), parentAgentId: seat.parentAgentId, pendingPermissions: seat.pending.size,
+      ...(seat.lastTurn === undefined ? {} : {
+        lastTurn: { outcome: seat.lastTurn.outcome, endedAgo: age(now - seat.lastTurn.endedAt), endedAt: new Date(seat.lastTurn.endedAt).toISOString() },
+      }),
     });
+    const projectKeys = [...this.observer.projects().keys()];
     const projects = [...this.observer.projects().values()]
       .filter(project => only === undefined || only.includes(project.key))
       .map(project => {
         const resolution = this.supervisorOf(project.key);
         const supervisor = resolution.supervisorAgentId === undefined ? undefined : this.observer.seat(resolution.supervisorAgentId);
         return {
-          key: project.key, name: project.name, root: project.root, git: project.git, decidedBy: resolution.decidedBy,
+          key: project.key, name: project.name, root: project.root, displayRoot: homeRelative(project.root), git: project.git, decidedBy: resolution.decidedBy,
           ...(supervisor === undefined ? {} : { supervisor: seatView(supervisor) }),
           seats: this.observer.seats().filter(seat => seat.project.key === project.key && seat.role !== 'supervisor' && seat.state !== 'archived').map(seatView),
           incidents: this.openIncidents().filter(incident => incident.projectKey === project.key).map(incidentView),
@@ -397,7 +408,9 @@ export class AttentionEngine {
     return {
       started: this.started,
       projects,
-      supervisors: this.observer.supervisors().map(seatView),
+      supervisors: this.observer.supervisors().map(seat => ({
+        ...seatView(seat), portfolio: projectKeys.filter(key => this.supervisorOf(key).supervisorAgentId === seat.agentId).length,
+      })),
       panelIncidents: this.openIncidents('panel').filter(incident => !projects.some(project => project.key === incident.projectKey)).map(incidentView),
     };
   }
@@ -410,9 +423,10 @@ export interface SeatView {
   readonly title: string | null;
   readonly state: string;
   readonly cwd: string;
+  readonly displayCwd: string;
   readonly parentAgentId: string | null;
   readonly pendingPermissions: number;
-  readonly lastTurn?: { readonly outcome: string; readonly endedAgo: string };
+  readonly lastTurn?: { readonly outcome: string; readonly endedAgo: string; readonly endedAt: string };
 }
 
 export interface IncidentView {
@@ -420,24 +434,29 @@ export interface IncidentView {
   readonly kind: string;
   readonly level: string;
   readonly text: string;
+  readonly summary: string;
   readonly count: number;
   readonly recipient: string;
+  readonly projectKey: string;
+  readonly subjects: readonly string[];
+  readonly openedAt: string;
   readonly feedback?: Verdict;
 }
 
 export interface RoomView {
   readonly started: boolean;
   readonly projects: readonly {
-    readonly key: string; readonly name: string; readonly root: string; readonly git: boolean; readonly decidedBy: string;
+    readonly key: string; readonly name: string; readonly root: string; readonly displayRoot: string; readonly git: boolean; readonly decidedBy: string;
     readonly supervisor?: SeatView; readonly seats: readonly SeatView[]; readonly incidents: readonly IncidentView[];
   }[];
-  readonly supervisors: readonly SeatView[];
+  readonly supervisors: readonly (SeatView & { readonly portfolio: number })[];
   readonly panelIncidents: readonly IncidentView[];
 }
 
 function incidentView(incident: Incident): IncidentView {
   return {
-    id: incident.id, kind: incident.kind, level: incident.level, text: mask(incident.text), count: incident.count, recipient: incident.recipient,
+    id: incident.id, kind: incident.kind, level: incident.level, text: mask(incident.text), summary: mask(incident.summary), count: incident.count, recipient: incident.recipient,
+    projectKey: incident.projectKey, subjects: incident.subjects, openedAt: new Date(incident.openedAt).toISOString(),
     ...(incident.feedback === undefined ? {} : { feedback: incident.feedback }),
   };
 }

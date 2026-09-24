@@ -8,6 +8,7 @@
  * in the portfolio.
  */
 import { stat } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { basename, isAbsolute, join, resolve } from 'node:path';
 import type { GitEvidence } from '../git.js';
 import type { PaseoPort, PeerLaunch } from '../paseo-port.js';
@@ -39,6 +40,13 @@ export interface SeatStarterDependencies {
 
 const refuse = (code: string, message: string): StartResult<never> => ({ ok: false, code, message });
 
+/** Accepts `~` and `~/…` for the operator's home, as a shell would. */
+export function expandHome(path: string, home = homedir()): string {
+  const trimmed = path.trim();
+  if (trimmed === '~') return home;
+  return trimmed.startsWith('~/') ? `${home}${trimmed.slice(1)}` : trimmed;
+}
+
 async function isDirectory(path: string): Promise<boolean> {
   return await stat(path).then(entry => entry.isDirectory(), () => false);
 }
@@ -51,8 +59,9 @@ export class SeatStarter {
   constructor(private readonly deps: SeatStarterDependencies) {}
 
   /** What starting a Lead at `path` would find. Refuses only a path that is not a directory. */
-  async preflight(path: string): Promise<StartResult<Preflight>> {
-    if (!isAbsolute(path)) return refuse('path_invalid', 'Give an absolute path.');
+  async preflight(given: string): Promise<StartResult<Preflight>> {
+    const path = expandHome(given);
+    if (!isAbsolute(path)) return refuse('path_invalid', 'Give an absolute path, or one starting with ~/.');
     const target = resolve(path);
     if (!(await isDirectory(target))) return refuse('path_invalid', `${target} is not an existing directory.`);
     const findings: string[] = [];
@@ -90,12 +99,13 @@ export class SeatStarter {
   async startSupervisor(input: { readonly provider: string; readonly cwd: string; readonly title?: string | undefined; readonly idempotencyKey: string }): Promise<StartResult<{ readonly agentId: string }>> {
     const launch = await this.launch(input.provider, 'supervisor');
     if (!launch.ok) return launch;
-    if (!isAbsolute(input.cwd) || !(await isDirectory(input.cwd))) return refuse('path_invalid', `${input.cwd} is not an existing directory; the runtime creates none.`);
-    if (await this.deps.git.identity(input.cwd).then(() => true, () => false)) {
+    const cwd = expandHome(input.cwd);
+    if (!isAbsolute(cwd) || !(await isDirectory(cwd))) return refuse('path_invalid', `${input.cwd} is not an existing directory; the runtime creates none.`);
+    if (await this.deps.git.identity(cwd).then(() => true, () => false)) {
       return refuse('path_in_repository', `${input.cwd} is inside a Git repository; a Supervisor stands outside the projects it supervises.`);
     }
     const created = await this.deps.paseo.createAgent({
-      provider: input.provider, cwd: resolve(input.cwd), title: input.title?.trim() || 'Room Supervisor', labels: {},
+      provider: input.provider, cwd: resolve(cwd), title: input.title?.trim() || 'Room Supervisor', labels: {},
       ...launch.value, idempotencyKey: `supervisor-${input.idempotencyKey}`,
     });
     await this.deps.attention.onCreated(created.agentId);

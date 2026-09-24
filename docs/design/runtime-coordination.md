@@ -1635,6 +1635,7 @@ Q-011 do not block Phases 0–1 because those phases contain no sensor and no wo
 
 | Date | Author | Change |
 |---|---|---|
+| 2026-09-24 | Bytes | §8.1's panel is redesigned per [runtime-panel-ux.md](runtime-panel-ux.md): attention first, one place per project with its runtime record inside, guided modal forms, and the host's Settings controls for Room attention and Room seats. `runtime.room` gains read-only display fields and keeps projects whose seats are all archived; no behaviour changes. |
 | 2026-09-24 | Bytes | Attention O1–O2 implemented and live-qualified (attention delta §13.1): the Room Observer, deterministic signals, idle-held letters to a portfolio Supervisor, Human-started seats and the optional System One sensor in shadow or gated assist. [change-003](../plans/runtime-coordination-change-003-attention-implementation-deltas.md) records the Paseo facts that changed the mechanism; the owner accepted it. |
 | 2026-09-24 | Repository owner / Bytes | Applied the approved [attention delta](runtime-coordination-attention.md) §9: D4 gains the Human seat and sensor actions and the Supervisor portfolio; D9 lets a portfolio Supervisor receive momentum signals and triaged Lead turn outcomes and forbids interrupting deliveries; §13 Phase 3 re-scoped to the delta's O1 and Phase 5 brought forward as O2–O3. |
 | 2026-09-23 | Bytes | §8.1/§8.2 add the Room seats settings screen and `runtime.seats`: each seat's account from its own vendor status command, on demand, never stored. |

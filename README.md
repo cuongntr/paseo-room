@@ -634,9 +634,13 @@ npx paseo-room verify
   immutable commit. The runtime reads the commit and changed paths itself, never merges, resets,
   cleans or stashes, and releases a writer only after Paseo proves the Peer archived.
 - **State** lives under `~/.paseo-room/runtime/v1` as append-only event files. Setup never edits it.
-  The **Room runtime** sidebar item and workspace panel show projects, assignments, writer
-  ownership and findings, each labelled with how it is known (enforced, detected, procedural,
-  unverifiable).
+- **The Room runtime panel** (sidebar item, and a workspace panel that opens on its own project)
+  puts what needs you first. Below that come your projects, ordered by status, then your
+  Supervisors.
+  - A project shows its Supervisor, its Lead and Peer seats (each opens its agent in Paseo) and its
+    runtime record: assignments, isolated writers, findings and recovery.
+  - Starting a Supervisor, starting a project and assigning a Supervisor are guided forms.
+  - The design notes are in [docs/design/runtime-panel-ux.md](docs/design/runtime-panel-ux.md).
 - **Settings › Room seats** shows which account each seat is signed in to (email, plan and
   organization for Claude; login method for Codex; for Pi, only whether a credential file exists).
   It runs each seat's own `claude auth status` or `codex login status` when you open it or press

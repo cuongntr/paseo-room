@@ -349,6 +349,16 @@ describe('attention signals and letters', () => {
     expect(letters()[0]?.text).toContain('[dead wait: Lead waits for a Peer and none is running]');
   });
 
+  it('gives the panel a names-only summary of each incident, and letters the ids', async () => {
+    paseo.addAgent({ id: 'lead-2', provider: 'codex-lead', cwd: repo, title: 'shop — second Lead', labels: { [PARENT_AGENT_ID_LABEL]: 'sup' } });
+    await settle();
+    const [incident] = engine.roomView().projects[0]?.incidents ?? [];
+    expect(incident?.summary).toBe('2 Leads are live on shop: shop — Lead, shop — second Lead. Keep the established owner and stop new routing to the others.');
+    expect(incident?.text).toContain('(lead-2)');
+    expect(incident?.openedAt).toBe(clock.toISOString());
+    expect(letters()[0]?.text).toContain('(lead-2)');
+  });
+
   it('shows the room by project with its Supervisor and live seats', async () => {
     await settle();
     const view = engine.roomView();

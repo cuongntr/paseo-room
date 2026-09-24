@@ -3,11 +3,12 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { DEFAULT_ATTENTION_SETTINGS } from '../src/runtime-plugin/shared/attention.js';
-import { AttentionEngine } from '../src/runtime-plugin/server/attention/engine.js';
+import { AttentionEngine, homeRelative } from '../src/runtime-plugin/server/attention/engine.js';
+import { expandHome } from '../src/runtime-plugin/server/attention/seat-starter.js';
 import { PaseoHandle } from '../src/runtime-plugin/server/paseo-port.js';
 import { Recovery } from '../src/runtime-plugin/server/recovery.js';
 import { createRpcHandlers } from '../src/runtime-plugin/server/rpc.js';
-import { harness, type Harness } from './runtime-harness.js';
+import { harness, writableBrief, type Harness } from './runtime-harness.js';
 import { PARENT_AGENT_ID_LABEL } from './runtime-fake-paseo.js';
 
 const open: Harness[] = [];
@@ -121,6 +122,26 @@ describe('room RPCs (attention delta §8)', () => {
     expect(data(await rpc.assignSupervisor({ projectKey, supervisorAgentId: 'sup-2', idempotencyKey: key() }))).toEqual({ assigned: true });
     expect((data(await rpc.room()).projects as { decidedBy: string; supervisor?: { agentId: string } }[])[0]).toMatchObject({ decidedBy: 'human', supervisor: { agentId: 'sup-2' } });
     expect(data(await rpc.assignSupervisor({ projectKey, supervisorAgentId: null, idempotencyKey: key() }))).toEqual({ assigned: false });
+  });
+
+  it('keeps a runtime record reachable after its seats are archived', async () => {
+    const { h, rpc } = await room();
+    await h.controller.createAssignment(h.lead, writableBrief(h.base));
+    const lead = h.paseo.agents.get('lead-1');
+    if (lead !== undefined) { lead.archivedAt = '2026-09-24T09:00:00.000Z'; lead.status = 'closed'; }
+    const projects = data(await rpc.room()).projects as { name: string; seats: unknown[]; runtime?: { assignments: number } }[];
+    const repo = projects.find(project => project.name === 'repo');
+    expect(repo?.seats).toEqual([]);
+    expect(repo?.runtime?.assignments).toBe(1);
+  });
+
+  it('accepts ~/ paths for the Human\'s seat actions', () => {
+    expect(expandHome('~/room-desk', '/home/op')).toBe('/home/op/room-desk');
+    expect(expandHome('~', '/home/op')).toBe('/home/op');
+    expect(expandHome(' /abs/path ', '/home/op')).toBe('/abs/path');
+    expect(expandHome('~other/x', '/home/op')).toBe('~other/x');
+    expect(homeRelative('/home/op/Work/shop', '/home/op')).toBe('~/Work/shop');
+    expect(homeRelative('/home/operator/x', '/home/op')).toBe('/home/operator/x');
   });
 
   it('answers unknown feedback ids, and every room call without an engine, with a recoverable error', async () => {

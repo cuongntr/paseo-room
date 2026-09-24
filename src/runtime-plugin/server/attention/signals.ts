@@ -25,6 +25,8 @@ export interface Condition {
   /** The seats the condition is about; the first is its subject. */
   readonly subjects: readonly string[];
   readonly text: string;
+  /** The same, with seat names only: for the panel, where ids are noise. */
+  readonly summary: string;
   /** Changes when the evidence changes, so an open incident counts it without a new letter. */
   readonly evidence: string;
 }
@@ -47,6 +49,18 @@ export function seatLabel(seat: Seat | undefined, fallback = 'unknown seat'): st
   return `${seat.role} ${seat.title ?? seat.agentId.slice(0, 8)} (${seat.agentId})`;
 }
 
+/** A seat by name alone: its title, or its role and a short id. */
+export function seatName(seat: Seat | undefined, fallback = 'an unknown seat'): string {
+  if (seat === undefined) return fallback;
+  return seat.title ?? `${seat.role} ${seat.agentId.slice(0, 8)}`;
+}
+
+type Label = (seat: Seat | undefined) => string;
+/** Both renderings of one sentence: with ids for letters, with names for the panel. */
+const both = (say: (label: Label) => string): { readonly text: string; readonly summary: string } => ({
+  text: say(seat => seatLabel(seat)), summary: say(seat => seatName(seat)),
+});
+
 export function age(ms: number): string {
   const minutes = Math.max(0, Math.round(ms / MINUTE));
   if (minutes < 60) return `${String(minutes)} min`;
@@ -65,7 +79,7 @@ function leadGoneWithWork(ctx: SignalContext): Condition[] {
     found.push({
       key: `lead-gone:${lead.agentId}`, kind: 'lead-gone-with-work', level: 'page', projectKey: lead.project.key,
       subjects: [lead.agentId, ...working.map(seat => seat.agentId)],
-      text: `${seatLabel(lead)} was archived while ${String(working.length)} of its seats still work: ${working.map(seat => seatLabel(seat)).join(', ')}.`,
+      ...both(label => `${label(lead)} was archived while ${String(working.length)} of its seats still work: ${working.map(seat => label(seat)).join(', ')}.`),
       evidence: working.map(seat => seat.agentId).sort().join(','),
     });
   }
@@ -94,7 +108,7 @@ function writersObserved(ctx: SignalContext): Condition[] {
     if (first === undefined) continue;
     found.push({
       key: `writers:${cwd}:${ids.join(',')}`, kind: 'writers-observed', level: 'now', projectKey: first.project.key, subjects: ids,
-      text: `${ids.map(id => seatLabel(ctx.observer.seat(id))).join(' and ')} edited files in ${cwd} during overlapping turns (observed, not proven); one working tree admits one writer.`,
+      ...both(label => `${ids.map(id => label(ctx.observer.seat(id))).join(' and ')} edited files in ${cwd} during overlapping turns (observed, not proven); one working tree admits one writer.`),
       evidence: ids.join(','),
     });
   }
@@ -110,7 +124,7 @@ function duplicateLead(ctx: SignalContext): Condition[] {
     const ids = leads.map(seat => seat.agentId).sort();
     found.push({
       key: `duplicate-lead:${key}`, kind: 'duplicate-lead', level: 'page', projectKey: key, subjects: ids,
-      text: `${String(ids.length)} Leads are live on ${project.name}: ${leads.map(seat => seatLabel(seat)).join(', ')}. Keep the established owner and stop new routing to the others.`,
+      ...both(label => `${String(ids.length)} Leads are live on ${project.name}: ${leads.map(seat => label(seat)).join(', ')}. Keep the established owner and stop new routing to the others.`),
       evidence: ids.join(','),
     });
   }
@@ -127,7 +141,7 @@ function permissionWaiting(ctx: SignalContext): Condition[] {
       if (waited < limit) continue;
       found.push({
         key: `permission:${seat.agentId}:${permissionId}`, kind: 'permission-waiting', level: 'now', projectKey: seat.project.key, subjects: [seat.agentId],
-        text: `${seatLabel(seat)} has waited ${age(waited)} on permission ${permissionId}.`, evidence: permissionId,
+        ...both(label => `${label(seat)} has waited ${age(waited)} on permission ${permissionId}.`), evidence: permissionId,
       });
     }
   }
@@ -146,9 +160,10 @@ function peerResultUnread(ctx: SignalContext): Condition[] {
     if (lead.lastTurn !== undefined && lead.lastTurn.endedAt >= endedAt) continue;
     const waited = ctx.now - endedAt;
     if (waited < limit) continue;
+    const outcome = peer.lastTurn.outcome;
     found.push({
       key: `peer-unread:${peer.agentId}:${String(endedAt)}`, kind: 'peer-result-unread', level: 'now', projectKey: peer.project.key, subjects: [lead.agentId, peer.agentId],
-      text: `${seatLabel(peer)} finished ${age(waited)} ago (${peer.lastTurn.outcome}) and its Lead ${seatLabel(lead)} has not taken a turn since.`,
+      ...both(label => `${label(peer)} finished ${age(waited)} ago (${outcome}) and its Lead ${label(lead)} has not taken a turn since.`),
       evidence: String(endedAt),
     });
   }
@@ -164,7 +179,7 @@ function turnFailing(ctx: SignalContext): Condition[] {
     const repeated = seat.failures.filter(failure => failure.key === last.key).length;
     found.push({
       key: `failing:${seat.agentId}:${last.key}`, kind: 'turn-failing', level: 'now', projectKey: seat.project.key, subjects: [seat.agentId],
-      text: `${seatLabel(seat)} failed ${String(repeated)} turns with the same error: "${last.key}". Check the prerequisite (quota, auth, network) before retrying.`,
+      ...both(label => `${label(seat)} failed ${String(repeated)} turns with the same error: "${last.key}". Check the prerequisite (quota, auth, network) before retrying.`),
       evidence: String(repeated),
     });
   }
@@ -182,7 +197,7 @@ function peerOrphaned(ctx: SignalContext): Condition[] {
     if (Number.isNaN(since) || ctx.now - since < limit) continue;
     found.push({
       key: `orphan:${peer.agentId}`, kind: 'peer-orphaned', level: 'digest', projectKey: peer.project.key, subjects: [peer.agentId, lead.agentId],
-      text: `${seatLabel(peer)} has idled ${age(ctx.now - since)} since its Lead ${seatLabel(lead)} was archived; archive it if its work is handed off.`,
+      ...both(label => `${label(peer)} has idled ${age(ctx.now - since)} since its Lead ${label(lead)} was archived; archive it if its work is handed off.`),
       evidence: '',
     });
   }
@@ -199,7 +214,7 @@ function projectQuiet(ctx: SignalContext): Condition[] {
     const lead = seats.find(seat => seat.role === 'lead');
     found.push({
       key: `quiet:${key}:${String(since)}`, kind: 'project-quiet', level: 'now', projectKey: key, subjects: lead === undefined ? [] : [lead.agentId],
-      text: `${lead === undefined ? 'The Lead' : seatLabel(lead)} said it would keep working ${age(ctx.now - since)} ago, and nothing in the project has run since.`,
+      ...both(label => `${lead === undefined ? 'The Lead' : label(lead)} said it would keep working ${age(ctx.now - since)} ago, and nothing in the project has run since.`),
       evidence: '',
     });
   }

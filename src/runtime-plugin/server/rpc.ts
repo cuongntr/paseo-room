@@ -9,7 +9,7 @@
  */
 import type { PluginServerContext } from '@getpaseo/plugin/server';
 import { existsSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { basename, dirname } from 'node:path';
 import type { z } from 'zod';
 import {
   runtimeAbandonRpc, runtimeAssignmentRpc, runtimeAssignSupervisorRpc, runtimeHealthRpc, runtimeIncidentFeedbackRpc, runtimeLeaseReclaimRpc,
@@ -19,12 +19,12 @@ import {
 import { egressRefusal, type AttentionSettings } from '../shared/attention.js';
 import type { AttentionKey } from './attention/key.js';
 import type { SystemOneSensor } from './attention/sensor.js';
-import type { AttentionEngine } from './attention/engine.js';
+import { homeRelative, type AttentionEngine } from './attention/engine.js';
 import { SeatStarter, type StartResult } from './attention/seat-starter.js';
 import type { RuntimeWarningV1 } from '../shared/rpc.js';
 import { RUNTIME_PLUGIN_ID } from '../shared/identity.js';
 import type { Controller } from './controller.js';
-import { project } from './domain/state.js';
+import { project, TERMINAL_STATES } from './domain/state.js';
 import { assignmentDetailView, projectStatusView, revision, type StatusInput } from './domain/views.js';
 import { peerStopped, type PaseoApi, type PaseoHandle } from './paseo-port.js';
 import type { Recovery } from './recovery.js';
@@ -234,7 +234,32 @@ export function createRpcHandlers(runtime: RpcRuntime) {
       await attention.run(() => attention.sweep());
       const manifest = controller.deps.recognition.current.manifest;
       const providers = Object.entries(manifest?.providers ?? {}).map(([providerId, entry]) => ({ providerId, agent: entry.agent, role: entry.role }));
-      return answer(runtime, { ...attention.roomView(), providers });
+      // The runtime record of each observed project, joined by Git common directory.
+      const records = new Map<string, { projectId: string; health: string; assignments: number; active: number; findings: number; root: string }>();
+      for (const store of await ProjectStore.list(controller.deps.runtimeRoot, controller.deps.now)) {
+        const view = projectStatusView(await statusInput(runtime, store));
+        const active = view.assignments.filter(entry => entry.state.value !== 'draft' && !(TERMINAL_STATES as readonly string[]).includes(entry.state.value)).length;
+        records.set(store.meta.gitCommonDir, { projectId: view.projectId, health: view.health.value, assignments: view.assignments.length, active, findings: view.findings.length, root: store.meta.canonicalRoot });
+      }
+      const room = attention.roomView();
+      const record = (key: string) => {
+        const found = records.get(key);
+        return found === undefined ? undefined
+          : { projectId: found.projectId, health: found.health, assignments: found.assignments, active: found.active, findings: found.findings };
+      };
+      const projects = room.projects.map(project => {
+        const runtimeRecord = record(project.key);
+        return runtimeRecord === undefined ? project : { ...project, runtime: runtimeRecord };
+      });
+      // A runtime record whose seats are all archived stays reachable.
+      for (const [key, found] of records) {
+        if (projects.some(project => project.key === key)) continue;
+        projects.push({
+          key, name: basename(found.root), root: found.root, displayRoot: homeRelative(found.root), git: true, decidedBy: 'none',
+          seats: [], incidents: [], runtime: { projectId: found.projectId, health: found.health, assignments: found.assignments, active: found.active, findings: found.findings },
+        });
+      }
+      return answer(runtime, { ...room, projects, providers });
     },
 
     async projectPreflight(input: z.infer<typeof runtimeProjectPreflightRpc.input>): Promise<Answer> {
