@@ -113,6 +113,18 @@ belongs to an observed project, and falls back to Room otherwise. Row order:
   - An egress callout while the sensor sends off the machine.
 - **Settings › Room seats.** Host Settings rows, one per seat, with an account line and a state
   pill, and **Refresh** in the section header.
+- **Role pill (every seat's composer).** Paseo 0.9 draws a tab icon only for a built-in or
+  plugin-registered provider, so a room seat's tab shows the generic agent icon, and a plugin cannot
+  decorate tabs. Instead, each live seat gets a composer pill that names its role: *Supervisor*
+  (eye, accent), *Lead* (compass) or *Peer* (wrench). The agent keeps its own name. The pill's
+  popover shows:
+  - for a Lead: the project and its Supervisor;
+  - for a Peer: the project, its Lead and its Supervisor;
+  - for a Supervisor: the projects it watches and its folder;
+  - **Open Room runtime** in every case.
+
+  The client re-reads `runtime.room` every 20 s, and adds, redraws or removes a pill only when that
+  seat's pill content changes. A seat outside any Paseo workspace gets no pill.
 
 ## 6. Data the panel needs
 
@@ -122,6 +134,7 @@ belongs to an observed project, and falls back to Room otherwise. Row order:
 - for incidents, `openedAt` (ISO), `projectKey` and `subjects`;
 - for seats, `lastTurnEndedAt` (ISO);
 - for Supervisors, `portfolio` (a count);
+- for seats, `workspaceId` (the Paseo workspace, which the role pill targets);
 - for projects, `runtime` — `{ projectId, health, assignments, active, findings }` when a runtime
   ledger exists for the same Git common directory.
 
@@ -142,3 +155,4 @@ belongs to an observed project, and falls back to Room otherwise. Row order:
 | Date | Author | Change |
 |---|---|---|
 | 2026-09-24 | Bytes | Created from the operator's request to redesign the panel: attention-first information architecture, project-centred navigation, guided modal forms, host Settings controls for the settings screens. |
+| 2026-09-24 | Bytes | Role pill: each seat's composer shows its room role without renaming the agent, because Paseo 0.9 gives custom providers no tab icon. |

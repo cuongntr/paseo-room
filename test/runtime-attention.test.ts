@@ -7,6 +7,7 @@ import { ROLES } from '../src/roles.js';
 import { renderRuntimeManifestFile } from '../src/runtime.js';
 import { DEFAULT_ATTENTION_SETTINGS, type AttentionSettings } from '../src/runtime-plugin/shared/attention.js';
 import { AttentionEngine } from '../src/runtime-plugin/server/attention/engine.js';
+import { rolePills } from '../src/runtime-plugin/client/pills.js';
 import { GitEvidence } from '../src/runtime-plugin/server/git.js';
 import { Recognition } from '../src/runtime-plugin/server/recognition.js';
 import { FakePaseo, PARENT_AGENT_ID_LABEL } from './runtime-fake-paseo.js';
@@ -368,5 +369,13 @@ describe('attention signals and letters', () => {
     expect(view.projects[0]).toMatchObject({ name: 'shop', decidedBy: 'parentage', supervisor: { agentId: 'sup' } });
     expect(view.projects[0]?.seats.map(seat => seat.agentId).sort()).toEqual(['lead', 'peer']);
     expect(engine.portfolioOf('sup')).toEqual([view.projects[0]?.key]);
+  });
+
+  it('gives every live seat a role pill in its own workspace', async () => {
+    await settle();
+    const pills = rolePills({ ...engine.roomView(), providers: [] });
+    expect(pills.map(pill => [pill.agentId, pill.role, pill.workspaceId]).sort()).toEqual([['lead', 'lead', 'ws-1'], ['peer', 'peer', 'ws-1'], ['sup', 'supervisor', 'ws-1']]);
+    expect(pills.find(pill => pill.agentId === 'peer')?.lines).toContainEqual(['Lead', 'shop — Lead']);
+    expect(pills.find(pill => pill.agentId === 'sup')?.lines).toContainEqual(['Watching', 'shop']);
   });
 });

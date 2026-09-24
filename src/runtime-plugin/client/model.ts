@@ -6,7 +6,7 @@ import type { Tone } from './tone.js';
 
 export interface SeatView {
   readonly agentId: string; readonly role: string; readonly provider: string; readonly title: string | null; readonly state: string;
-  readonly cwd: string; readonly displayCwd: string; readonly parentAgentId: string | null; readonly pendingPermissions: number;
+  readonly cwd: string; readonly displayCwd: string; readonly workspaceId?: string | null; readonly parentAgentId: string | null; readonly pendingPermissions: number;
   readonly lastTurn?: { readonly outcome: string; readonly endedAgo: string; readonly endedAt: string };
 }
 

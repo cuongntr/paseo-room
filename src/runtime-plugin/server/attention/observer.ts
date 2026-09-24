@@ -53,6 +53,7 @@ export interface Seat {
   readonly provider: string;
   title: string | null;
   cwd: string;
+  workspaceId: string | null;
   project: Project;
   parentAgentId: string | null;
   state: SeatState;
@@ -139,12 +140,13 @@ export class Observer {
     const known = this.seatsById.get(snapshot.id);
     const project = known !== undefined && known.cwd === snapshot.cwd ? known.project : await this.projectOf(snapshot.cwd);
     const seat: Seat = known ?? {
-      agentId: snapshot.id, role: recognized.role, provider: snapshot.provider, title: snapshot.title, cwd: snapshot.cwd, project,
+      agentId: snapshot.id, role: recognized.role, provider: snapshot.provider, title: snapshot.title, cwd: snapshot.cwd, workspaceId: snapshot.workspaceId, project,
       parentAgentId: snapshot.parentAgentId, state: stateOf(snapshot), archivedAt: snapshot.archivedAt,
       turnStartedAt: undefined, lastTurn: undefined, failures: [], pending: new Map(), writeTurns: [], refreshedAt: this.time,
     };
     seat.title = snapshot.title;
     seat.cwd = snapshot.cwd;
+    seat.workspaceId = snapshot.workspaceId;
     seat.project = project;
     seat.parentAgentId = snapshot.parentAgentId;
     seat.state = stateOf(snapshot);

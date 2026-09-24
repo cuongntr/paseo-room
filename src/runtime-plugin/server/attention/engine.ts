@@ -387,7 +387,7 @@ export class AttentionEngine {
     const now = this.time;
     const seatView = (seat: Seat): SeatView => ({
       agentId: seat.agentId, role: seat.role, provider: seat.provider, title: seat.title, state: seat.state, cwd: seat.cwd,
-      displayCwd: homeRelative(seat.cwd), parentAgentId: seat.parentAgentId, pendingPermissions: seat.pending.size,
+      displayCwd: homeRelative(seat.cwd), workspaceId: seat.workspaceId, parentAgentId: seat.parentAgentId, pendingPermissions: seat.pending.size,
       ...(seat.lastTurn === undefined ? {} : {
         lastTurn: { outcome: seat.lastTurn.outcome, endedAgo: age(now - seat.lastTurn.endedAt), endedAt: new Date(seat.lastTurn.endedAt).toISOString() },
       }),
@@ -424,6 +424,7 @@ export interface SeatView {
   readonly state: string;
   readonly cwd: string;
   readonly displayCwd: string;
+  readonly workspaceId: string | null;
   readonly parentAgentId: string | null;
   readonly pendingPermissions: number;
   readonly lastTurn?: { readonly outcome: string; readonly endedAgo: string; readonly endedAt: string };
