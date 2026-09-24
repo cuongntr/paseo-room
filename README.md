@@ -676,6 +676,10 @@ learn only when you ask it to check.
   configure the optional **attention sensor**.
   - The sensor speaks the System One HTTP shape, with [TypeSafe Jev](https://docs.typesafe.ai/)
     first and any compatible or self-hosted endpoint after it. It is `off` by default.
+  - Without a TypeSafe key, use Jev through OpenRouter: endpoint
+    `https://openrouter.ai/api/v1/systemone`, model `typesafe/jev-1.13`, and an OpenRouter key.
+    OpenRouter can answer with a dated snapshot such as `typesafe/jev-1.13-20260917`, which the
+    sensor accepts as the pinned model.
   - `shadow` assesses Lead messages and records the answers without acting on them. `assist` lets
     them decide, for the question sets you enable, whether a Lead turn wakes the Supervisor, waits
     for a digest, or is only recorded.

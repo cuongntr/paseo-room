@@ -122,7 +122,11 @@ question set only after offline evaluation and shadow data meet §12.3.
 `{state, model, questions}` to a configurable endpoint (default `https://api.typesafe.ai/v1/systemone`,
 model pinned to `jev-1.13.0`, never an alias) and reads typed answers with probabilities and
 confidence. The endpoint URL is a setting so a self-hosted equivalent can replace it without code; an
-incompatible API is a new adapter behind the same port. The plugin calls `fetch` (a global, so the
+incompatible API is a new adapter behind the same port. OpenRouter serves the same shape at
+`https://openrouter.ai/api/v1/systemone` with an OpenRouter key and model `typesafe/jev-1.13`, and
+its published examples answer with a dated snapshot (`typesafe/jev-1.13-20260917`). An answer therefore counts when it names
+the pinned model or `<pinned>-YYYYMMDD`; any other model is no answer, and the log records the exact
+snapshot, so evaluation can separate snapshots. Pinning a snapshot accepts that snapshot only. The plugin calls `fetch` (a global, so the
 import boundary is unchanged); no vendor SDK.
 
 ### A-D7 — Egress needs consent, masking and bounds; the key is write-only
@@ -618,6 +622,7 @@ files under `runtime/v1/attention` stay until `remove --apply`.
 
 | Date | Author | Change |
 |---|---|---|
+| 2026-09-24 | Bytes | A-D6: the adapter accepts a dated snapshot of the pinned model (`<pinned>-YYYYMMDD`), so Jev works through OpenRouter's System One endpoint when TypeSafe's own sign-up is unavailable. Aliases and other versions are still no answer. |
 | 2026-09-24 | Repository owner / Bytes | Owner accepted change-003; O1–O2 complete. O3 (assist per question set, after evaluation) and O4 (notebook) remain. |
 | 2026-09-24 | Bytes | Implemented O1–O2 (WP-A1–WP-A9) and qualified live (§13.1). Revised §4, §6.4, §7.3, §7.4 and §8.2 per [change-003](../plans/runtime-coordination-change-003-attention-implementation-deltas.md), now accepted: Paseo keeps finish envelopes out of timelines (D-1), `turn_ended` carries the whole timeline (D-2), a parented Lead must be created through its workspace handle (D-3), steering can fall back to interrupting (D-4) and a send denies pending permissions (D-5). |
 | 2026-09-24 | Repository owner / Bytes | Approved (Q-A01–Q-A04) and made Active after a final review that changed: `writers-observed` from page to `now`, detected through Paseo's normalised `edit`/`write` tool detail (Q-A05); `project-quiet` narrowed to a backstop for a sensor `record`; the `turn_started_by` fact dropped, since §7.3 removes Lead turns Paseo already reported before triage; signals about a Supervisor itself go to the panel; Phase 1 notices steer and hold on a pending permission; Start Supervisor requires an existing directory (Q-A06); settings fall back to defaults when Paseo gives no storage; `observer.enabled` renamed `letters.enabled`. |

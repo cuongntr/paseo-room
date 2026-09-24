@@ -314,8 +314,8 @@ has to ask it to check.
 - It delivers them as letters: only when the Supervisor is idle, never while it holds a permission,
   batched into digests and budgeted.
 - The optional sensor ranks only Lead turns, only when the operator enables it, and only on masked
-  excerpts. It is a System One HTTP call, so a self-hosted model can replace TypeSafe's Jev without
-  code.
+  excerpts. It is a System One HTTP call, so Jev through OpenRouter or a self-hosted model can
+  replace TypeSafe's own endpoint without code.
 
 `AUTHENTICATION.md` is different from a credential path: it is a managed, secret-free guide
 at the room root. Setup renders it from the binaries it already resolved and the deterministic

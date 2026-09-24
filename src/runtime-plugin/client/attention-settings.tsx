@@ -124,7 +124,7 @@ export function RoomAttentionSettings(props: PluginSurfaceProps) {
           })}
         </SettingsSection>
 
-        <SettingsSection title="Attention sensor" info="System One compatible: TypeSafe Jev today, a self-hosted model later.">
+        <SettingsSection title="Attention sensor" info="System One compatible: TypeSafe Jev directly or through OpenRouter (https://openrouter.ai/api/v1/systemone, model typesafe/jev-1.13), a self-hosted model later.">
           <SettingsSelect label="Mode" hint={MODE_HINT[sensor.mode] ?? ''} value={sensor.mode}
             options={[{ label: 'Off', value: 'off' }, { label: 'Shadow', value: 'shadow' }, { label: 'Assist', value: 'assist' }]}
             onValueChange={mode => { save(current => ({ ...current, sensor: { ...current.sensor, mode } }), `Sensor ${mode}`); }} />
@@ -138,7 +138,7 @@ export function RoomAttentionSettings(props: PluginSurfaceProps) {
           <SettingsSwitch label="Mask IP addresses and host names" hint="Credentials, tokens and URL queries are always masked."
             value={sensor.maskNetworkIdentifiers} onValueChange={mask => { save(current => ({ ...current, sensor: { ...current.sensor, maskNetworkIdentifiers: mask } })); }} />
           <SettingsInput label="Endpoint" hint="POST {state, model, questions}" initialValue={sensor.endpoint} onChangeText={setEndpoint} placeholder="https://api.typesafe.ai/v1/systemone" />
-          <SettingsInput label="Pinned model" hint="A versioned id, never an alias, so thresholds stay calibrated." initialValue={sensor.model} onChangeText={setModel} placeholder="jev-1.13.0" />
+          <SettingsInput label="Pinned model" hint="A versioned id, never an alias, so thresholds stay calibrated. A dated snapshot of it (…-YYYYMMDD) also counts." initialValue={sensor.model} onChangeText={setModel} placeholder="jev-1.13.0" />
           <SettingsAction label="Endpoint and model" hint={dirty ? 'Unsaved changes' : 'Saved'} actionLabel="Apply" disabled={!dirty}
             onPress={() => { save(current => ({ ...current, sensor: { ...current.sensor, endpoint: draftEndpoint.trim(), model: draftModel.trim() } }), 'Endpoint and model saved'); setEndpoint(undefined); setModel(undefined); }} />
         </SettingsSection>

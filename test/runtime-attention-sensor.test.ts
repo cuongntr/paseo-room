@@ -8,7 +8,7 @@ import { DEFAULT_ATTENTION_SETTINGS, attentionSettingsSchema, egressRefusal, typ
 import { AttentionKey, KEY_ENV } from '../src/runtime-plugin/server/attention/key.js';
 import { AttentionLog } from '../src/runtime-plugin/server/attention/log.js';
 import { mask, tail } from '../src/runtime-plugin/server/attention/mask.js';
-import { SystemOneSensor } from '../src/runtime-plugin/server/attention/sensor.js';
+import { SystemOneSensor, answeredByPinned } from '../src/runtime-plugin/server/attention/sensor.js';
 import { assistLeadTurn, type Assessment } from '../src/runtime-plugin/server/attention/triage.js';
 import { PaseoHandle } from '../src/runtime-plugin/server/paseo-port.js';
 import { createRpcHandlers } from '../src/runtime-plugin/server/rpc.js';
@@ -154,6 +154,33 @@ describe('System One adapter', () => {
     const on = sensorWith({ mode: 'assist', endpoint, assistQuestionSets: ['lead-turn-v1'] }, { key: 'k' });
     await on.ready;
     expect((await on.sensor.leadTurn({ id: 'att_b', message: 'Done', facts, seatName: 'Lead' }))?.assist).toBe(true);
+  });
+
+  it('accepts the pinned model or a dated snapshot of it, and nothing else', () => {
+    expect(answeredByPinned('jev-1.13.0', 'jev-1.13.0')).toBe(true);
+    expect(answeredByPinned('typesafe/jev-1.13-20260917', 'typesafe/jev-1.13')).toBe(true);
+    expect(answeredByPinned('typesafe/jev-1.13-20260917', 'typesafe/jev-1.13-20260917')).toBe(true);
+    for (const [answered, pinned] of [
+      ['typesafe/jev-1.13-20261001', 'typesafe/jev-1.13-20260917'],
+      ['typesafe/jev-1.13.1', 'typesafe/jev-1.13'],
+      ['typesafe/jev-1.13-latest', 'typesafe/jev-1.13'],
+      ['typesafe/jev-1.14-20260917', 'typesafe/jev-1.13'],
+      ['typesafe/jev-1.13-2026', 'typesafe/jev-1.13'],
+      ['typesafe/jev-1.13-20260917', 'typesafe/jev-latest'],
+      ['jev-1.13.0', 'typesafe/jev-1.13'],
+    ] as const) expect(answeredByPinned(answered, pinned)).toBe(false);
+  });
+
+  it('records the dated snapshot a gateway answered with', async () => {
+    const { endpoint, received } = await stub(() => ({ body: { ...answer('continuing', 0.8, {}, 'typesafe/jev-1.13-20260917'), provider: 'TypeSafe' } }));
+    const { sensor, ready } = sensorWith({ mode: 'shadow', endpoint, model: 'typesafe/jev-1.13' }, { key: 'or-key' });
+    await ready;
+    const result = await sensor.leadTurn({ id: 'att_snapshot', message: 'Still working on it.', facts, seatName: 'Lead of shop' });
+    expect(received[0]?.body.model).toBe('typesafe/jev-1.13');
+    expect(result?.assessment.model).toBe('typesafe/jev-1.13-20260917');
+    const log = await readFile(join(root, 'attention', 'log', `${new Date().toISOString().slice(0, 10)}.jsonl`), 'utf8');
+    expect(log).toContain('"model":"typesafe/jev-1.13-20260917"');
+    expect(sensor.status()).toMatchObject({ calls: 1, failures: 0 });
   });
 
   it('treats an error status, a wrong model, a malformed body and a timeout as no answer, then opens the circuit', async () => {

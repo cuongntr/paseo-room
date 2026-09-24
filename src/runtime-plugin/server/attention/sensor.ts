@@ -2,11 +2,12 @@
  * The attention sensor (docs/design/runtime-coordination-attention.md A-D5–A-D7, §6).
  *
  * One adapter speaks the System One HTTP shape — `POST {state, model, questions}` answered by typed
- * `answers` — so TypeSafe's Jev and any compatible or self-hosted endpoint work unchanged. Nothing
- * is sent unless the operator set the sensor to shadow or assist, acknowledged the endpoint's host
- * (loopback excepted) and stored a key; only the masked, bounded state leaves the host. Every
- * answer is recorded with its question set and the model that gave it. A wrong model, a timeout, an
- * error status or a malformed body is no answer; five failures in a row open a ten-minute circuit.
+ * `answers` — so TypeSafe's Jev, directly or through OpenRouter, and any compatible or self-hosted
+ * endpoint work unchanged. Nothing is sent unless the operator set the sensor to shadow or assist,
+ * acknowledged the endpoint's host (loopback excepted) and stored a key; only the masked, bounded
+ * state leaves the host. Every answer is recorded with its question set and the model that gave it.
+ * A model other than the pinned one or a dated snapshot of it, a timeout, an error status or a
+ * malformed body is no answer; five failures in a row open a ten-minute circuit.
  * The sensor never decides anything: triage does, and only in assist mode, for opted-in sets.
  */
 import { z } from 'zod';
@@ -32,6 +33,15 @@ const responseSchema = z.object({
   answers: z.record(z.string(), answerSchema),
   usage: z.object({ input_tokens: z.number().int().nonnegative().optional() }).optional(),
 });
+
+/**
+ * Whether `answered` is the pinned model: the id itself, or a dated snapshot of it, as a gateway
+ * reports one (OpenRouter answers `typesafe/jev-1.13` as `typesafe/jev-1.13-20260917`). An alias
+ * or any other version is not, and pinning a snapshot accepts that snapshot only.
+ */
+export function answeredByPinned(answered: string, pinned: string): boolean {
+  return answered === pinned || (answered.startsWith(`${pinned}-`) && /^\d{8}$/.test(answered.slice(pinned.length + 1)));
+}
 
 export interface SensorDependencies {
   readonly settings: () => AttentionSettings;
@@ -171,7 +181,7 @@ export class SystemOneSensor implements SensorHook {
     }
     const parsed = responseSchema.safeParse(body);
     if (!parsed.success) { this.fail('malformed response'); return undefined; }
-    if (parsed.data.model !== settings.model) { this.fail(`answered by ${parsed.data.model}, not the pinned ${settings.model}`); return undefined; }
+    if (!answeredByPinned(parsed.data.model, settings.model)) { this.fail(`answered by ${parsed.data.model}, not the pinned ${settings.model}`); return undefined; }
     this.rollover();
     this.consecutive = 0;
     this.calls += 1;
