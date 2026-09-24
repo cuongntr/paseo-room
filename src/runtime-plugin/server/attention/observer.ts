@@ -13,6 +13,7 @@ import type { RuntimeRole } from '../../shared/policy.js';
 import type { GitEvidence } from '../git.js';
 import { toTimelineEntry, type AgentSnapshot, type PaseoPort, type TimelineEntry } from '../paseo-port.js';
 import type { Recognition } from '../recognition.js';
+import { leadMarkers, type Marker } from './triage.js';
 
 export type SeatState = 'running' | 'idle' | 'permission' | 'closed' | 'archived';
 /** What started a turn: Paseo's child-finished envelope, a runtime notice or letter, or any other message. */
@@ -45,6 +46,8 @@ export interface TurnFacts {
   readonly lastMessage?: string;
   /** The message that started the turn, bounded; a Peer's brief on its first turn. */
   readonly firstMessage?: string;
+  /** A Lead's marker lines anywhere in the turn's own messages (Lead contract). */
+  readonly markers?: readonly Marker[];
 }
 
 export interface Seat {
@@ -228,6 +231,8 @@ export class Observer {
     const assistant = entries.filter(entry => entry.kind === 'assistant' && entry.text.trim() !== '').at(-1);
     const firstUser = entries.find(entry => entry.kind === 'user');
     const writes = [...new Set(entries.flatMap(entry => (entry.writes === undefined ? [] : [entry.writes])))];
+    // Every message of the turn, not only the last: an incident may be reported anywhere in it.
+    const markers = seat.role === 'lead' ? leadMarkers(entries.filter(entry => entry.kind === 'assistant').map(entry => entry.text).join('\n')) : [];
     return {
       startedAt: seat.turnStartedAt ?? now,
       endedAt: now,
@@ -237,6 +242,7 @@ export class Observer {
       writes,
       ...(assistant === undefined ? {} : { lastMessage: assistant.text.slice(-MESSAGE_TAIL) }),
       ...(firstUser === undefined || firstUser.text.trim() === '' ? {} : { firstMessage: firstUser.text.slice(0, MESSAGE_TAIL) }),
+      ...(markers.length === 0 ? {} : { markers }),
     };
   }
 

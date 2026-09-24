@@ -7,6 +7,7 @@ import { ROLES } from '../src/roles.js';
 import { renderRuntimeManifestFile } from '../src/runtime.js';
 import { DEFAULT_ATTENTION_SETTINGS, type AttentionSettings } from '../src/runtime-plugin/shared/attention.js';
 import { AttentionEngine } from '../src/runtime-plugin/server/attention/engine.js';
+import { leadMarkers } from '../src/runtime-plugin/server/attention/triage.js';
 import { rolePills } from '../src/runtime-plugin/client/pills.js';
 import { GitEvidence } from '../src/runtime-plugin/server/git.js';
 import { Recognition } from '../src/runtime-plugin/server/recognition.js';
@@ -216,6 +217,54 @@ describe('attention signals and letters', () => {
     expect(letters()).toHaveLength(1);
     expect(letters()[0]?.text).toContain('ended a turn (canceled): (no message in this turn)');
     expect(letters()[0]?.text).not.toContain('Q-a.');
+  });
+
+  it('reads the Lead contract\'s marker lines, tolerating emphasis and ignoring an empty template', () => {
+    expect(leadMarkers('Progress.\n- **INCIDENT:** Peer ran `docker volume prune -f` host-wide.\n> NEEDS-HUMAN: Keep xcmdb-db data? Yes restores, no drops.'))
+      .toEqual([
+        { kind: 'INCIDENT', text: 'Peer ran `docker volume prune -f` host-wide.' },
+        { kind: 'NEEDS-HUMAN', text: 'Keep xcmdb-db data? Yes restores, no drops.' },
+      ]);
+    expect(leadMarkers('INCIDENT: none\nNEEDS-HUMAN: Không.\nNo incident: all fine. The INCIDENT: mid-line is prose.')).toEqual([]);
+  });
+
+  it('pages an INCIDENT line from anywhere in the turn, even on a turn Paseo reports to the Supervisor', async () => {
+    await settle();
+    advance(MINUTE);
+    paseo.agents.get('sup')?.timeline.push({ kind: 'tool', text: '', timestamp: clock.toISOString(), prompts: { tool: 'send_agent_prompt', agentId: 'lead', notified: true } });
+    await setBusy('sup');
+    await engine.onTurnStarted('lead');
+    advance(MINUTE);
+    await engine.onTurnEnded('lead', { kind: 'completed' }, [
+      { type: 'user_message', text: 'Supervisor: status?' },
+      { type: 'assistant_message', text: 'Reviewer finished.\nINCIDENT: the review Peer ran docker volume prune -f on the whole machine; volumes of xcmdb-db are gone.' },
+      { type: 'tool_call', callId: 'c1', name: 'Bash', status: 'completed', error: null, detail: { type: 'shell', command: 'git log' } },
+      { type: 'assistant_message', text: 'Waiting for gate on bead cmdb-12.' },
+    ]);
+    await settle();
+    expect(letters()).toEqual([]);
+    advance(61_000);
+    await settle();
+    expect(letters()).toHaveLength(1);
+    expect(letters()[0]?.behavior).toBe('steer');
+    expect(letters()[0]?.text).toContain('ended a turn (completed) — INCIDENT: "the review Peer ran docker volume prune -f on the whole machine; volumes of xcmdb-db are gone."');
+    expect(letters()[0]?.text).not.toContain('Waiting for gate');
+  });
+
+  it('wakes the Supervisor for a NEEDS-HUMAN line, and a later progress turn does not hide it', async () => {
+    await settle();
+    await setBusy('sup');
+    await engine.onTurnEnded('lead', { kind: 'completed' }, [{ type: 'assistant_message', text: 'Found real data in xcmdb-db.\nNEEDS-HUMAN: Q-a — keep the production copy or drop it?' }]);
+    await engine.onTurnEnded('lead', { kind: 'completed' }, [{ type: 'assistant_message', text: 'Waiting for the reviewer.' }]);
+    await settle();
+    expect(letters()).toEqual([]);
+    await setIdle('sup');
+    await settle();
+    expect(letters()).toHaveLength(1);
+    const text = letters()[0]?.text ?? '';
+    expect(text).toContain('NEEDS-HUMAN: "Q-a — keep the production copy or drop it?"');
+    expect(text).toContain('"Waiting for the reviewer."');
+    expect((await logRecords()).filter(record => record.type === 'lead-turn').map(record => record.decision)).toEqual(['now', 'digest']);
   });
 
   it('sends a digest early at ten lines, and at most once per digest interval', async () => {

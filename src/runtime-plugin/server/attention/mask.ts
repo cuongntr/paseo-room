@@ -37,6 +37,12 @@ export function mask(text: string, options: MaskOptions = { networkIdentifiers: 
   return masked;
 }
 
+/** Collapses whitespace and keeps the first `max` characters, for a line whose point comes first. */
+export function head(text: string, max: number): string {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  return flat.length <= max ? flat : `${flat.slice(0, max - 1)}…`;
+}
+
 /** Collapses whitespace and keeps the last `max` characters, where a turn's conclusion usually is. */
 export function tail(text: string, max: number): string {
   const flat = text.replace(/\s+/g, ' ').trim();

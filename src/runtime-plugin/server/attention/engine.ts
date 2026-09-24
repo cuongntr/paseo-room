@@ -14,7 +14,7 @@ import type { Recognition } from '../recognition.js';
 import { ProjectStore } from '../store/project.js';
 import { Delivery, LETTER_PREFIX, letterId } from './delivery.js';
 import { AttentionLog } from './log.js';
-import { mask, tail } from './mask.js';
+import { head, mask, tail } from './mask.js';
 import { Observer, type Seat, type TurnFacts } from './observer.js';
 import { Portfolio, type Resolution } from './portfolio.js';
 import { age, conditions, seatLabel, type Condition, type Level, type SignalKind } from './signals.js';
@@ -26,6 +26,8 @@ const REOPEN_MS = 10 * 60_000;
 const LEDGER_CACHE_MS = 60_000;
 const ITEM_MEMORY = 500;
 const LETTER_EXCERPT = 240;
+/** Marker lines quoted in one letter item. */
+const LETTER_MARKERS = 3;
 
 /** A path for display: the home directory shown as `~`. */
 export function homeRelative(path: string, home = homedir()): string {
@@ -327,7 +329,10 @@ export class AttentionEngine {
     };
     const supervisor = this.supervisorOf(project.key).supervisorAgentId;
     if (supervisor === undefined) { await record('record', 'no Supervisor for this project'); return; }
-    if (await this.supervisorPrompted(supervisor, pending)) { await record('record', 'Paseo reports this turn to the Supervisor that prompted it'); return; }
+    const markers = pending.turn.markers ?? [];
+    const incident = markers.some(marker => marker.kind === 'INCIDENT');
+    // An incident pages even when Paseo reports the turn: it must not wait to be found in the text.
+    if (!incident && await this.supervisorPrompted(supervisor, pending)) { await record('record', 'Paseo reports this turn to the Supervisor that prompted it'); return; }
 
     // Only this turn's own message: an earlier one would be reported as news (a turn canceled at once has none).
     const message = pending.turn.lastMessage ?? '';
@@ -336,25 +341,33 @@ export class AttentionEngine {
       permissionPending: lead.pending.size > 0,
     };
     let triaged: Triaged = BASELINE;
-    if (this.deps.sensor !== undefined && message.trim() !== '') {
+    if (markers.length > 0) {
+      // Lead's own marker lines decide, in code; the sensor is not asked.
+      triaged = { decision: 'now', reason: `Lead marked the turn ${[...new Set(markers.map(marker => marker.kind))].join(' and ')}` };
+    } else if (this.deps.sensor !== undefined && message.trim() !== '') {
       const sensed = await this.deps.sensor.leadTurn({ id: pending.id, message, facts, seatName: `Lead of ${project.name}` }).catch(() => undefined);
       if (sensed !== undefined && sensed.mode === 'assist' && sensed.assist) triaged = assistLeadTurn(sensed.assessment, facts);
     }
-    await record(triaged.decision, triaged.reason);
+    const level: Level | 'record' = incident ? 'page' : triaged.decision;
+    await record(level, triaged.reason);
     if (triaged.continuing === true) this.quiet.set(project.key, pending.turn.endedAt);
     else this.quiet.delete(project.key);
-    if (triaged.decision === 'record' || !this.deps.settings().letters.enabled) return;
+    if (level === 'record' || !this.deps.settings().letters.enabled) return;
 
     this.remember(pending.id, { recipient: supervisor, projectKey: project.key, kind: 'lead-turn' });
-    // The Supervisor needs the Lead's latest state, not every intermediate turn.
+    // The Supervisor needs the Lead's latest state, not every intermediate turn; but a marked turn is
+    // never superseded, so a later progress turn cannot hide a Human question or an incident.
     const superseded = this.queuedTurn.get(lead.agentId);
     if (superseded !== undefined) this.delivery.withdraw(superseded);
-    this.queuedTurn.set(lead.agentId, pending.id);
-    const reason = triaged === BASELINE ? '' : ` [${triaged.reason}]`;
+    if (markers.length > 0) this.queuedTurn.delete(lead.agentId);
+    else this.queuedTurn.set(lead.agentId, pending.id);
     const excerpt = message.trim() === '' ? '(no message in this turn)' : `"${tail(mask(message), LETTER_EXCERPT)}"`;
+    const said = markers.length > 0
+      ? ` — ${markers.slice(0, LETTER_MARKERS).map(marker => `${marker.kind}: "${head(mask(marker.text), LETTER_EXCERPT)}"`).join(' · ')}`
+      : `${triaged === BASELINE ? '' : ` [${triaged.reason}]`}: ${excerpt}`;
     this.delivery.enqueue(supervisor, {
-      id: pending.id, level: triaged.decision,
-      line: `${project.name} · ${seatLabel(lead)} ended a turn (${pending.turn.outcome})${reason}: ${excerpt}`,
+      id: pending.id, level,
+      line: `${project.name} · ${seatLabel(lead)} ended a turn (${pending.turn.outcome})${said}`,
       createdAt: pending.turn.endedAt,
     });
   }

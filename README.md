@@ -662,6 +662,9 @@ learn only when you ask it to check.
     tree.
   - They report a Lead archived while its seats still work, and a Lead's finished turn that the
     Supervisor did not prompt itself.
+  - The Lead contract has Lead put a question for you on a line beginning `NEEDS-HUMAN:` and an
+    incident on one beginning `INCIDENT:`. The first wakes the Supervisor and the second pages it,
+    even for a turn it prompted, and the letter quotes those lines rather than the message's end.
   - Letters are held until the Supervisor is idle, batched into digests, and limited to a few wakes
     an hour. They are never sent while the Supervisor holds a permission, because a send would
     deny it.

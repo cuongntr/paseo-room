@@ -4,6 +4,7 @@ import { instructionKeys, renderInstructions } from '../src/room/instructions.js
 import { PROMPT_ASSETS, loadPromptAsset } from '../src/room/prompts.js';
 import { ROOM_SKILL_NAME } from '../src/room/skills.js';
 import { ROLES } from '../src/roles.js';
+import { leadMarkers } from '../src/runtime-plugin/server/attention/triage.js';
 
 const AUTHORITY_HEADINGS = [
   'Human Authority',
@@ -56,6 +57,7 @@ describe('role instructions', () => {
       'Technical Acceptance',
       'Independent Review',
       'Peer Seat Lifecycle',
+      'Human Questions and Incidents',
     ]);
     expect(headings(renderInstructions('peer'))).toEqual([
       ...AUTHORITY_HEADINGS,
@@ -152,6 +154,18 @@ describe('role instructions', () => {
     expect(lead).toContain("Rely on Paseo's completion, error, or permission event");
     expect(lead).not.toContain('notifyOnFinish: false');
     expect(lead).not.toContain('parent-wake');
+  });
+
+  it('names exactly the marker lines the runtime reads, for Lead alone', () => {
+    const lead = renderInstructions('lead');
+    expect(lead).toContain('on its own line that begins NEEDS-HUMAN:');
+    expect(lead).toContain('on its own line that begins INCIDENT:');
+    expect(lead).toContain('Omit them when there is nothing to report');
+    expect(leadMarkers('NEEDS-HUMAN: Q-a?\nINCIDENT: prune ran.').map(marker => marker.kind)).toEqual(['NEEDS-HUMAN', 'INCIDENT']);
+    for (const role of ['supervisor', 'peer'] as const) {
+      expect(renderInstructions(role)).not.toContain('NEEDS-HUMAN');
+      expect(renderInstructions(role)).not.toContain('INCIDENT:');
+    }
   });
 
   it('keeps Peer bounded, independent, non-orchestrating, and reproducible', () => {

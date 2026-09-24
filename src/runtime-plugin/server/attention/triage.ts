@@ -10,6 +10,36 @@ import type { QuestionSetId } from '../../shared/attention.js';
 
 export type Decision = 'record' | 'digest' | 'now';
 
+/**
+ * The lines the Lead contract asks for when a turn needs the Human or reports an incident. Code,
+ * not a model, turns them into a class: an incident pages, a Human question wakes.
+ */
+export type MarkerKind = 'INCIDENT' | 'NEEDS-HUMAN';
+
+export interface Marker {
+  readonly kind: MarkerKind;
+  readonly text: string;
+}
+
+const MARKER = /^[ \t>*_-]*(INCIDENT|NEEDS-HUMAN)[*_]*:[*_ \t]*(\S.*)$/gm;
+/** A filled-in template ("INCIDENT: none") is not a report. */
+const EMPTY_MARKER = /^(?:none|n\/a|no|không(?: có)?)[.!]?$/i;
+const MAX_MARKERS = 5;
+const MAX_MARKER_TEXT = 500;
+
+/** The marker lines of a Lead's words, in order, bounded. */
+export function leadMarkers(text: string): readonly Marker[] {
+  const found: Marker[] = [];
+  for (const match of text.matchAll(MARKER)) {
+    const kind = match[1] as MarkerKind;
+    const said = (match[2] ?? '').trim();
+    if (EMPTY_MARKER.test(said)) continue;
+    found.push({ kind, text: said.slice(0, MAX_MARKER_TEXT) });
+    if (found.length === MAX_MARKERS) break;
+  }
+  return found;
+}
+
 export interface LeadTurnFacts {
   readonly peersRunning: number;
   readonly permissionPending: boolean;

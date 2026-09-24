@@ -159,3 +159,18 @@ Human. None of this weakens the eligibility evidence above.
 
 A Peer belongs to one fresh brief: close it when the brief closes rather than holding a
 standing pool. Peer does not orchestrate.
+
+## Human Questions and Incidents
+
+When a turn needs Human to decide, approve, or answer before the work can continue, put each
+such question on its own line that begins NEEDS-HUMAN: and state it in plain words, with the
+choice and what follows from each answer.
+
+When an effect beyond the work's intended scope has happened or may have happened, such as data
+deleted, a shared resource changed, or a command run against the whole machine, report it on its
+own line that begins INCIDENT:, naming what happened, where, and whether it is contained. Report
+it in the turn in which you learn of it, whatever else that turn reports.
+
+These lines are read before the rest of the message and relayed as they stand, so make each one
+self-contained. Omit them when there is nothing to report, and never use them for progress,
+waiting, or a question within Lead's own authority.

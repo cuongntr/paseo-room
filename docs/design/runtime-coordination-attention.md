@@ -215,7 +215,7 @@ fire from absence.
 | `permission-waiting` | any seat in the project holds a permission `permissionMinutes` (5) | now | Supervisor |
 | `peer-result-unread` | a Peer turn ended and its Lead has not started a turn for `peerUnreadMinutes` (10) | now | Supervisor |
 | `turn-failing` | the same seat failed two turns with the same error code or prefix within 30 minutes (§8.10) | now | Supervisor |
-| `lead-turn-ended` | a project Lead's turn ended and the Supervisor did not already get Paseo's finish envelope for it (§7.3) | candidate → triage | Supervisor |
+| `lead-turn-ended` | a project Lead's turn ended and the Supervisor did not already get Paseo's finish envelope for it (§7.3); a turn with an `INCIDENT` line always | candidate → triage; a marker line classes it (§6.1a) | Supervisor |
 | `peer-report` | a Peer's turn ended with outcome `completed` | candidate → triage (shadow only in v1) | Supervisor digest |
 | `peer-orphaned` | a Peer idles `orphanHours` (24) after its Lead was archived | digest | Supervisor |
 | `project-quiet` | the sensor recorded Lead's last turn as `continuing` (§6.4) and no seat of the project has run since, for `quietHours` (4) | now (backstop for a sensor `record`) | Supervisor |
@@ -236,6 +236,22 @@ never goes to that Supervisor: it is shown on the panel as `human-required`.
 Pages and `now` signals are delivered as classed. `lead-turn-ended` is a **digest** line carrying the
 masked tail of Lead's message; `peer-report` is recorded only. Nothing is suppressed, and every
 Supervisor wake is either a mandatory signal or a batched digest.
+
+### 6.1a Lead marker lines
+The Lead contract ("Human Questions and Incidents") has a turn put each question only Human can
+answer on its own line beginning `NEEDS-HUMAN:`, and each effect beyond the work's intended scope on
+one beginning `INCIDENT:`. Code reads these lines from every assistant message of the turn, not only
+the last, tolerating leading list, quote and emphasis characters and ignoring a filled-in template
+such as `INCIDENT: none`. A turn with an `INCIDENT` line is a page, even when Paseo already reports
+the turn to the Supervisor that prompted it (§7.3): an incident must not wait to be found in prose.
+A turn with only `NEEDS-HUMAN` lines is `now`. The letter item quotes the marker lines — masked, the
+first 240 characters of each, at most three — instead of the message's tail; the sensor is not
+asked; and a later turn of the same Lead never supersedes the item. Lead chooses what to mark; code
+alone chooses the class and the recipient.
+
+This exists because a Supervisor missed an incident and three Human questions that sat in the
+middle of long Lead messages while its letters showed only their tails. It needs no model to read
+the prose, and it adds a reporting duty to Lead without granting any authority.
 
 ### 6.2 Sensor candidate state
 Code builds the state; numbers become named buckets, because the sensor reads text:
@@ -629,6 +645,7 @@ files under `runtime/v1/attention` stay until `remove --apply`.
 
 | Date | Author | Change |
 |---|---|---|
+| 2026-09-24 | Repository owner / Bytes | Lead marker lines (§6.1a), chosen by the owner over sensor assist from the same field report: the Lead contract gains "Human Questions and Incidents", an `INCIDENT` line pages and a `NEEDS-HUMAN` line wakes the Supervisor, quoted instead of the message tail. This amends §1's exclusion of Lead contract changes for this one section; it adds a reporting duty to Lead and grants no authority. Supervisor and Peer contracts and every tool list are unchanged. |
 | 2026-09-24 | Bytes | Fixes from a Supervisor's field report: `room_status` and `runtime_findings` keep to the portfolio and the Supervisor's own project, and `room_status` lists only open assignments (§9.4); a turn without a message is no longer reported with an earlier turn's (§4); `writers-observed` counts only writes inside the working directory and names the files (§5); `attention_feedback` accepts a letter's id (§9.4). |
 | 2026-09-24 | Bytes | A-D6: the adapter accepts a dated snapshot of the pinned model (`<pinned>-YYYYMMDD`), so Jev works through OpenRouter's System One endpoint when TypeSafe's own sign-up is unavailable. Aliases and other versions are still no answer. |
 | 2026-09-24 | Repository owner / Bytes | Owner accepted change-003; O1–O2 complete. O3 (assist per question set, after evaluation) and O4 (notebook) remain. |
