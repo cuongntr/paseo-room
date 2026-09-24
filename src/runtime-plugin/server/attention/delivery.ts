@@ -21,6 +21,8 @@ const DIGEST_MAX_LINES = 10;
 const LETTER_MAX_ITEMS = 20;
 const MAX_ATTEMPTS = 3;
 const HOUR = 60 * 60 * 1_000;
+/** Sent letters remembered, so feedback may name the letter rather than an item in it. */
+const LETTER_MEMORY = 200;
 
 export function letterId(): string {
   return `att_${randomBytes(9).toString('base64url')}`;
@@ -65,8 +67,14 @@ function render(id: string, items: readonly LetterItem[], now: number): string {
   ].join('\n');
 }
 
+export interface SentLetter {
+  readonly recipient: string;
+  readonly items: readonly string[];
+}
+
 export class Delivery {
   private readonly queues = new Map<string, Queue>();
+  private readonly sentLetters = new Map<string, SentLetter>();
 
   constructor(private readonly deps: DeliveryDependencies) {}
 
@@ -105,6 +113,19 @@ export class Delivery {
     const items = this.held(supervisorAgentId);
     this.queues.delete(supervisorAgentId);
     return items;
+  }
+
+  /** A letter sent recently, by its id. */
+  sent(letterId: string): SentLetter | undefined {
+    return this.sentLetters.get(letterId);
+  }
+
+  private remember(letterId: string, letter: SentLetter): void {
+    this.sentLetters.set(letterId, letter);
+    if (this.sentLetters.size > LETTER_MEMORY) {
+      const oldest = this.sentLetters.keys().next().value;
+      if (oldest !== undefined) this.sentLetters.delete(oldest);
+    }
   }
 
   /** Sends whatever each Supervisor may receive now. */
@@ -172,11 +193,13 @@ export class Delivery {
     try {
       await this.deps.paseo.send(supervisorAgentId, text, id, 'steer');
       queue.retry = undefined;
+      this.remember(id, { recipient: supervisorAgentId, items: ids });
       await this.deps.log.append({ type: 'letter.sent', id, supervisorAgentId, level, items: ids });
     } catch (error) {
       const delivered = await this.deps.paseo.promptDelivered(supervisorAgentId, id).catch(() => 'unknown' as const);
       if (delivered === 'delivered') {
         queue.retry = undefined;
+        this.remember(id, { recipient: supervisorAgentId, items: ids });
         await this.deps.log.append({ type: 'letter.sent', id, supervisorAgentId, level, items: ids });
         return;
       }

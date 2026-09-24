@@ -200,16 +200,17 @@ open incidents. Unrecognised agents are ignored, except as descendants when they
 room seat (they count as running work, never as recipients).
 
 At startup and after a plugin reload the Observer rebuilds from `listAgents`; facts that exist only
-in events (last outcome, message tail) are refilled lazily from the last timeline page of seats
-the signals actually need. A fact that cannot be established is `unknown`, and a signal that would
-need it does not fire from absence.
+in events (last outcome, message tail) stay unknown until the seat's next turn ends. A turn is
+reported with its own message or none, never with an earlier turn's: a turn canceled at once has no
+message. A fact that cannot be established is `unknown`, and a signal that would need it does not
+fire from absence.
 
 ## 5. Signals (tier 0)
 
 | Signal | Fires when (defaults are settings) | Class | Recipient |
 |---|---|---|---|
 | `lead-gone-with-work` | a project Lead is archived or closed while descendants run | page | Supervisor |
-| `writers-observed` | two or more seats with the same working directory made `edit`/`write` tool calls in overlapping turns | now | Supervisor |
+| `writers-observed` | two or more seats with the same working directory made `edit`/`write` tool calls to files inside it in overlapping turns | now | Supervisor |
 | `duplicate-lead` | existing §5.2 detection, now project-scoped via the Observer | page | Supervisor |
 | `permission-waiting` | any seat in the project holds a permission `permissionMinutes` (5) | now | Supervisor |
 | `peer-result-unread` | a Peer turn ended and its Lead has not started a turn for `peerUnreadMinutes` (10) | now | Supervisor |
@@ -221,7 +222,10 @@ need it does not fire from absence.
 
 `writers-observed` is an observation (D8 evidence class `observed`), not proof: a tool call shows an
 intent to write, not the resulting tree, so it is `now` rather than a page. It exists because the
-one-writer rule is otherwise checked only for runtime-dispatched work.
+one-writer rule is otherwise checked only for runtime-dispatched work. A write outside the working
+directory, such as a reviewer's scratch file in `/tmp`, does not count, and the letter names each
+seat's files and when its turn ended, so a reader can tell a real overlap from a false one without
+asking Lead.
 
 A signal whose subject is the Supervisor itself — its own permission waiting, its own turns failing —
 never goes to that Supervisor: it is shown on the panel as `human-required`.
@@ -450,11 +454,14 @@ Changing these assets changes what Supervisor is told. The commit must state the
 (several projects) and the unchanged limits.
 
 ### 9.4 Tools (`runtime/v1/tools/supervisor.json`)
-- `room_status` returns the portfolio's observed map.
-- `runtime_findings` includes open attention incidents.
+- `room_status` returns the portfolio's observed map. Its runtime projects are only those of the
+  portfolio and the project the Supervisor stands in, with open assignments listed and settled ones
+  only counted, so the result stays within one tool answer.
+- `runtime_findings` includes open attention incidents, and its findings keep to the same projects.
 - `message_lead` takes an optional `project` (project id or repository name). It is required when the
   portfolio has more than one project.
-- New tool `attention_feedback({ id, verdict: 'useful' | 'noise' | 'unknown' })`.
+- New tool `attention_feedback({ id, verdict: 'useful' | 'noise' | 'unknown' })`. The `id` is an
+  item's, or a sent letter's own id, which rates every item of that letter.
 
 Lead and Peer tool lists are unchanged.
 
@@ -622,6 +629,7 @@ files under `runtime/v1/attention` stay until `remove --apply`.
 
 | Date | Author | Change |
 |---|---|---|
+| 2026-09-24 | Bytes | Fixes from a Supervisor's field report: `room_status` and `runtime_findings` keep to the portfolio and the Supervisor's own project, and `room_status` lists only open assignments (§9.4); a turn without a message is no longer reported with an earlier turn's (§4); `writers-observed` counts only writes inside the working directory and names the files (§5); `attention_feedback` accepts a letter's id (§9.4). |
 | 2026-09-24 | Bytes | A-D6: the adapter accepts a dated snapshot of the pinned model (`<pinned>-YYYYMMDD`), so Jev works through OpenRouter's System One endpoint when TypeSafe's own sign-up is unavailable. Aliases and other versions are still no answer. |
 | 2026-09-24 | Repository owner / Bytes | Owner accepted change-003; O1–O2 complete. O3 (assist per question set, after evaluation) and O4 (notebook) remain. |
 | 2026-09-24 | Bytes | Implemented O1–O2 (WP-A1–WP-A9) and qualified live (§13.1). Revised §4, §6.4, §7.3, §7.4 and §8.2 per [change-003](../plans/runtime-coordination-change-003-attention-implementation-deltas.md), now accepted: Paseo keeps finish envelopes out of timelines (D-1), `turn_ended` carries the whole timeline (D-2), a parented Lead must be created through its workspace handle (D-3), steering can fall back to interrupting (D-4) and a send denies pending permissions (D-5). |

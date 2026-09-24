@@ -23,10 +23,10 @@ export interface ToolDefinition {
 }
 
 const DESCRIPTIONS: Readonly<Record<string, string>> = {
-  room_status: 'Read runtime status: assignment health and writer ownership, and under `observed` each project in your portfolio with its Lead, Peers, their states and open attention incidents.',
-  runtime_findings: 'List the conditions the runtime has detected that need attention, with evidence and a recovery action, and the open attention incidents addressed to you.',
+  room_status: 'Read runtime status for the projects in your portfolio: assignment health, open assignments (settled ones are only counted) and writer ownership, and under `observed` each project with its Lead, Peers, their states and open attention incidents.',
+  runtime_findings: 'List the conditions the runtime has detected in your portfolio that need attention, with evidence and a recovery action, and the open attention incidents addressed to you.',
   message_lead: 'Send one message to the Lead that owns a project in your portfolio. Name the project (its name or id) when you supervise more than one.',
-  attention_feedback: 'Rate a runtime attention letter item by its id: useful, noise or unknown. It tunes what reaches you; it is not an instruction to anyone.',
+  attention_feedback: 'Rate a runtime attention letter item by its item id, or every item of a letter by the letter\'s own id: useful, noise or unknown. It tunes what reaches you; it is not an instruction to anyone.',
   assignment_create: 'Create a typed assignment in your current project. It is not dispatched yet.',
   assignment_dispatch: 'Dispatch a draft assignment to a new Peer on an eligible room Peer provider. isolation "worktree" asks the runtime for the Peer\'s own worktree, so it may run beside other isolated writers; the runtime refuses it when scopes overlap, a serial-only path or a writer in your workspace collides, or the cap is reached, and that refusal is final for this dispatch. Scope checks prevent collisions; they do not contain the Peer.',
   assignment_answer: 'Answer a Peer question, or follow up on a blocked handback, with a new Peer turn.',

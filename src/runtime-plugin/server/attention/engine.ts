@@ -329,7 +329,8 @@ export class AttentionEngine {
     if (supervisor === undefined) { await record('record', 'no Supervisor for this project'); return; }
     if (await this.supervisorPrompted(supervisor, pending)) { await record('record', 'Paseo reports this turn to the Supervisor that prompted it'); return; }
 
-    const message = pending.turn.lastMessage ?? await this.observer.lastMessage(lead.agentId) ?? '';
+    // Only this turn's own message: an earlier one would be reported as news (a turn canceled at once has none).
+    const message = pending.turn.lastMessage ?? '';
     const facts: LeadTurnFacts = {
       peersRunning: this.observer.descendants(lead.agentId).filter(seat => seat.state === 'running' || seat.state === 'permission').length,
       permissionPending: lead.pending.size > 0,
@@ -350,7 +351,7 @@ export class AttentionEngine {
     if (superseded !== undefined) this.delivery.withdraw(superseded);
     this.queuedTurn.set(lead.agentId, pending.id);
     const reason = triaged === BASELINE ? '' : ` [${triaged.reason}]`;
-    const excerpt = message.trim() === '' ? '(no message)' : `"${tail(mask(message), LETTER_EXCERPT)}"`;
+    const excerpt = message.trim() === '' ? '(no message in this turn)' : `"${tail(mask(message), LETTER_EXCERPT)}"`;
     this.delivery.enqueue(supervisor, {
       id: pending.id, level: triaged.decision,
       line: `${project.name} · ${seatLabel(lead)} ended a turn (${pending.turn.outcome})${reason}: ${excerpt}`,
@@ -360,15 +361,21 @@ export class AttentionEngine {
 
   // ── Feedback and views ──────────────────────────────────────────────────────────────────────
 
-  /** Records feedback on an incident or letter item; a Supervisor may only rate its own. */
+  /**
+   * Records feedback on an incident or letter item, or on every item of a sent letter named by its
+   * own id; a Supervisor may only rate its own.
+   */
   async feedback(id: string, verdict: Verdict, by: { readonly source: 'human' } | { readonly source: 'supervisor'; readonly agentId: string }): Promise<'recorded' | 'unknown' | 'forbidden'> {
-    const item = this.items.get(id);
-    const incident = [...this.incidents.values()].find(entry => entry.id === id);
-    if (item === undefined && incident === undefined) return 'unknown';
-    const recipient = item?.recipient ?? incident?.recipient;
+    const letter = this.delivery.sent(id);
+    const incident = (entry: string): Incident | undefined => [...this.incidents.values()].find(known => known.id === entry);
+    const recipient = letter?.recipient ?? this.items.get(id)?.recipient ?? incident(id)?.recipient;
+    if (recipient === undefined) return 'unknown';
     if (by.source === 'supervisor' && recipient !== by.agentId) return 'forbidden';
-    if (incident !== undefined) incident.feedback = verdict;
-    await this.log.append({ type: 'feedback.recorded', id, verdict, by: by.source === 'human' ? 'human' : by.agentId });
+    for (const entry of letter?.items ?? [id]) {
+      const known = incident(entry);
+      if (known !== undefined) known.feedback = verdict;
+      await this.log.append({ type: 'feedback.recorded', id: entry, verdict, by: by.source === 'human' ? 'human' : by.agentId });
+    }
     return 'recorded';
   }
 

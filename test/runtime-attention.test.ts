@@ -205,6 +205,19 @@ describe('attention signals and letters', () => {
     expect(letters()[0]?.text).not.toContain('"step 2"');
   });
 
+  it('never reports an earlier turn\'s message for a turn that ended without one', async () => {
+    await settle();
+    await engine.onTurnEnded('lead', { kind: 'completed' }, [{ type: 'assistant_message', text: 'Waiting for the Human to choose Q-a.' }]);
+    paseo.agents.get('lead')?.timeline.push({ kind: 'assistant', text: 'Waiting for the Human to choose Q-a.', timestamp: clock.toISOString() });
+    advance(MINUTE);
+    await engine.onTurnEnded('lead', { kind: 'canceled', reason: 'replaced' }, [{ type: 'user_message', text: '[paseo-room notice ntc_x] Supervisor: Q-a is answered.' }]);
+    advance(16 * MINUTE);
+    await settle();
+    expect(letters()).toHaveLength(1);
+    expect(letters()[0]?.text).toContain('ended a turn (canceled): (no message in this turn)');
+    expect(letters()[0]?.text).not.toContain('Q-a.');
+  });
+
   it('sends a digest early at ten lines, and at most once per digest interval', async () => {
     await settle();
     // Ten Leads of ten projects, so no line supersedes another and no Lead duplicates another.
@@ -292,8 +305,26 @@ describe('attention signals and letters', () => {
       { type: 'tool_call' as const, callId: path, name: 'Edit', status: 'completed' as const, error: null, detail: { type: 'edit' as const, filePath: path } },
     ];
     await engine.onTurnEnded('peer', { kind: 'completed' }, edit('src/a.ts'));
+    await engine.onTurnEnded('lead', { kind: 'completed' }, edit(join(repo, '.beads', 'beads.db')));
+    const letter = letters().find(entry => entry.text.includes('during overlapping turns'))?.text ?? '';
+    expect(letter).toContain(`In ${repo}, during overlapping turns,`);
+    expect(letter).toContain('lead shop — Lead (lead) edited .beads/beads.db (turn ended 0 min ago)');
+    expect(letter).toContain('peer Engineer (peer) edited src/a.ts (turn ended 0 min ago)');
+  });
+
+  it('does not count a write outside the working tree as a writer of it', async () => {
+    await settle();
+    await engine.onTurnStarted('lead');
+    await engine.onTurnStarted('peer');
+    advance(MINUTE);
+    const edit = (path: string) => [
+      { type: 'user_message' as const, text: 'Review it' },
+      { type: 'tool_call' as const, callId: path, name: 'Write', status: 'completed' as const, error: null, detail: { type: 'write' as const, filePath: path } },
+    ];
+    await engine.onTurnEnded('peer', { kind: 'completed' }, edit('/tmp/review-notes.md'));
     await engine.onTurnEnded('lead', { kind: 'completed' }, edit('src/b.ts'));
-    expect(letters().some(letter => letter.text.includes('edited files in') && letter.text.includes('overlapping turns'))).toBe(true);
+    await settle();
+    expect(engine.openIncidents().map(incident => incident.kind)).not.toContain('writers-observed');
   });
 
   it('pages a duplicate Lead only where no runtime ledger already does', async () => {
@@ -324,6 +355,13 @@ describe('attention signals and letters', () => {
     expect(await engine.feedback(id, 'useful', { source: 'supervisor', agentId: 'sup' })).toBe('recorded');
     expect(await engine.feedback('att_missing', 'useful', { source: 'human' })).toBe('unknown');
     expect(engine.openIncidents('sup')[0]?.feedback).toBe('useful');
+
+    // The letter's own id rates every item in it, for the Supervisor it went to only.
+    const letterId = /^\[paseo-room attention (att_[A-Za-z0-9_-]+)\]/.exec(letters()[0]?.text ?? '')?.[1] ?? '';
+    expect(letterId).not.toBe(id);
+    expect(await engine.feedback(letterId, 'noise', { source: 'supervisor', agentId: 'other' })).toBe('forbidden');
+    expect(await engine.feedback(letterId, 'noise', { source: 'supervisor', agentId: 'sup' })).toBe('recorded');
+    expect(engine.openIncidents('sup')[0]?.feedback).toBe('noise');
   });
 
   it('lets an assisting sensor wake the Supervisor for a dead wait, while a shadow one changes nothing', async () => {

@@ -171,6 +171,19 @@ describe('Supervisor portfolio (attention delta §9.4)', () => {
     expect(theirs.observed).toEqual([]);
   });
 
+  it('keeps room_status and findings to the portfolio, and counts settled assignments instead of listing them', async () => {
+    const { h, supervisor, correlation, stranger } = await portfolioRoom();
+    const kept = await h.controller.createAssignment(h.lead, writableBrief(h.base));
+    const settled = await h.controller.createAssignment(h.lead, writableBrief(h.base));
+    await h.controller.abandon(h.lead, { assignmentId: settled.ok ? settled.value.assignmentId : '', reason: 'Superseded.' });
+    const status = await call(supervisor, correlation, 'room_status', {});
+    expect(status.projects).toMatchObject([{ assignments: [{ id: kept.ok ? kept.value.assignmentId : '' }], terminalAssignments: 1 }]);
+    // Another Supervisor sees no runtime project it does not supervise or stand in.
+    const theirs = await call(supervisor, stranger, 'room_status', {});
+    expect(theirs.projects).toEqual([]);
+    expect(await call(supervisor, stranger, 'runtime_findings', {})).toMatchObject({ findings: [], incidents: [] });
+  });
+
   it('rates only the caller\'s own attention items', async () => {
     const { h, attention, supervisor, correlation, stranger, advance } = await portfolioRoom();
     await attention.run(() => attention.sweep());

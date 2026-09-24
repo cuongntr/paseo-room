@@ -66,8 +66,8 @@ describe('worktree dispatch refusals', () => {
     // The declaration at the assignment's base is what counts, not the checkout's.
     const before = await assignment(h, { writeScope: ['src'] });
     expect((await h.controller.dispatch(h.lead, isolated(before))).ok).toBe(true);
-    const unknown = await assignment(h, {}, writableBrief('f'.repeat(40)));
-    expect(await refusedQuietly(h, () => h.controller.dispatch(h.lead, isolated(unknown)))).toBe('base_unknown');
+    // A base that is not a commit is refused when the assignment is created, before any dispatch.
+    expect(await h.controller.createAssignment(h.lead, writableBrief('f'.repeat(40)))).toMatchObject({ ok: false, code: 'base_unknown' });
   });
 
   it('refuses non-canonical scopes and names the item', async () => {

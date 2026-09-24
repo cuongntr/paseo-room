@@ -180,6 +180,10 @@ export class Controller {
       return refuse(validation.errors[0]?.code ?? 'assignment_malformed', validation.errors.map(error => `${error.field}: ${error.message}`).join(' '));
     }
     const store = await this.projectFor(caller.cwd);
+    // A mistyped base passes the shape check; refuse it here rather than brief a Peer against it.
+    if (!await this.deps.git.hasCommit(store.meta.canonicalRoot, validation.input.baseCommit)) {
+      return refuse('base_unknown', `The base ${validation.input.baseCommit} is not a commit of this repository; read it with git rev-parse.`);
+    }
     return await this.serial(store.meta.projectId, async () => {
       const loaded = await this.load(store);
       if (!loaded.ok) return loaded;

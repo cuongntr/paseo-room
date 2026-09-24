@@ -7,7 +7,7 @@
  * establish stays undefined, and a signal never fires from its absence.
  */
 import { realpath } from 'node:fs/promises';
-import { basename, dirname } from 'node:path';
+import { basename, dirname, relative, resolve } from 'node:path';
 import type { PluginLifecycleEvents } from '@getpaseo/plugin/server';
 import type { RuntimeRole } from '../../shared/policy.js';
 import type { GitEvidence } from '../git.js';
@@ -64,8 +64,8 @@ export interface Seat {
   failures: { readonly at: number; readonly key: string }[];
   /** Pending permission ids and when the Observer first saw each. */
   readonly pending: Map<string, number>;
-  /** Recent turns that edited or wrote files, for concurrent-writer observation. */
-  writeTurns: { readonly start: number; readonly end: number }[];
+  /** Recent turns that edited or wrote files in the seat's working tree, with those files relative to it. */
+  writeTurns: { readonly start: number; readonly end: number; readonly paths: readonly string[] }[];
   refreshedAt: number;
 }
 
@@ -87,6 +87,12 @@ export function triggerOf(text: string | undefined): TurnTrigger {
 /** A short stable key for "the same failure": the error code, or the message's first 80 characters. */
 export function errorKey(error: { readonly message: string; readonly code?: string }): string {
   return error.code ?? error.message.trim().toLowerCase().replace(/\s+/g, ' ').slice(0, 80);
+}
+
+/** A written path relative to `cwd` when it lies inside it, as a list of zero or one. */
+function inTree(cwd: string, path: string): string[] {
+  const within = relative(cwd, resolve(cwd, path));
+  return within === '' || within === '..' || within.startsWith('../') ? [] : [within];
 }
 
 function stateOf(snapshot: AgentSnapshot): SeatState {
@@ -212,7 +218,9 @@ export class Observer {
     if (seat.state !== 'archived' && seat.state !== 'closed') seat.state = seat.pending.size > 0 ? 'permission' : 'idle';
     if (turn.errorKey !== undefined) seat.failures = [...seat.failures, { at: now, key: turn.errorKey }].slice(-5);
     else if (turn.outcome === 'completed') seat.failures = [];
-    if (turn.writes.length > 0) seat.writeTurns = [...seat.writeTurns, { start: turn.startedAt, end: turn.endedAt }].filter(entry => now - entry.end < WRITE_WINDOW_MS).slice(-10);
+    // A write outside the working tree, such as a scratch file in /tmp, is no writer of that tree.
+    const paths = turn.writes.flatMap(path => inTree(seat.cwd, path));
+    if (paths.length > 0) seat.writeTurns = [...seat.writeTurns, { start: turn.startedAt, end: turn.endedAt, paths }].filter(entry => now - entry.end < WRITE_WINDOW_MS).slice(-10);
     return { seat, turn };
   }
 
@@ -255,15 +263,6 @@ export class Observer {
     seat.archivedAt = archivedAt;
     seat.pending.clear();
     return seat;
-  }
-
-  /** The last assistant message of a seat, read from Paseo when no event has carried one yet. */
-  async lastMessage(agentId: string): Promise<string | undefined> {
-    const seat = this.seatsById.get(agentId);
-    if (seat === undefined) return undefined;
-    if (seat.lastTurn?.lastMessage !== undefined) return seat.lastTurn.lastMessage;
-    const entries = await this.deps.paseo.recentTimeline(agentId, 50).catch(() => []);
-    return entries.filter(entry => entry.kind === 'assistant' && entry.text.trim() !== '').at(-1)?.text.slice(-MESSAGE_TAIL);
   }
 
   seat(agentId: string): Seat | undefined {

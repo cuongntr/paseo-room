@@ -147,17 +147,6 @@ describe('Room Observer', () => {
     expect(room.seat('peer')?.pending.size).toBe(0);
   });
 
-  it('reads the last message from Paseo when no turn event carried one', async () => {
-    const agent = paseo.addAgent({ id: 'lead', provider: 'claude-lead', cwd: repo });
-    agent.timeline = [
-      { kind: 'user', text: 'Do it', timestamp: '2026-09-24T07:00:00.000Z' },
-      { kind: 'assistant', text: 'Done: pushed 1a2b3c.', timestamp: '2026-09-24T07:01:00.000Z' },
-    ];
-    const room = observer();
-    await room.rebuild();
-    expect(await room.lastMessage('lead')).toBe('Done: pushed 1a2b3c.');
-  });
-
   it('reads Paseo prompt tool calls from a timeline, with their notification choice', () => {
     const entry = (input: unknown) => toTimelineEntry({ type: 'tool_call', name: 'mcp__paseo__send_agent_prompt', detail: { type: 'unknown', input, output: null } }, '2026-09-24T08:00:00.000Z');
     expect(entry({ agentId: 'lead-1', prompt: 'Push', notifyOnFinish: true }).prompts).toEqual({ tool: 'send_agent_prompt', agentId: 'lead-1', notified: true });

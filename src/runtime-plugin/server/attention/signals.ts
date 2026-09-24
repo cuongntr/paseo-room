@@ -43,6 +43,8 @@ export interface SignalContext {
 
 const MINUTE = 60_000;
 const FAILURE_WINDOW_MS = 30 * MINUTE;
+/** Files named per seat in a `writers-observed` letter. */
+const MAX_PATHS = 5;
 
 export function seatLabel(seat: Seat | undefined, fallback = 'unknown seat'): string {
   if (seat === undefined) return fallback;
@@ -94,22 +96,35 @@ function writersObserved(ctx: SignalContext): Condition[] {
   }
   const found: Condition[] = [];
   for (const [cwd, seats] of byCwd) {
-    const overlapping = new Set<string>();
+    // The write turns of each seat that overlap another seat's, so the letter names what to check.
+    const overlapping = new Map<string, Set<Seat['writeTurns'][number]>>();
+    const note = (seat: Seat, turn: Seat['writeTurns'][number]): void => {
+      overlapping.set(seat.agentId, (overlapping.get(seat.agentId) ?? new Set()).add(turn));
+    };
     for (const a of seats) {
       for (const b of seats) {
         if (a.agentId >= b.agentId) continue;
-        const overlap = a.writeTurns.some(x => b.writeTurns.some(y => x.start < y.end && y.start < x.end));
-        if (overlap) { overlapping.add(a.agentId); overlapping.add(b.agentId); }
+        for (const x of a.writeTurns) {
+          for (const y of b.writeTurns) {
+            if (x.start < y.end && y.start < x.end) { note(a, x); note(b, y); }
+          }
+        }
       }
     }
     if (overlapping.size < 2) continue;
-    const ids = [...overlapping].sort();
+    const ids = [...overlapping.keys()].sort();
     const first = seats[0];
     if (first === undefined) continue;
+    const writes = ids.map(id => {
+      const turns = [...(overlapping.get(id) ?? [])];
+      return { id, paths: [...new Set(turns.flatMap(turn => turn.paths))].sort(), ended: Math.max(...turns.map(turn => turn.end)) };
+    });
+    const files = (paths: readonly string[]): string =>
+      paths.slice(0, MAX_PATHS).join(', ') + (paths.length > MAX_PATHS ? ` and ${String(paths.length - MAX_PATHS)} more` : '');
     found.push({
       key: `writers:${cwd}:${ids.join(',')}`, kind: 'writers-observed', level: 'now', projectKey: first.project.key, subjects: ids,
-      ...both(label => `${ids.map(id => label(ctx.observer.seat(id))).join(' and ')} edited files in ${cwd} during overlapping turns (observed, not proven); one working tree admits one writer.`),
-      evidence: ids.join(','),
+      ...both(label => `In ${cwd}, during overlapping turns, ${writes.map(write => `${label(ctx.observer.seat(write.id))} edited ${files(write.paths)} (turn ended ${age(ctx.now - write.ended)} ago)`).join('; ')} (observed, not proven); one working tree admits one writer.`),
+      evidence: writes.map(write => `${write.id}@${String(write.ended)}:${write.paths.join('|')}`).join(','),
     });
   }
   return found;

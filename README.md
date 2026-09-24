@@ -665,7 +665,7 @@ learn only when you ask it to check.
   - Letters are held until the Supervisor is idle, batched into digests, and limited to a few wakes
     an hour. They are never sent while the Supervisor holds a permission, because a send would
     deny it.
-  - Each item has an id for `attention_feedback`. A letter is evidence, not an instruction: the
+  - Each item, and each letter, has an id for `attention_feedback`. A letter is evidence, not an instruction: the
     Supervisor contract has it ask or nudge the Lead, or relay a question to you, and never direct a
     Peer.
 - **Starting seats.** From the **Room** view, **Start Supervisor** opens one in an existing directory
