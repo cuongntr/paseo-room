@@ -15,7 +15,10 @@ const assignment = { assignmentId: assignmentIdSchema };
 export const SUPERVISOR_ACTION_SCHEMAS = {
   room_status: z.strictObject({}),
   runtime_findings: z.strictObject({}),
-  message_lead: z.strictObject({ message: boundedString() }),
+  // `project` names a project in the caller's portfolio: a runtime project id, the project key or
+  // the repository's name. Omitted, it is the caller's own working project, or its only project.
+  message_lead: z.strictObject({ message: boundedString(), project: z.string().min(1).max(4_096).optional() }),
+  attention_feedback: z.strictObject({ id: z.string().regex(/^att_[A-Za-z0-9_-]{8,32}$/), verdict: z.enum(['useful', 'noise', 'unknown']) }),
 } as const satisfies Record<SupervisorOperation, z.ZodType>;
 
 export const LEAD_ACTION_SCHEMAS = {

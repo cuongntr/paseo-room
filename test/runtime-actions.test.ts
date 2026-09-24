@@ -1,8 +1,14 @@
+import { execFileSync } from 'node:child_process';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { DEFAULT_ATTENTION_SETTINGS } from '../src/runtime-plugin/shared/attention.js';
+import { AttentionEngine } from '../src/runtime-plugin/server/attention/engine.js';
 import { createLeadHandlers, createSupervisorHandlers } from '../src/runtime-plugin/server/handlers/actions.js';
 import { CORRELATION_ENV, handleSessionOpen, transformAgentCreate } from '../src/runtime-plugin/server/hooks.js';
 import type { HandlerReply } from '../src/runtime-plugin/server/spool.js';
 import { harness, writableBrief, type Harness } from './runtime-harness.js';
+import { PARENT_AGENT_ID_LABEL } from './runtime-fake-paseo.js';
 
 const open: Harness[] = [];
 afterEach(async () => { await Promise.all(open.splice(0).map(entry => entry.cleanup())); });
@@ -22,13 +28,21 @@ function request(correlation: string, operation: string, payload: unknown) {
 
 const body = (reply: HandlerReply): Record<string, unknown> => reply.result as Record<string, unknown>;
 
+function attentionFor(h: Harness, now: () => Date = () => new Date()): AttentionEngine {
+  return new AttentionEngine({
+    paseo: h.paseo, recognition: h.hooks.recognition, git: h.controller.deps.git, runtimeRoot: h.runtimeRoot,
+    now, settings: () => DEFAULT_ATTENTION_SETTINGS, log: () => undefined,
+  });
+}
+
 async function room() {
   const h = await harness();
   open.push(h);
   h.paseo.addAgent({ id: 'sup-1', provider: 'codex-supervisor', cwd: h.repo });
   const leadCorrelation = await bind(h, 'lead-1', 'codex-lead');
   const supervisorCorrelation = await bind(h, 'sup-1', 'codex-supervisor');
-  return { h, lead: createLeadHandlers(h.controller), supervisor: createSupervisorHandlers(h.controller), leadCorrelation, supervisorCorrelation };
+  const attention = attentionFor(h);
+  return { h, attention, lead: createLeadHandlers(h.controller), supervisor: createSupervisorHandlers(h.controller, attention), leadCorrelation, supervisorCorrelation };
 }
 
 describe('Lead action handlers', () => {
@@ -106,6 +120,69 @@ describe('Supervisor action handlers', () => {
     expect(body(await supervisor.message_lead?.(request(supervisorCorrelation, 'message_lead', { message: 'x' }), { kind: 'action', role: 'supervisor' }) ?? { ok: false, result: {} }))
       .toMatchObject({ error: { code: 'lead_ambiguous' } });
     // Supervisor holds no handler that changes an assignment.
-    expect(Object.keys(supervisor).sort()).toEqual(['message_lead', 'room_status', 'runtime_findings']);
+    expect(Object.keys(supervisor).sort()).toEqual(['attention_feedback', 'message_lead', 'room_status', 'runtime_findings']);
+  });
+});
+
+describe('Supervisor portfolio (attention delta §9.4)', () => {
+  async function portfolioRoom() {
+    const h = await harness();
+    open.push(h);
+    const desk = join(h.root, 'desk');
+    const other = join(h.root, 'billing');
+    await mkdir(desk);
+    await mkdir(other);
+    const git = (...args: string[]) => execFileSync('git', ['-c', 'user.name=T', '-c', 'user.email=t@example.invalid', '-c', 'commit.gpgsign=false', ...args], { cwd: other });
+    git('init', '-q', '-b', 'main');
+    await writeFile(join(other, 'README.md'), 'x\n');
+    git('add', '.');
+    git('commit', '-q', '-m', 'base');
+    // One Supervisor in a neutral directory; Leads in two repositories, both its children.
+    h.paseo.addAgent({ id: 'sup-p', provider: 'claude-supervisor', cwd: desk });
+    const lead = h.paseo.agents.get('lead-1');
+    if (lead !== undefined) lead.labels = { [PARENT_AGENT_ID_LABEL]: 'sup-p' };
+    h.paseo.addAgent({ id: 'lead-b', provider: 'claude-lead', cwd: other, labels: { [PARENT_AGENT_ID_LABEL]: 'sup-p' } });
+    h.paseo.addAgent({ id: 'sup-q', provider: 'codex-supervisor', cwd: desk });
+    let clock = new Date('2026-09-24T08:00:00.000Z');
+    const attention = attentionFor(h, () => clock);
+    const correlation = await bind(h, 'sup-p', 'claude-supervisor');
+    const stranger = await bind(h, 'sup-q', 'codex-supervisor');
+    return { h, attention, supervisor: createSupervisorHandlers(h.controller, attention), correlation, stranger, advance: (ms: number) => { clock = new Date(clock.getTime() + ms); } };
+  }
+  const call = async (handlers: ReturnType<typeof createSupervisorHandlers>, correlation: string, name: string, payload: unknown) =>
+    body(await handlers[name]?.(request(correlation, name, payload), { kind: 'action', role: 'supervisor' }) ?? { ok: false, result: {} });
+
+  it('routes message_lead by project name across a two-project portfolio', async () => {
+    const { h, supervisor, correlation } = await portfolioRoom();
+    expect(await call(supervisor, correlation, 'message_lead', { message: 'x' })).toMatchObject({ error: { code: 'project_required', message: expect.stringContaining('billing') as unknown } });
+    expect(await call(supervisor, correlation, 'message_lead', { message: 'Status of billing?', project: 'billing' })).toMatchObject({ noticeId: expect.any(String) as unknown });
+    expect(h.paseo.agents.get('lead-b')?.prompts.at(-1)?.text).toContain('Supervisor: Status of billing?');
+    expect(await call(supervisor, correlation, 'message_lead', { message: 'Status of repo?', project: 'REPO' })).toMatchObject({ noticeId: expect.any(String) as unknown });
+    expect(h.paseo.agents.get('lead-1')?.prompts.at(-1)?.text).toContain('Supervisor: Status of repo?');
+    expect(await call(supervisor, correlation, 'message_lead', { message: 'x', project: 'payroll' })).toMatchObject({ error: { code: 'project_unknown' } });
+  });
+
+  it('keeps another Supervisor out of the portfolio, and shows the portfolio in room_status', async () => {
+    const { supervisor, correlation, stranger } = await portfolioRoom();
+    expect(await call(supervisor, stranger, 'message_lead', { message: 'x', project: 'billing' })).toMatchObject({ error: { code: 'project_unknown' } });
+    const status = await call(supervisor, correlation, 'room_status', {});
+    expect((status.observed as { name: string }[]).map(project => project.name).sort()).toEqual(['billing', 'repo']);
+    const theirs = await call(supervisor, stranger, 'room_status', {});
+    expect(theirs.observed).toEqual([]);
+  });
+
+  it('rates only the caller\'s own attention items', async () => {
+    const { h, attention, supervisor, correlation, stranger, advance } = await portfolioRoom();
+    await attention.run(() => attention.sweep());
+    h.paseo.agents.get('lead-b')?.pendingPermissions.push({ id: 'perm-1', name: 'Bash' });
+    await attention.onPermissionRequested('lead-b', 'perm-1');
+    advance(6 * 60_000);
+    await attention.run(() => attention.sweep());
+    const found = await call(supervisor, correlation, 'runtime_findings', {});
+    const [incident] = found.incidents as { id: string; kind: string }[];
+    expect(incident?.kind).toBe('permission-waiting');
+    expect(await call(supervisor, stranger, 'attention_feedback', { id: incident?.id, verdict: 'noise' })).toMatchObject({ error: { code: 'unauthorized' } });
+    expect(await call(supervisor, correlation, 'attention_feedback', { id: incident?.id, verdict: 'useful' })).toMatchObject({ recorded: true });
+    expect(await call(supervisor, correlation, 'attention_feedback', { id: 'att_unknownitem1', verdict: 'useful' })).toMatchObject({ error: { code: 'attention_unknown' } });
   });
 });

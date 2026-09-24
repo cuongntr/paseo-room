@@ -7,6 +7,7 @@ import type { PluginSurfaceProps, PluginWorkspacePanelProps } from '@getpaseo/pl
 import { useEffect, useState, type ReactNode } from 'react';
 import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { idempotencyKey, unwrap, usePolled, useRuntimeRpcs, type Unwrapped } from './data.js';
+import { RoomView } from './room.js';
 
 type Theme = PluginSurfaceProps['theme'];
 
@@ -226,7 +227,8 @@ function Trust(props: { readonly theme: Theme }) {
   return (
     <Section theme={props.theme} title="Trust and data">
       <Label theme={props.theme} muted>Runtime coordination is room-managed, trusted and unsandboxed plugin code. It is not an operating-system sandbox and cannot stop a process running as your user.</Label>
-      <Label theme={props.theme} muted>Runtime records stay under your room home. No external sensor or telemetry is enabled. Export omits gate output unless you ask for it.</Label>
+      <Label theme={props.theme} muted>Runtime records stay under your room home, and export omits gate output unless you ask for it. The attention sensor is off unless you turn it on in Settings › Room attention; when on, it sends masked, bounded excerpts of Lead messages to the endpoint you acknowledged there, and nothing else.</Label>
+      <Label theme={props.theme} muted>Attention letters to a Supervisor are evidence, not instructions. They are never sent while it holds a permission, and they never interrupt its turn.</Label>
       <Label theme={props.theme} muted>Isolated writers work in worktrees Paseo creates. Their write scopes prevent collisions between them; they do not contain a Peer. Closing a worktree removes its directory and keeps its branch.</Label>
     </Section>
   );
@@ -237,7 +239,14 @@ function Runtime(props: { readonly theme: Theme; readonly compact: boolean }) {
   const padding = props.compact ? 12 : 20;
   return (
     <ScrollView style={{ backgroundColor: props.theme.colors.surface0 }} contentContainerStyle={{ padding }}>
-      {route.projectId === undefined ? <Overview theme={props.theme} open={projectId => { setRoute({ projectId }); }} />
+      {route.projectId === undefined ? (
+        <View>
+          <RoomView theme={props.theme} />
+          <View style={{ borderTopWidth: 1, borderColor: props.theme.colors.border, paddingTop: 10, marginTop: 10 }}>
+            <Overview theme={props.theme} open={projectId => { setRoute({ projectId }); }} />
+          </View>
+        </View>
+      )
         : route.assignmentId === undefined
           ? <ProjectView theme={props.theme} projectId={route.projectId} back={() => { setRoute({}); }} open={assignmentId => { setRoute({ ...route, assignmentId }); }} />
           : <AssignmentView theme={props.theme} projectId={route.projectId} assignmentId={route.assignmentId} back={() => { setRoute({ ...(route.projectId === undefined ? {} : { projectId: route.projectId }) }); }} />}

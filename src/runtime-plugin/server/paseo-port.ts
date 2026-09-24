@@ -37,6 +37,9 @@ export interface AgentSnapshot {
   readonly labels: Readonly<Record<string, string>>;
   readonly archivedAt: string | null;
   readonly pendingPermissions: readonly PermissionSnapshot[];
+  readonly title: string | null;
+  /** From Paseo's own parentage label; null for a top-level agent. */
+  readonly parentAgentId: string | null;
 }
 
 /**
@@ -53,7 +56,8 @@ export interface PeerLaunch {
 export interface CreateAgentInput extends PeerLaunch {
   readonly provider: string;
   readonly cwd: string;
-  readonly parentAgentId: string;
+  /** Omitted only for a Human-started top-level seat, such as a Supervisor. */
+  readonly parentAgentId?: string;
   readonly title: string;
   readonly labels: Readonly<Record<string, string>>;
   /**
@@ -101,6 +105,28 @@ function conflictOr(error: unknown): unknown {
   return error instanceof Error && CONFLICT.test(error.message) ? new CreationConflictError(error.message) : error;
 }
 
+/**
+ * How a prompt meets a turn already running. Paseo's own default is `interrupt`, which cancels the
+ * running turn; a runtime notice or letter uses `steer`, which delivers it inside that turn.
+ */
+export type SendBehavior = 'steer' | 'interrupt';
+
+/** One timeline entry, reduced to what the runtime reads: never tool output or file content. */
+export interface TimelineEntry {
+  readonly kind: 'user' | 'assistant' | 'tool' | 'error' | 'other';
+  readonly text: string;
+  readonly timestamp: string;
+  readonly turnId?: string;
+  readonly messageId?: string;
+  /** For a tool call whose normalised detail edits or writes a file. */
+  readonly writes?: string;
+  /**
+   * For a Paseo `send_agent_prompt` or `create_agent` tool call: its target and whether the caller
+   * asked to be told when that agent finishes (Paseo's defaults for an agent caller: yes).
+   */
+  readonly prompts?: { readonly tool: 'send_agent_prompt' | 'create_agent'; readonly agentId?: string; readonly notified: boolean };
+}
+
 /** How Paseo launches a provider: its executable and the environment it sets. */
 export interface ProviderCommand {
   readonly binary: string;
@@ -123,9 +149,18 @@ export interface PaseoPort {
   listAgents(): Promise<readonly AgentSnapshot[]>;
   /** Starts a turn with `text`; `messageId` ties the delivered prompt to its reporting generation. */
   run(agentId: string, text: string, messageId: string): Promise<void>;
+  /** Sends `text` with an explicit behaviour toward a running turn (docs/design/runtime-coordination-attention.md A-D4). */
+  send(agentId: string, text: string, messageId: string, behavior: SendBehavior): Promise<void>;
+  /** The latest `limit` timeline entries, oldest first; empty when Paseo cannot answer. */
+  recentTimeline(agentId: string, limit: number): Promise<readonly TimelineEntry[]>;
   archive(agentId: string): Promise<{ readonly archivedAt: string }>;
   /** Creates (or, for a replayed key, returns) a worktree workspace. Throws CreationConflictError on a receipt conflict. */
   createWorktreeWorkspace(request: WorktreeWorkspaceRequest): Promise<WorkspaceSnapshot>;
+  /**
+   * Opens (or finds) Paseo's workspace for a directory. A parented agent must be created through its
+   * handle: given only a cwd, Paseo places a parented child in its parent's workspace (P2-D8).
+   */
+  openWorkspace(cwd: string): Promise<WorkspaceSnapshot>;
   /** The active workspace with this id, or undefined once Paseo no longer lists it (archived or unknown). */
   getWorkspace(workspaceId: string): Promise<WorkspaceSnapshot | undefined>;
   /** Archives a workspace; for a worktree Paseo runs teardown and removes the directory, keeping the branch. */
@@ -205,7 +240,45 @@ export function toSnapshot(raw: RawSnapshot): AgentSnapshot {
     labels: { ...raw.labels },
     archivedAt: raw.archivedAt ?? null,
     pendingPermissions: raw.pendingPermissions.map(permission => ({ id: permission.id, name: permission.name })),
+    title: raw.title ?? null,
+    parentAgentId: raw.labels[PARENT_AGENT_ID_LABEL] ?? null,
   };
+}
+
+type RawTimelineItem = { readonly type: string; readonly text?: unknown; readonly message?: unknown; readonly messageId?: unknown; readonly clientMessageId?: unknown; readonly detail?: unknown; readonly name?: unknown };
+
+const PROMPT_TOOL = /(?:^|__)(send_agent_prompt|create_agent)$/;
+
+/**
+ * Paseo reports a prompted agent's next finish to the caller — as an envelope when the call ran in
+ * the background, or as the call's own result when it waited — unless the caller opted out of both
+ * with `notifyOnFinish: false` in the background (`S/agent/tools/paseo-tools.js`).
+ */
+function promptOf(name: unknown, detail: unknown): TimelineEntry['prompts'] {
+  const tool = typeof name === 'string' ? PROMPT_TOOL.exec(name)?.[1] : undefined;
+  if (tool !== 'send_agent_prompt' && tool !== 'create_agent') return undefined;
+  const input = (detail as { input?: unknown } | undefined)?.input as { agentId?: unknown; notifyOnFinish?: unknown; background?: unknown } | undefined;
+  const optedOut = input?.notifyOnFinish === false && input.background !== false;
+  return { tool, ...(typeof input?.agentId === 'string' ? { agentId: input.agentId } : {}), notified: !optedOut };
+}
+
+/** Reduces a Paseo timeline item to a TimelineEntry; tool output and file content are dropped. */
+export function toTimelineEntry(item: RawTimelineItem, timestamp: string, turnId?: string): TimelineEntry {
+  const base = { timestamp, ...(turnId === undefined ? {} : { turnId }) };
+  const text = typeof item.text === 'string' ? item.text : '';
+  if (item.type === 'user_message') {
+    const id = typeof item.messageId === 'string' ? item.messageId : typeof item.clientMessageId === 'string' ? item.clientMessageId : undefined;
+    return { kind: 'user', text, ...base, ...(id === undefined ? {} : { messageId: id }) };
+  }
+  if (item.type === 'assistant_message') return { kind: 'assistant', text, ...base };
+  if (item.type === 'error') return { kind: 'error', text: typeof item.message === 'string' ? item.message : '', ...base };
+  if (item.type === 'tool_call') {
+    const detail = item.detail as { type?: unknown; filePath?: unknown } | undefined;
+    const writes = (detail?.type === 'edit' || detail?.type === 'write') && typeof detail.filePath === 'string' ? detail.filePath : undefined;
+    const prompts = promptOf(item.name, item.detail);
+    return { kind: 'tool', text: '', ...base, ...(writes === undefined ? {} : { writes }), ...(prompts === undefined ? {} : { prompts }) };
+  }
+  return { kind: 'other', text: '', ...base };
 }
 
 /**
@@ -279,7 +352,7 @@ export function sdkPaseoPort(handle: PaseoHandle, waitMs = 10_000): PaseoPort {
       const paseo = await api();
       try {
         const created = await paseo.agents.create({
-          config: agentConfig(input), cwd: input.cwd, parent: input.parentAgentId,
+          config: agentConfig(input), cwd: input.cwd, ...(input.parentAgentId === undefined ? {} : { parent: input.parentAgentId }),
           title: input.title, labels: { ...input.labels }, ...identities(input),
         });
         return { agentId: created.id };
@@ -291,7 +364,7 @@ export function sdkPaseoPort(handle: PaseoHandle, waitMs = 10_000): PaseoPort {
       const paseo = await api();
       try {
         const created = await paseo.workspaces.ref(workspaceId).agents.create({
-          config: agentConfig(input), parent: input.parentAgentId,
+          config: agentConfig(input), ...(input.parentAgentId === undefined ? {} : { parent: input.parentAgentId }),
           title: input.title, labels: { ...input.labels }, ...identities(input),
         });
         return { agentId: created.id };
@@ -313,6 +386,11 @@ export function sdkPaseoPort(handle: PaseoHandle, waitMs = 10_000): PaseoPort {
       } catch (error) {
         throw conflictOr(error);
       }
+    },
+    async openWorkspace(cwd) {
+      const paseo = await api();
+      const handle = await paseo.workspaces.open({ cwd });
+      return { id: handle.id, directory: handle.directory, kind: handle.current()?.workspaceKind ?? 'unknown', archiving: false };
     },
     async getWorkspace(workspaceId) {
       const paseo = await api();
@@ -359,6 +437,23 @@ export function sdkPaseoPort(handle: PaseoHandle, waitMs = 10_000): PaseoPort {
     async run(agentId, text, messageId) {
       const paseo = await api();
       await paseo.agents.ref(agentId).send(text, { messageId });
+    },
+    async send(agentId, text, messageId, behavior) {
+      const paseo = await api();
+      // Paseo's typed send options omit `activeTurnBehavior`, but the client forwards its options to
+      // the daemon client's sendAgentMessage unchanged, whose options carry it (attention delta §7.4).
+      const options = { messageId, activeTurnBehavior: behavior } as Parameters<ReturnType<PaseoApi['agents']['ref']>['send']>[1];
+      await paseo.agents.ref(agentId).send(text, options);
+    },
+    async recentTimeline(agentId, limit) {
+      const paseo = await api();
+      try {
+        const page = await paseo.agents.ref(agentId).timeline.refetch({ limit });
+        if (page.error !== null) return [];
+        return page.entries.map(entry => toTimelineEntry(entry.item as RawTimelineItem, entry.timestamp, entry.turnId));
+      } catch {
+        return [];
+      }
     },
     async archive(agentId) {
       const paseo = await api();

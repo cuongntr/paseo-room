@@ -36,7 +36,7 @@ export async function checkLeadOwnership(controller: Controller, notices: Notice
   if (evidence.leadAgentIds.length > 1) {
     if (open !== undefined && JSON.stringify(open.leadAgentIds) === JSON.stringify(evidence.leadAgentIds)) return 'conflict';
     await controller.append(loaded, { type: 'project.ownership-conflict', payloadVersion: 1, actor: plugin, data: { ...evidence, leadAgentIds: [...evidence.leadAgentIds], leadProviderIds: [...evidence.leadProviderIds] } });
-    const supervisor = await findSupervisor(controller);
+    const supervisor = controller.supervisorFor?.(loaded.store.meta.gitCommonDir) ?? await findSupervisor(controller);
     await notices.notify(loaded, {
       kind: 'duplicate-lead', class: 'page', disposition: supervisor === undefined ? 'human-required' : 'supervisor-now',
       text: `Leads ${evidence.leadAgentIds.join(', ')} are both active on project ${loaded.store.meta.canonicalRoot}. Runtime dispatch is paused; confirm the one Lead that owns this project.`,

@@ -109,8 +109,8 @@ service or second process coordinator.
 
 | Actor | Runtime capabilities | Explicitly absent |
 |---|---|---|
-| Human/operator | enable/disable, inspect/export, explicit recovery/override through operator UI | no automatic acceptance or silent trust enablement |
-| Supervisor | project/runtime health, assignments and findings, message or question to Lead | no assignment dispatch, write ownership, gate override, Peer channel, integration, or acceptance |
+| Human/operator | enable/disable, inspect/export, explicit recovery/override through operator UI; start a Supervisor, start a project Lead under a chosen Supervisor, assign a project's Supervisor, configure and enable the attention sensor ([attention delta](runtime-coordination-attention.md) §9.1) | no automatic acceptance or silent trust enablement |
+| Supervisor | for the projects in its portfolio: project/runtime health, assignments, findings and attention incidents, momentum and safety letters, message or question to that project's Lead, `attention_feedback` | no assignment dispatch, write ownership, gate override, Peer channel, Peer lifecycle, integration, or acceptance |
 | Lead | create/dispatch assignment to an eligible exact Peer provider, answer, request rework, run gate, accept/reject/abandon, close assignment/archive managed Peer; Phase 2 closes a managed worktree workspace | no model override, Human-owned external-effect decision, or ability to make Peer an orchestrator |
 | Peer | call `ask` or `handoff` for its current assignment/reporting generation | no built-in Paseo tools, status/list, topology, other assignments, recipient selection, agent/workspace lifecycle, orchestration, gate override, or acceptance |
 
@@ -255,9 +255,11 @@ Every signal first enters one code-owned class:
 | `attention` | incident/panel first; deterministic Phase 3 policy may digest it | recurring rework, repeated weak evidence, possible goal drift or stalled progress |
 
 Audience comes from the authority matrix and signal type, never from a model. Peer receives none of
-these notices. Assignment-local technical evidence goes to Lead, not Supervisor. Supervisor receives
-unsolicited messages only for project ownership/recovery, unavailable Lead, systemic recurrence, or
-Human-boundary routing; ordinary events remain available through status.
+these notices. Assignment-local technical evidence goes to Lead, not Supervisor. Amended 2026-09-24 by
+the [attention delta](runtime-coordination-attention.md) §9.2: Supervisor receives, for projects in its
+portfolio only, pages, momentum signals, and Lead turn outcomes triaged to `now` or `digest`; the
+`attention` class is that delta's triage-controlled path. Pages still bypass every filter and budget,
+and no delivery interrupts a turn or clears a pending permission.
 
 Phase 3 adds incident deduplication by subject and kind, counts, evidence references, a non-page daily
 attention budget, and `useful | noise | unknown` Supervisor feedback. Phase 5 may add a default-off
@@ -1441,6 +1443,11 @@ and enabled per qualified daemon version (delta §8, §9); `0.9.1` qualified liv
 
 ### Phase 3 — Deterministic operational guardrails
 
+Re-scoped 2026-09-24: the [attention delta](runtime-coordination-attention.md) phase O1 replaces this
+row's scope (Room Observer, deterministic signals, Supervisor portfolio, idle-held delivery, Human-started
+seats). The text below is the original scope; history, retention and recovery-UI items are deferred.
+
+
 Implements PRD REQ-014 and REQ-021: typed recipient policy, findings, incidents, deduplication,
 feedback, non-page budgets, richer history/export and recovery UI. Mandatory pages bypass budgets;
 assignment-local work stays with Lead. There is no model sensor or external telemetry.
@@ -1451,6 +1458,10 @@ Qualifies subsequent supported Paseo patches, plugin ordering, schema upgrade/ex
 runbook ownership. Preview exit remains an explicit repository-owner decision.
 
 ### Phase 5 — Optional attention sensor
+
+Brought forward 2026-09-24 as the [attention delta](runtime-coordination-attention.md) phases O2–O3,
+which is the separate design delta this row requires.
+
 
 Requires a separate approved design delta for PRD REQ-022. A default-off `AttentionSensor` begins in
 shadow mode on declared `attention` signals only. Jev is one possible adapter, not a dependency of
@@ -1624,6 +1635,8 @@ Q-011 do not block Phases 0–1 because those phases contain no sensor and no wo
 
 | Date | Author | Change |
 |---|---|---|
+| 2026-09-24 | Bytes | Attention O1–O2 implemented and live-qualified (attention delta §13.1): the Room Observer, deterministic signals, idle-held letters to a portfolio Supervisor, Human-started seats and the optional System One sensor in shadow or gated assist. [change-003](../plans/runtime-coordination-change-003-attention-implementation-deltas.md) records the Paseo facts that changed the mechanism; the owner accepted it. |
+| 2026-09-24 | Repository owner / Bytes | Applied the approved [attention delta](runtime-coordination-attention.md) §9: D4 gains the Human seat and sensor actions and the Supervisor portfolio; D9 lets a portfolio Supervisor receive momentum signals and triaged Lead turn outcomes and forbids interrupting deliveries; §13 Phase 3 re-scoped to the delta's O1 and Phase 5 brought forward as O2–O3. |
 | 2026-09-23 | Bytes | §8.1/§8.2 add the Room seats settings screen and `runtime.seats`: each seat's account from its own vendor status command, on demand, never stored. |
 | 2026-09-23 | Bytes | §8.1 records the Phase 2 panel section and its guarded Human forms, after the code-review fixes (226b833, 2db759e). |
 | 2026-09-23 | Bytes | Phase 2 implemented and live-qualified on `0.9.1` (delta §9.2); recorded its R3 rehearsal in §14 — Phase 1 downgrade pauses and preserves, restore resumes, deselection refuses a held lease and counts retained worktrees without deleting them. |

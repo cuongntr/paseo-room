@@ -12,11 +12,11 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   ASSIGNMENT_LABEL, CreationConflictError, PARENT_AGENT_ID_LABEL, type AgentSnapshot, type CreateAgentInput, type PaseoPort, type PeerLaunch, type ProviderCommand,
-  type WorkspaceSnapshot, type WorktreeWorkspaceRequest,
+  type SendBehavior, type TimelineEntry, type WorkspaceSnapshot, type WorktreeWorkspaceRequest,
 } from '../src/runtime-plugin/server/paseo-port.js';
 
 type Operation =
-  | 'createAgent' | 'getAgent' | 'listAgents' | 'run' | 'archive'
+  | 'createAgent' | 'getAgent' | 'listAgents' | 'run' | 'send' | 'archive' | 'recentTimeline' | 'openWorkspace'
   | 'createWorktreeWorkspace' | 'getWorkspace' | 'archiveWorkspace' | 'createAgentInWorkspace';
 
 /** Paseo fingerprints the request's content, not the order its fields were written in. */
@@ -48,7 +48,13 @@ export interface FakeAgent {
   labels: Record<string, string>;
   archivedAt: string | null;
   pendingPermissions: { id: string; name: string }[];
-  prompts: { text: string; messageId: string }[];
+  prompts: { text: string; messageId: string; behavior?: SendBehavior }[];
+  title: string | null;
+  /** Timeline entries, oldest first, for `recentTimeline`. */
+  timeline: TimelineEntry[];
+  /** Turns cancelled by an interrupting send, and permissions a send cleared (Paseo's behaviour). */
+  interrupted: number;
+  clearedPermissions: string[];
 }
 
 export class FakePaseo implements PaseoPort {
@@ -91,7 +97,8 @@ export class FakePaseo implements PaseoPort {
   addAgent(agent: Partial<FakeAgent> & { id: string; provider: string }): FakeAgent {
     const full: FakeAgent = {
       model: this.models[agent.provider] ?? 'model-x', cwd: '/repo', workspaceId: 'ws-1', status: 'idle', activeTurn: false,
-      lastUserMessageAt: null, updatedAt: '2026-09-22T09:00:00.000Z', labels: {}, archivedAt: null, pendingPermissions: [], prompts: [], ...agent,
+      lastUserMessageAt: null, updatedAt: '2026-09-22T09:00:00.000Z', labels: {}, archivedAt: null, pendingPermissions: [], prompts: [],
+      title: null, timeline: [], interrupted: 0, clearedPermissions: [], ...agent,
     };
     this.agents.set(full.id, full);
     return full;
@@ -111,6 +118,7 @@ export class FakePaseo implements PaseoPort {
       id: agent.id, provider: agent.provider, model: agent.model, cwd: agent.cwd, workspaceId: agent.workspaceId, status: agent.status,
       activeTurn: agent.activeTurn, lastUserMessageAt: agent.lastUserMessageAt, updatedAt: agent.updatedAt, labels: { ...agent.labels },
       archivedAt: agent.archivedAt, pendingPermissions: agent.pendingPermissions.map(permission => ({ ...permission })),
+      title: agent.title, parentAgentId: agent.labels[PARENT_AGENT_ID_LABEL] ?? null,
     };
   }
 
@@ -120,8 +128,8 @@ export class FakePaseo implements PaseoPort {
       if (replayed !== undefined) return { agentId: replayed, fresh: false };
       const id = input.agentId ?? `agent-${String(++this.counter)}`;
       this.addAgent({
-        id, provider: input.provider, model: input.model, cwd: input.cwd, workspaceId: this.workspaceFor(input.cwd),
-        labels: { ...input.labels, [PARENT_AGENT_ID_LABEL]: input.parentAgentId },
+        id, provider: input.provider, model: input.model, cwd: input.cwd, workspaceId: this.workspaceFor(input.cwd), title: input.title,
+        labels: { ...input.labels, ...(input.parentAgentId === undefined ? {} : { [PARENT_AGENT_ID_LABEL]: input.parentAgentId }) },
       });
       this.remember('agent', input.idempotencyKey, input, id);
       return { agentId: id, fresh: true };
@@ -139,8 +147,8 @@ export class FakePaseo implements PaseoPort {
       if (workspace === undefined || workspace.archivedAt !== null) throw new Error(`Workspace ${workspaceId} has no available directory`);
       const id = input.agentId ?? `agent-${String(++this.counter)}`;
       this.addAgent({
-        id, provider: input.provider, model: input.model, cwd: workspace.directory, workspaceId,
-        labels: { ...input.labels, [PARENT_AGENT_ID_LABEL]: input.parentAgentId },
+        id, provider: input.provider, model: input.model, cwd: workspace.directory, workspaceId, title: input.title,
+        labels: { ...input.labels, ...(input.parentAgentId === undefined ? {} : { [PARENT_AGENT_ID_LABEL]: input.parentAgentId }) },
       });
       this.remember('agent', input.idempotencyKey, { workspaceId, ...input }, id);
       return { agentId: id, cwd: workspace.directory };
@@ -168,6 +176,16 @@ export class FakePaseo implements PaseoPort {
       const workspace: FakeWorkspace = { id: request.workspaceId, repo: request.cwd, directory, branch, kind: 'worktree', archivedAt: null };
       this.workspaces.set(workspace.id, workspace);
       this.remember('workspace', original.idempotencyKey, original, workspace.id);
+      return this.workspaceSnapshot(workspace);
+    });
+  }
+
+  /** Paseo's workspace for a directory: the existing one, or a new directory workspace. */
+  openWorkspace(cwd: string): Promise<WorkspaceSnapshot> {
+    return this.step('openWorkspace', [cwd], () => {
+      const known = [...this.workspaces.values()].find(workspace => workspace.directory === cwd && workspace.archivedAt === null);
+      const workspace = known ?? { id: `ws-dir-${String(this.workspaces.size + 1)}`, repo: cwd, directory: cwd, branch: '', kind: 'directory', archivedAt: null };
+      this.workspaces.set(workspace.id, workspace);
       return this.workspaceSnapshot(workspace);
     });
   }
@@ -218,6 +236,27 @@ export class FakePaseo implements PaseoPort {
       agent.status = 'running';
       agent.activeTurn = true;
     });
+  }
+
+  /** Paseo's send: an `interrupt` cancels a running turn, and every send clears pending permissions. */
+  send(agentId: string, text: string, messageId: string, behavior: SendBehavior): Promise<void> {
+    return this.step('send', [agentId, text, messageId, behavior], () => {
+      const agent = this.agents.get(agentId);
+      if (agent === undefined || agent.status === 'closed') throw new Error(`agent ${agentId} cannot receive a turn`);
+      if (agent.activeTurn && behavior === 'interrupt') agent.interrupted += 1;
+      agent.clearedPermissions.push(...agent.pendingPermissions.map(permission => permission.id));
+      agent.pendingPermissions = [];
+      agent.prompts.push({ text, messageId, behavior });
+      agent.timeline.push({ kind: 'user', text, timestamp: '2026-09-22T10:00:00.000Z', messageId });
+      agent.lastUserMessageAt = '2026-09-22T10:00:00.000Z';
+      agent.updatedAt = agent.lastUserMessageAt;
+      agent.status = 'running';
+      agent.activeTurn = true;
+    });
+  }
+
+  recentTimeline(agentId: string, limit: number): Promise<readonly TimelineEntry[]> {
+    return this.step('recentTimeline', [agentId, limit], () => (this.agents.get(agentId)?.timeline ?? []).slice(-limit));
   }
 
   archive(agentId: string): Promise<{ archivedAt: string }> {

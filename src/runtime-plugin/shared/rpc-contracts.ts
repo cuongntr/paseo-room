@@ -96,8 +96,69 @@ export const runtimeSeatsRpc = defineRpc({
   output: answer(z.strictObject({ checkedAt: z.string(), seats: z.array(seatAccount) })),
 });
 
+const agentId = z.string().min(1).max(128);
+const path = z.string().min(1).max(4_096);
+const attentionItemId = z.string().regex(/^att_[A-Za-z0-9_-]{8,32}$/);
+
+/** The observed room: projects with their Supervisor, seats and open incidents (attention delta §8.4). */
+export const runtimeRoomRpc = defineRpc({
+  name: 'runtime.room',
+  input: z.strictObject({}),
+  output: answer(view),
+});
+
+/** Human starts a Supervisor in an existing directory outside Git (attention delta §8.1). */
+export const runtimeStartSupervisorRpc = defineRpc({
+  name: 'runtime.start-supervisor',
+  input: z.strictObject({ provider: z.string().min(1).max(128), cwd: path, title: boundedString(200).optional(), idempotencyKey }),
+  output: answer(z.strictObject({ agentId: z.string() })),
+});
+
+/** What starting a project Lead at a path would find (attention delta §8.2). */
+export const runtimeProjectPreflightRpc = defineRpc({
+  name: 'runtime.project-preflight',
+  input: z.strictObject({ path }),
+  output: answer(view),
+});
+
+/** Human starts a project Lead under a chosen Supervisor, with a fixed kickoff (attention delta §8.2). */
+export const runtimeStartProjectRpc = defineRpc({
+  name: 'runtime.start-project',
+  input: z.strictObject({ path, supervisorAgentId: agentId, provider: z.string().min(1).max(128), directive: boundedString().optional(), idempotencyKey }),
+  output: answer(z.strictObject({ agentId: z.string() })),
+});
+
+/** Human assigns (or, with null, clears) a project's Supervisor (attention delta A-D3). */
+export const runtimeAssignSupervisorRpc = defineRpc({
+  name: 'runtime.assign-supervisor',
+  input: z.strictObject({ projectKey: path, supervisorAgentId: agentId.nullable(), idempotencyKey }),
+  output: answer(z.strictObject({ assigned: z.boolean() })),
+});
+
+/** Human rates an attention incident or letter item. */
+export const runtimeIncidentFeedbackRpc = defineRpc({
+  name: 'runtime.incident-feedback',
+  input: z.strictObject({ id: attentionItemId, verdict: z.enum(['useful', 'noise', 'unknown']), idempotencyKey }),
+  output: answer(z.strictObject({ recorded: z.literal(true) })),
+});
+
+/** Write-only: sets or clears the sensor key; answers only whether one is configured (attention delta A-D7). */
+export const runtimeAttentionKeyRpc = defineRpc({
+  name: 'runtime.attention-key',
+  input: z.union([z.strictObject({ set: z.string().min(1).max(4_096) }), z.strictObject({ clear: z.literal(true) })]),
+  output: answer(z.strictObject({ configured: z.boolean() })),
+});
+
+/** The sensor's state for the settings screen: mode, consent, key presence, circuit and today's use. */
+export const runtimeAttentionStatusRpc = defineRpc({
+  name: 'runtime.attention-status',
+  input: z.strictObject({}),
+  output: answer(view),
+});
+
 export const RUNTIME_RPCS = [
   runtimeHealthRpc, runtimeProjectRpc, runtimeAssignmentRpc, runtimeRecoverRpc, runtimeAbandonRpc,
   runtimeResolveOwnershipRpc, runtimeQuarantineRpc, runtimeWorkspaceCloseRpc, runtimeLeaseReclaimRpc,
-  runtimeSeatsRpc,
+  runtimeSeatsRpc, runtimeRoomRpc, runtimeStartSupervisorRpc, runtimeProjectPreflightRpc, runtimeStartProjectRpc,
+  runtimeAssignSupervisorRpc, runtimeIncidentFeedbackRpc, runtimeAttentionKeyRpc, runtimeAttentionStatusRpc,
 ] as const;

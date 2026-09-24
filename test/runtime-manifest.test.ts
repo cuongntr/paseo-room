@@ -29,7 +29,7 @@ describe('runtime room manifest', () => {
       agent: 'pi', role: 'peer', capabilities: ['ask', 'handoff'],
       peerReporting: { protocol: 1, tools: ['ask', 'handoff'], qualifiedVia: 'exact-room-provider' },
     });
-    expect(renderRuntimeManifest(['codex'], ROLES).providers['codex-supervisor']?.capabilities).toEqual(['room_status', 'runtime_findings', 'message_lead']);
+    expect(renderRuntimeManifest(['codex'], ROLES).providers['codex-supervisor']?.capabilities).toEqual(['room_status', 'runtime_findings', 'message_lead', 'attention_feedback']);
   });
 
   it('is deterministic, schema-valid and carries its generations', () => {

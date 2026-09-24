@@ -621,8 +621,8 @@ npx paseo-room verify
   working.
 - **Lead** gains room tools such as `assignment_create`, `assignment_dispatch`, `assignment_answer`,
   `assignment_accept`, `gate_run`, and for isolated writers `workspace_close` and `lease_reclaim`.
-  **Supervisor** gains `room_status`, `runtime_findings` and `message_lead`, and cannot change an
-  assignment.
+  **Supervisor** gains `room_status`, `runtime_findings`, `message_lead` (with a `project` for a
+  Supervisor of several projects) and `attention_feedback`, and cannot change an assignment.
 - **A runtime-dispatched Peer** gets exactly two tools, `ask` and `handoff`, for its own assignment,
   and still no Paseo room tools. A report exists only once one of those calls is accepted; its
   final message is never read as a report. Claude asks for permission before a Peer's first call
@@ -641,6 +641,47 @@ npx paseo-room verify
   organization for Claude; login method for Codex; for Pi, only whether a credential file exists).
   It runs each seat's own `claude auth status` or `codex login status` when you open it or press
   Refresh, and never reads a credential file. A seat linked to another home's login is flagged.
+
+### Room attention: what reaches a Supervisor
+
+The runtime watches every room seat Paseo reports — Supervisors, Leads and Peers, including Peers a
+Lead opens with Paseo's own tools — and tells each project's **Supervisor** what it would otherwise
+learn only when you ask it to check.
+
+- **Portfolio.** One Supervisor may supervise several projects. A project's Supervisor is the one
+  you assign in the **Room** view; otherwise it is the Supervisor that opened the project's Lead;
+  otherwise there is none, and that project's signals show only in the panel.
+- **Letters.** Letters arrive as prompts beginning with `[paseo-room attention att_…]`.
+  - They report a permission waiting on any seat for 5 minutes, and a Peer result its idle Lead has
+    not read for 10 minutes.
+  - They report the same failure twice in a row, and possible concurrent writers in one working
+    tree.
+  - They report a Lead archived while its seats still work, and a Lead's finished turn that the
+    Supervisor did not prompt itself.
+  - Letters are held until the Supervisor is idle, batched into digests, and limited to a few wakes
+    an hour. They are never sent while the Supervisor holds a permission, because a send would
+    deny it.
+  - Each item has an id for `attention_feedback`. A letter is evidence, not an instruction: the
+    Supervisor contract has it ask or nudge the Lead, or relay a question to you, and never direct a
+    Peer.
+- **Starting seats.** From the **Room** view, **Start Supervisor** opens one in an existing directory
+  outside every repository. **Start project** checks a repository, opens its Lead under the
+  Supervisor you pick, and sends a fixed kickoff with your first directive verbatim. **Assign
+  Supervisor** moves an existing project under a Supervisor.
+- **Settings › Room attention.** Here you turn letters on or off, change their thresholds, and
+  configure the optional **attention sensor**.
+  - The sensor speaks the System One HTTP shape, with [TypeSafe Jev](https://docs.typesafe.ai/)
+    first and any compatible or self-hosted endpoint after it. It is `off` by default.
+  - `shadow` assesses Lead messages and records the answers without acting on them. `assist` lets
+    them decide, for the question sets you enable, whether a Lead turn wakes the Supervisor, waits
+    for a digest, or is only recorded.
+  - Nothing leaves the machine until you acknowledge the endpoint's host, and only masked, bounded
+    excerpts of Lead messages are sent.
+  - The key is write-only: it is stored owner-only under `~/.paseo-room/runtime/v1/secrets` and never
+    shown again.
+- **Evaluation.** `npm run attention:eval` (in this repository) reads your Claude Lead transcripts
+  read-only and prints what an evaluation would send. `-- --send` runs it against the endpoint, as
+  your consent for that run.
 
 ### Isolated writers (runtime Phase 2)
 

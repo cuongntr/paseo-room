@@ -5,6 +5,7 @@
  * import from `server/` or any `node:` module. See docs/design/runtime-coordination.md §8.1.
  */
 import type { PluginClientContext } from '@getpaseo/plugin/client';
+import { RoomAttentionSettings } from './client/attention-settings.js';
 import { RoomSeatsSettings, RuntimeSurface, RuntimeWorkspacePanel } from './client/views.js';
 
 const SURFACE = 'paseo-room-runtime';
@@ -17,6 +18,7 @@ export default function contribute(client: PluginClientContext): () => Promise<v
     client.addSidebarItem({ id: SURFACE, title: 'Room runtime', icon: 'Workflow', surface: SURFACE }),
     client.addWorkspacePanel({ id: SURFACE, title: 'Room runtime', icon: 'Workflow', context: 'workspace', Component: RuntimeWorkspacePanel }),
     client.addSettingsScreen({ id: 'paseo-room-seats', title: 'Room seats', icon: 'Users', Component: RoomSeatsSettings }),
+    client.addSettingsScreen({ id: 'paseo-room-attention', title: 'Room attention', icon: 'Bell', Component: RoomAttentionSettings }),
   ];
   return async () => { for (const remove of removers.reverse()) await remove(); };
 }

@@ -69,7 +69,7 @@ function content(message: Record<string, unknown>): { isError: boolean; body: Re
 
 describe('advertised tool lists', () => {
   it('keeps registries disjoint and gives each Peer kind its own handoff shape', () => {
-    expect(toolDefinitions('supervisor').map(tool => tool.name)).toEqual(['room_status', 'runtime_findings', 'message_lead']);
+    expect(toolDefinitions('supervisor').map(tool => tool.name)).toEqual(['room_status', 'runtime_findings', 'message_lead', 'attention_feedback']);
     expect(toolDefinitions('lead')).toHaveLength(12);
     expect(toolDefinitions('peer')).toEqual([]);
     for (const kind of ['engineer', 'architect', 'reviewer', 'scout'] as const) {

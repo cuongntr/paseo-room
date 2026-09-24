@@ -1,7 +1,7 @@
 /**
  * The tool lists each bridge advertises (docs/design/runtime-coordination.md §3.4).
  *
- * Registries are disjoint by construction: Supervisor sees three tools, Lead twelve, and a Peer
+ * Registries are disjoint by construction: Supervisor sees four tools, Lead twelve, and a Peer
  * exactly `ask` and `handoff`, with the one handoff detail shape for its bound work kind. The
  * advertised JSON Schemas are for the model's benefit only; the server validates every call
  * strictly and never trusts that a client respected them.
@@ -23,9 +23,10 @@ export interface ToolDefinition {
 }
 
 const DESCRIPTIONS: Readonly<Record<string, string>> = {
-  room_status: 'Read runtime status for the projects you can see: health, assignments and writer ownership.',
-  runtime_findings: 'List the conditions the runtime has detected that need attention, with evidence and a recovery action.',
-  message_lead: 'Send one message to the Lead that owns this project.',
+  room_status: 'Read runtime status: assignment health and writer ownership, and under `observed` each project in your portfolio with its Lead, Peers, their states and open attention incidents.',
+  runtime_findings: 'List the conditions the runtime has detected that need attention, with evidence and a recovery action, and the open attention incidents addressed to you.',
+  message_lead: 'Send one message to the Lead that owns a project in your portfolio. Name the project (its name or id) when you supervise more than one.',
+  attention_feedback: 'Rate a runtime attention letter item by its id: useful, noise or unknown. It tunes what reaches you; it is not an instruction to anyone.',
   assignment_create: 'Create a typed assignment in your current project. It is not dispatched yet.',
   assignment_dispatch: 'Dispatch a draft assignment to a new Peer on an eligible room Peer provider. isolation "worktree" asks the runtime for the Peer\'s own worktree, so it may run beside other isolated writers; the runtime refuses it when scopes overlap, a serial-only path or a writer in your workspace collides, or the cap is reached, and that refusal is final for this dispatch. Scope checks prevent collisions; they do not contain the Peer.',
   assignment_answer: 'Answer a Peer question, or follow up on a blocked handback, with a new Peer turn.',

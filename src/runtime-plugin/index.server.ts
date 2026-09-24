@@ -6,6 +6,7 @@
  * See docs/design/runtime-coordination.md §3.3 for the components this entry registers.
  */
 import type { PluginServerContext } from '@getpaseo/plugin/server';
+import { ATTENTION_SETTINGS } from './shared/attention.js';
 import { createRuntimeContext } from './server/context.js';
 import { ROOM_LOCATION } from './server/generated/location.js';
 import { handleSessionOpen, transformAgentCreate } from './server/hooks.js';
@@ -40,13 +41,46 @@ export default function contribute(server: PluginServerContext): () => void {
     }),
   ];
   registerRpcs(server, runtime);
+  // Room attention settings live in Paseo's host settings store. Without one (no settings
+  // directory), the runtime keeps the defaults and the settings screen says so.
+  try {
+    const settings = server.registerSettings(ATTENTION_SETTINGS);
+    runtime.attentionSettings.available = true;
+    const adopt = (state: Awaited<ReturnType<typeof settings.read>>): void => {
+      if (state.status === 'ready') runtime.attentionSettings.current = state.values;
+    };
+    settings.read().then(adopt, () => undefined);
+    const unsubscribe = settings.subscribe(adopt);
+    disposers.push(() => { void unsubscribe(); });
+  } catch (error) {
+    console.error(`[paseo-room-runtime] Room attention settings are unavailable; defaults apply: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  // A notice held for a recipient's pending permission is retried once that agent can take it.
+  const retryHeld = (agentId: string): Promise<number> => runtime.controller.notices.retryFor(agentId);
+  const { attention } = runtime;
   disposers.push(registerLifecycle(server, runtime.handle, runtime.recovery, {
-    turnEnded: async event => { await runtime.turns.turnEnded(event); },
-    permissionRequested: async event => { await runtime.turns.permissionRequested(event); },
-    permissionResolved: async event => { await runtime.turns.permissionResolved(event); },
+    created: async event => { await attention.onCreated(event.agent.id); },
+    turnStarted: async event => { await attention.onTurnStarted(event.agent.id); },
+    archived: async event => { await attention.onArchived(event.agent.id, event.archivedAt); },
+    turnEnded: async event => {
+      await runtime.turns.turnEnded(event);
+      await retryHeld(event.agent.id);
+      await attention.onTurnEnded(event.agent.id, event.outcome, event.timeline, event.turnId);
+    },
+    permissionRequested: async event => {
+      await runtime.turns.permissionRequested(event);
+      await attention.onPermissionRequested(event.agent.id, event.request.id);
+    },
+    permissionResolved: async event => {
+      await runtime.turns.permissionResolved(event);
+      await retryHeld(event.agent.id);
+      await attention.onPermissionResolved(event.agent.id, event.requestId);
+    },
   }));
+  attention.startTimer();
   return () => {
     for (const dispose of disposers) dispose();
+    attention.dispose();
     runtime.spool.stop();
     runtime.handle.clear();
   };

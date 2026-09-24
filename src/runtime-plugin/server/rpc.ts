@@ -12,9 +12,15 @@ import { existsSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { z } from 'zod';
 import {
-  runtimeAbandonRpc, runtimeAssignmentRpc, runtimeHealthRpc, runtimeLeaseReclaimRpc, runtimeProjectRpc, runtimeQuarantineRpc, runtimeRecoverRpc,
-  runtimeResolveOwnershipRpc, runtimeSeatsRpc, runtimeWorkspaceCloseRpc,
+  runtimeAbandonRpc, runtimeAssignmentRpc, runtimeAssignSupervisorRpc, runtimeHealthRpc, runtimeIncidentFeedbackRpc, runtimeLeaseReclaimRpc,
+  runtimeProjectPreflightRpc, runtimeProjectRpc, runtimeQuarantineRpc, runtimeRecoverRpc, runtimeResolveOwnershipRpc, runtimeRoomRpc,
+  runtimeAttentionKeyRpc, runtimeAttentionStatusRpc, runtimeSeatsRpc, runtimeStartProjectRpc, runtimeStartSupervisorRpc, runtimeWorkspaceCloseRpc,
 } from '../shared/rpc-contracts.js';
+import { egressRefusal, type AttentionSettings } from '../shared/attention.js';
+import type { AttentionKey } from './attention/key.js';
+import type { SystemOneSensor } from './attention/sensor.js';
+import type { AttentionEngine } from './attention/engine.js';
+import { SeatStarter, type StartResult } from './attention/seat-starter.js';
 import type { RuntimeWarningV1 } from '../shared/rpc.js';
 import { RUNTIME_PLUGIN_ID } from '../shared/identity.js';
 import type { Controller } from './controller.js';
@@ -31,6 +37,12 @@ export interface RpcRuntime {
   readonly handle: PaseoHandle;
   /** How seat status commands run; tests replace it, production runs the vendor CLI. */
   readonly seats?: Pick<SeatDependencies, 'run' | 'lstat'>;
+  /** The Room Observer and letters; the room RPCs answer `attention_unavailable` without it. */
+  readonly attention?: AttentionEngine;
+  /** The sensor, its key and its settings, for the Room attention settings screen. */
+  readonly sensor?: SystemOneSensor;
+  readonly attentionKey?: AttentionKey;
+  readonly attentionSettings?: { readonly current: AttentionSettings; readonly available: boolean };
 }
 
 type Answer = { schema: 1; revision: string; data: unknown; warnings: RuntimeWarningV1[] } | {
@@ -82,6 +94,11 @@ const missing = (projectId: string): Answer => error('project_unknown', `No runt
 
 export function createRpcHandlers(runtime: RpcRuntime) {
   const idempotent = new Map<string, Answer>();
+  const unavailable = (): Answer => error('attention_unavailable', 'The Room Observer is not running in this plugin process.', 'Reload the runtime plugin.');
+  const started = <T>(result: StartResult<T>, recoveryAction: string): Answer => (result.ok ? answer(runtime, result.value) : error(result.code, result.message, recoveryAction));
+  const starter = (attention: AttentionEngine): SeatStarter => new SeatStarter({
+    paseo: runtime.controller.deps.paseo, git: runtime.controller.deps.git, recognition: runtime.controller.deps.recognition, attention,
+  });
   const once = async (key: string, work: () => Promise<Answer>): Promise<Answer> => {
     const known = idempotent.get(key);
     if (known !== undefined) return known;
@@ -211,6 +228,71 @@ export function createRpcHandlers(runtime: RpcRuntime) {
       return answer(runtime, { checkedAt: (controller.deps.now?.() ?? new Date()).toISOString(), seats: accounts });
     },
 
+    async room(): Promise<Answer> {
+      const attention = runtime.attention;
+      if (attention === undefined) return unavailable();
+      await attention.run(() => attention.sweep());
+      const manifest = controller.deps.recognition.current.manifest;
+      const providers = Object.entries(manifest?.providers ?? {}).map(([providerId, entry]) => ({ providerId, agent: entry.agent, role: entry.role }));
+      return answer(runtime, { ...attention.roomView(), providers });
+    },
+
+    async projectPreflight(input: z.infer<typeof runtimeProjectPreflightRpc.input>): Promise<Answer> {
+      if (runtime.attention === undefined) return unavailable();
+      return started(await starter(runtime.attention).preflight(input.path), 'Give the absolute path of an existing directory.');
+    },
+
+    startSupervisor: (input: z.infer<typeof runtimeStartSupervisorRpc.input>): Promise<Answer> => once(input.idempotencyKey, async () => {
+      if (runtime.attention === undefined) return unavailable();
+      return started(await starter(runtime.attention).startSupervisor(input), 'Pick a room Supervisor provider and an existing directory outside any repository.');
+    }),
+
+    startProject: (input: z.infer<typeof runtimeStartProjectRpc.input>): Promise<Answer> => once(input.idempotencyKey, async () => {
+      if (runtime.attention === undefined) return unavailable();
+      return started(await starter(runtime.attention).startProject(input), 'Run the preflight, pick a live Supervisor and a room Lead provider.');
+    }),
+
+    assignSupervisor: (input: z.infer<typeof runtimeAssignSupervisorRpc.input>): Promise<Answer> => once(input.idempotencyKey, async () => {
+      if (runtime.attention === undefined) return unavailable();
+      return started(await starter(runtime.attention).assignSupervisor(input.projectKey, input.supervisorAgentId), 'Refresh the room view and pick a live Supervisor.');
+    }),
+
+    incidentFeedback: (input: z.infer<typeof runtimeIncidentFeedbackRpc.input>): Promise<Answer> => once(input.idempotencyKey, async () => {
+      if (runtime.attention === undefined) return unavailable();
+      const outcome = await runtime.attention.feedback(input.id, input.verdict, { source: 'human' });
+      return outcome === 'recorded' ? answer(runtime, { recorded: true }) : error('attention_unknown', `No attention item ${input.id} is known; it may have expired.`, 'Refresh the room view.');
+    }),
+
+    async attentionKey(input: z.infer<typeof runtimeAttentionKeyRpc.input>): Promise<Answer> {
+      const key = runtime.attentionKey;
+      if (key === undefined) return unavailable();
+      try {
+        if ('set' in input) await key.set(input.set);
+        else await key.clear();
+      } catch (failure) {
+        return error('key_invalid', failure instanceof Error ? failure.message : String(failure), 'Paste the key as issued, without spaces.');
+      }
+      // The key itself is never part of any answer.
+      return answer(runtime, { configured: await key.configured() });
+    },
+
+    async attentionStatus(): Promise<Answer> {
+      const { sensor, attentionKey, attentionSettings } = runtime;
+      if (sensor === undefined || attentionKey === undefined || attentionSettings === undefined) return unavailable();
+      const settings = attentionSettings.current.sensor;
+      let host: string | null;
+      try { host = new URL(settings.endpoint).hostname; } catch { host = null; }
+      return answer(runtime, {
+        settingsAvailable: attentionSettings.available,
+        lettersEnabled: attentionSettings.current.letters.enabled,
+        mode: settings.mode, endpointHost: host, model: settings.model, assistQuestionSets: settings.assistQuestionSets,
+        keyConfigured: await attentionKey.configured(),
+        egress: egressRefusal(settings) ?? 'allowed',
+        sending: (await sensor.refusal()) ?? 'ready',
+        ...sensor.status(),
+      });
+    },
+
     quarantine: (input: z.infer<typeof runtimeQuarantineRpc.input>): Promise<Answer> => once(input.idempotencyKey, async () => {
       const store = await storeOf(runtime, input.projectId);
       if (store === undefined) return missing(input.projectId);
@@ -240,4 +322,12 @@ export function registerRpcs(server: Pick<PluginServerContext, 'handle'>, runtim
   server.handle(runtimeWorkspaceCloseRpc, async (input, { paseo }) => { supply(paseo); return runtimeWorkspaceCloseRpc.output.parse(await handlers.workspaceClose(input)); });
   server.handle(runtimeLeaseReclaimRpc, async (input, { paseo }) => { supply(paseo); return runtimeLeaseReclaimRpc.output.parse(await handlers.leaseReclaim(input)); });
   server.handle(runtimeSeatsRpc, async (_input, { paseo }) => { supply(paseo); return runtimeSeatsRpc.output.parse(await handlers.seats()); });
+  server.handle(runtimeRoomRpc, async (_input, { paseo }) => { supply(paseo); return runtimeRoomRpc.output.parse(await handlers.room()); });
+  server.handle(runtimeStartSupervisorRpc, async (input, { paseo }) => { supply(paseo); return runtimeStartSupervisorRpc.output.parse(await handlers.startSupervisor(input)); });
+  server.handle(runtimeProjectPreflightRpc, async (input, { paseo }) => { supply(paseo); return runtimeProjectPreflightRpc.output.parse(await handlers.projectPreflight(input)); });
+  server.handle(runtimeStartProjectRpc, async (input, { paseo }) => { supply(paseo); return runtimeStartProjectRpc.output.parse(await handlers.startProject(input)); });
+  server.handle(runtimeAssignSupervisorRpc, async (input, { paseo }) => { supply(paseo); return runtimeAssignSupervisorRpc.output.parse(await handlers.assignSupervisor(input)); });
+  server.handle(runtimeIncidentFeedbackRpc, async (input, { paseo }) => { supply(paseo); return runtimeIncidentFeedbackRpc.output.parse(await handlers.incidentFeedback(input)); });
+  server.handle(runtimeAttentionKeyRpc, async (input, { paseo }) => { supply(paseo); return runtimeAttentionKeyRpc.output.parse(await handlers.attentionKey(input)); });
+  server.handle(runtimeAttentionStatusRpc, async (_input, { paseo }) => { supply(paseo); return runtimeAttentionStatusRpc.output.parse(await handlers.attentionStatus()); });
 }

@@ -302,6 +302,21 @@ to another home, only the `lstat` result is shown. Nothing is stored, and the ve
 the only reader of its credential. Account quotas are not shown: the only source reads the OAuth
 token itself.
 
+The runtime's **Room attention** is where the room watches its own seats for the Supervisor
+([runtime-coordination-attention.md](design/runtime-coordination-attention.md)). Supervisor is a
+model that exists only during a turn, and Paseo reports a child's finish to its caller only once per
+prompt. So without this, a Supervisor goes silent the moment its Lead waits on a Peer, and the Human
+has to ask it to check.
+
+- The Observer derives every seat's state from Paseo's lifecycle events.
+- Code raises the conditions worth a Supervisor's attention, such as a waiting permission, an
+  unread Peer result, a repeated failure, or a Lead turn the Supervisor did not prompt.
+- It delivers them as letters: only when the Supervisor is idle, never while it holds a permission,
+  batched into digests and budgeted.
+- The optional sensor ranks only Lead turns, only when the operator enables it, and only on masked
+  excerpts. It is a System One HTTP call, so a self-hosted model can replace TypeSafe's Jev without
+  code.
+
 `AUTHENTICATION.md` is different from a credential path: it is a managed, secret-free guide
 at the room root. Setup renders it from the binaries it already resolved and the deterministic
 role homes it is about to manage, so custom binary and room-home paths are exact and

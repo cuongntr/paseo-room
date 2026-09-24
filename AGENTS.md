@@ -83,6 +83,16 @@ That design is in git history before the `v2` rewrite. Do not reintroduce it.
   tree, the manifest and the locator, and only ever *reads* `runtime/`. Read
   [docs/design/runtime-coordination.md](docs/design/runtime-coordination.md) before changing an
   event type, a validation step or an authority rule: those are contract changes.
+- **Attention is observation, not authority.** The runtime's Room Observer derives the room from
+  Paseo's lifecycle events, never keeps a second process ledger, and only tells a project's
+  Supervisor what code detected ([docs/design/runtime-coordination-attention.md](docs/design/runtime-coordination-attention.md)).
+  - Code chooses every recipient and class. A non-page letter waits for an idle Supervisor, and
+    nothing is sent while the recipient holds a permission, because Paseo's send denies it.
+  - The optional sensor may only move a non-mandatory Lead turn between record, digest and now. It
+    sends nothing unless the operator set its mode and acknowledged the endpoint host, and then only
+    masked, bounded excerpts.
+  - Its key is write-only and never a Paseo setting, since settings reach every client.
+  - Widening what the sensor sees or decides is a design change.
 - **The room ships no default workspace protocol.** A repository's root
   `WORKSPACE_PROTOCOL.md` is optional and, where it exists, complete: there is no room default
   behind it and no point-by-point merge. Lead resolves the repository root and reads it in full
@@ -129,11 +139,13 @@ src/
   runtime.ts  runtime-state.ts  export.ts   # runtime plugin provisioning, read-only state, export
   runtime-plugin/                           # the opt-in runtime plugin (Paseo layout)
     shared/  server/  client/               # contracts; controller, store, bridges; panel
+    server/attention/                       # Room Observer, signals, letters, portfolio, sensor
     server/bridge/bridge.mjs                # dependency-free stdio MCP bridge
   room/instructions.ts                      # semantic role document composition
   room/prompts.ts  room/prompts/             # typed registry + canonical Markdown assets
   room/skills.ts   room/skills/              # the room-owned Lead skill: loader + assets
 test/                                       # one file per area, real temp $HOME fixtures
+scripts/                                    # development-only tools (attention evaluation); not shipped
 docs/demonthorn-agent-orchestration-deep-dive.md  # the model; changes here are conceptual
 docs/design.md                              # this tool's rationale; keep current with code
 ```

@@ -96,6 +96,12 @@ export function peerTitle(assignmentId: string): string {
 export class Controller {
   private readonly queues = new Map<string, Promise<unknown>>();
   readonly notices: Notices;
+  /**
+   * The Supervisor of a project, by its Git common directory, from the attention portfolio
+   * (docs/design/runtime-coordination-attention.md A-D3). Set by the plugin wiring; absent in
+   * tests that do not exercise it, where the room's single Supervisor is used.
+   */
+  supervisorFor?: (gitCommonDir: string) => string | undefined;
 
   constructor(readonly deps: ControllerDependencies) {
     this.notices = new Notices(this);

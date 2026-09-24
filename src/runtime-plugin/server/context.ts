@@ -16,6 +16,11 @@ import { Recognition, type ManifestState } from './recognition.js';
 import { Recovery } from './recovery.js';
 import { Spool, type OperationHandler } from './spool.js';
 import { writeToolFiles } from './tools.js';
+import { AttentionEngine } from './attention/engine.js';
+import { AttentionKey } from './attention/key.js';
+import { AttentionLog } from './attention/log.js';
+import { SystemOneSensor } from './attention/sensor.js';
+import { DEFAULT_ATTENTION_SETTINGS, type AttentionSettings } from '../shared/attention.js';
 
 export interface RuntimeContext {
   readonly location: RoomLocation;
@@ -29,6 +34,12 @@ export interface RuntimeContext {
   readonly registries: { supervisor: Record<string, OperationHandler>; lead: Record<string, OperationHandler>; peer: Record<string, OperationHandler> };
   readonly spool: Spool;
   readonly turns: TurnHandlers;
+  /** The Room Observer, signals and Supervisor letters (docs/design/runtime-coordination-attention.md). */
+  readonly attention: AttentionEngine;
+  /** The current Room attention settings; replaced when the operator saves them. */
+  readonly attentionSettings: { current: AttentionSettings; available: boolean };
+  readonly attentionKey: AttentionKey;
+  readonly sensor: SystemOneSensor;
   /** Writes the advertised tool lists and starts draining the spool. */
   start(): Promise<void>;
   /** Resolves once the manifest has been read; a failure leaves the runtime paused, not crashed. */
@@ -40,8 +51,17 @@ export function createRuntimeContext(location: RoomLocation, nodePath = process.
   const correlations = new CorrelationRegistry(join(location.runtimeRoot, 'correlations'));
   const handle = new PaseoHandle();
   const controller = new Controller({ runtimeRoot: location.runtimeRoot, paseo: sdkPaseoPort(handle), git: new GitEvidence(), recognition, correlations });
+  const attentionSettings = { current: DEFAULT_ATTENTION_SETTINGS, available: false };
+  const attentionKey = AttentionKey.at(location.runtimeRoot);
+  const now = (): Date => new Date();
+  const sensor = new SystemOneSensor({ settings: () => attentionSettings.current, key: attentionKey, log: AttentionLog.at(location.runtimeRoot, now), now });
+  const attention = new AttentionEngine({
+    paseo: controller.deps.paseo, recognition, git: controller.deps.git, runtimeRoot: location.runtimeRoot,
+    now, settings: () => attentionSettings.current, sensor, ready: () => handle.available,
+  });
+  controller.supervisorFor = gitCommonDir => attention.supervisorOf(gitCommonDir).supervisorAgentId;
   const registries = {
-    supervisor: createSupervisorHandlers(controller),
+    supervisor: createSupervisorHandlers(controller, attention),
     lead: createLeadHandlers(controller),
     peer: { ...createPeerHandlers(controller) },
   };
@@ -70,6 +90,10 @@ export function createRuntimeContext(location: RoomLocation, nodePath = process.
     registries,
     spool,
     turns: createTurnHandlers(controller, spool),
+    attention,
+    attentionSettings,
+    attentionKey,
+    sensor,
     ready,
     async start() {
       await ready;

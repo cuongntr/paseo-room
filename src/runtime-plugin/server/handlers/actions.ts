@@ -3,11 +3,14 @@
  *
  * The caller is established from the correlation's durable association and corroborated by a
  * fresh Paseo snapshot of that exact agent — never from tool input. Lead's operations go through
- * the controller; Supervisor observes status and findings and may route one message to the
- * project's Lead, but cannot transition any assignment.
+ * the controller; Supervisor observes status, findings and attention incidents for its portfolio,
+ * may route one message to a portfolio project's Lead and rate attention items, but cannot
+ * transition any assignment.
  */
 import { existsSync } from 'node:fs';
+import { basename } from 'node:path';
 import { z } from 'zod';
+import type { AttentionEngine } from '../attention/engine.js';
 import { LEAD_ACTION_SCHEMAS, SUPERVISOR_ACTION_SCHEMAS } from '../contracts/actions.js';
 import type { BridgeRequestV1 } from '../contracts/envelope.js';
 import type { Caller, Controller, ControllerResult } from '../controller.js';
@@ -96,7 +99,36 @@ export function createLeadHandlers(controller: Controller): Record<string, Opera
   };
 }
 
-export function createSupervisorHandlers(controller: Controller): Record<string, OperationHandler> {
+/** A project the calling Supervisor may address: in its portfolio, or the project it stands in. */
+async function projectFor(controller: Controller, attention: AttentionEngine, caller: Caller, named: string | undefined): Promise<{ readonly root: string } | HandlerReply> {
+  await attention.run(() => attention.sweep());
+  const portfolio = attention.portfolioOf(caller.agentId);
+  const projects = [...attention.observer.projects().values()];
+  const own = await controller.deps.git.identity(caller.cwd).catch(() => undefined);
+  const ownProject = own === undefined ? undefined : projects.find(project => project.key === own.gitCommonDir) ?? { key: own.gitCommonDir, root: own.canonicalRoot, name: basename(own.canonicalRoot), git: true };
+  const allowed = projects.filter(project => portfolio.includes(project.key));
+  if (ownProject !== undefined && !allowed.some(project => project.key === ownProject.key)) allowed.push(ownProject);
+  if (named === undefined) {
+    if (ownProject !== undefined) return { root: ownProject.root };
+    const [only] = allowed;
+    if (allowed.length === 1 && only !== undefined) return { root: only.root };
+    return failure('project_required', allowed.length === 0
+      ? 'No project is in your portfolio and you do not stand in one.'
+      : `Name the project: ${allowed.map(project => project.name).join(', ')}.`);
+  }
+  const wanted = named.trim().toLowerCase();
+  const stores = await ProjectStore.list(controller.deps.runtimeRoot, controller.deps.now);
+  const byId = stores.find(store => store.meta.projectId === named);
+  const match = allowed.filter(project => project.key === named || project.root === named || project.name.toLowerCase() === wanted
+    || byId?.meta.gitCommonDir === project.key);
+  const [found] = match;
+  if (match.length === 1 && found !== undefined) return { root: found.root };
+  return failure(match.length === 0 ? 'project_unknown' : 'project_ambiguous', match.length === 0
+    ? `No project named ${named} is in your portfolio.`
+    : `${named} names more than one project; use its id.`);
+}
+
+export function createSupervisorHandlers(controller: Controller, attention: AttentionEngine): Record<string, OperationHandler> {
   const supervisor = <K extends keyof typeof SUPERVISOR_ACTION_SCHEMAS>(name: K, run: (caller: Caller, input: z.infer<(typeof SUPERVISOR_ACTION_SCHEMAS)[K]>) => Promise<HandlerReply>): OperationHandler =>
     async request => {
       const caller = await callerOf(controller, request, 'supervisor');
@@ -106,17 +138,22 @@ export function createSupervisorHandlers(controller: Controller): Record<string,
       return await run(caller, input as z.infer<(typeof SUPERVISOR_ACTION_SCHEMAS)[K]>);
     };
   return {
-    room_status: supervisor('room_status', async () => {
+    room_status: supervisor('room_status', async caller => {
       const projects = (await statusInputs(controller)).map(input => projectStatusView(input));
-      return success({ revision: revision(projects), projects });
+      await attention.run(() => attention.sweep());
+      const observed = attention.roomView(attention.portfolioOf(caller.agentId)).projects;
+      return success({ revision: revision({ projects, observed }), projects, observed });
     }),
-    runtime_findings: supervisor('runtime_findings', async () => {
+    runtime_findings: supervisor('runtime_findings', async caller => {
       const all = (await statusInputs(controller)).flatMap(input => findings(input).map(finding => ({ projectId: input.projectId, ...finding })));
-      return success({ revision: revision(all), findings: all });
+      const incidents = attention.openIncidents(caller.agentId).map(incident => ({ id: incident.id, kind: incident.kind, level: incident.level, count: incident.count, text: incident.text }));
+      return success({ revision: revision({ all, incidents }), findings: all, incidents });
     }),
     message_lead: supervisor('message_lead', async (caller, input) => {
-      const store = await controller.projectFor(caller.cwd).catch(() => undefined);
-      if (store === undefined) return failure('project_unknown', 'Your workspace is not a Git project the runtime knows.');
+      const target = await projectFor(controller, attention, caller, input.project);
+      if (isReply(target)) return target;
+      const store = await controller.projectFor(target.root).catch(() => undefined);
+      if (store === undefined) return failure('project_unknown', 'That project is not a Git project the runtime knows.');
       return await controller.serial(store.meta.projectId, async () => {
         const loaded = await controller.load(store);
         if (!loaded.ok) return failure(loaded.code, loaded.message);
@@ -128,6 +165,12 @@ export function createSupervisorHandlers(controller: Controller): Record<string,
         });
         return success({ noticeId });
       });
+    }),
+    attention_feedback: supervisor('attention_feedback', async (caller, input) => {
+      const outcome = await attention.feedback(input.id, input.verdict, { source: 'supervisor', agentId: caller.agentId });
+      if (outcome === 'unknown') return failure('attention_unknown', `No attention item ${input.id} is known; it may have expired.`);
+      if (outcome === 'forbidden') return failure('unauthorized', `Attention item ${input.id} was not addressed to you.`);
+      return success({ recorded: true });
     }),
   };
 }

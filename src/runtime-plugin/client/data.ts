@@ -5,8 +5,9 @@
 import { useRpc } from '@getpaseo/plugin/client';
 import { useEffect, useRef, useState } from 'react';
 import {
-  runtimeAbandonRpc, runtimeAssignmentRpc, runtimeHealthRpc, runtimeLeaseReclaimRpc, runtimeProjectRpc, runtimeQuarantineRpc, runtimeRecoverRpc,
-  runtimeResolveOwnershipRpc, runtimeSeatsRpc, runtimeWorkspaceCloseRpc,
+  runtimeAbandonRpc, runtimeAssignmentRpc, runtimeAssignSupervisorRpc, runtimeHealthRpc, runtimeIncidentFeedbackRpc, runtimeLeaseReclaimRpc,
+  runtimeProjectPreflightRpc, runtimeProjectRpc, runtimeQuarantineRpc, runtimeRecoverRpc, runtimeResolveOwnershipRpc, runtimeRoomRpc,
+  runtimeAttentionKeyRpc, runtimeAttentionStatusRpc, runtimeSeatsRpc, runtimeStartProjectRpc, runtimeStartSupervisorRpc, runtimeWorkspaceCloseRpc,
 } from '../shared/rpc-contracts.js';
 
 export const POLL_MS = 5_000;
@@ -62,6 +63,14 @@ export function useRuntimeRpcs() {
     workspaceClose: useRpc(runtimeWorkspaceCloseRpc),
     leaseReclaim: useRpc(runtimeLeaseReclaimRpc),
     seats: useRpc(runtimeSeatsRpc),
+    room: useRpc(runtimeRoomRpc),
+    startSupervisor: useRpc(runtimeStartSupervisorRpc),
+    projectPreflight: useRpc(runtimeProjectPreflightRpc),
+    startProject: useRpc(runtimeStartProjectRpc),
+    assignSupervisor: useRpc(runtimeAssignSupervisorRpc),
+    incidentFeedback: useRpc(runtimeIncidentFeedbackRpc),
+    attentionKey: useRpc(runtimeAttentionKeyRpc),
+    attentionStatus: useRpc(runtimeAttentionStatusRpc),
   };
 }
 

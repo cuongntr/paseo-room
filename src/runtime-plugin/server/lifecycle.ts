@@ -10,6 +10,9 @@ import type { PaseoHandle } from './paseo-port.js';
 import type { Recovery } from './recovery.js';
 
 export interface LifecycleListeners {
+  readonly created?: (event: PluginLifecycleEvents['agent.created']) => Promise<void>;
+  readonly turnStarted?: (event: PluginLifecycleEvents['agent.turn_started']) => Promise<void>;
+  readonly archived?: (event: PluginLifecycleEvents['agent.archived']) => Promise<void>;
   readonly turnEnded?: (event: PluginLifecycleEvents['agent.turn_ended']) => Promise<void>;
   readonly permissionRequested?: (event: PluginLifecycleEvents['agent.permission_requested']) => Promise<void>;
   readonly permissionResolved?: (event: PluginLifecycleEvents['agent.permission_resolved']) => Promise<void>;
@@ -36,7 +39,7 @@ export function registerLifecycle(
     server.on('agent.archived', (event, context) => {
       handle.supply(context.paseo);
       startupRecovery();
-      return guard('agent.archived', () => recovery.recoverForAgent(event.agent.id));
+      return guard('agent.archived', async () => { await recovery.recoverForAgent(event.agent.id); await listeners.archived?.(event); });
     }),
     server.on('agent.turn_ended', (event, context) => {
       handle.supply(context.paseo);
@@ -53,8 +56,16 @@ export function registerLifecycle(
       startupRecovery();
       return guard('agent.permission_resolved', async () => { await listeners.permissionResolved?.(event); });
     }),
-    server.on('agent.created', (_event, context) => { handle.supply(context.paseo); startupRecovery(); }),
-    server.on('agent.turn_started', (_event, context) => { handle.supply(context.paseo); startupRecovery(); }),
+    server.on('agent.created', (event, context) => {
+      handle.supply(context.paseo);
+      startupRecovery();
+      return guard('agent.created', async () => { await listeners.created?.(event); });
+    }),
+    server.on('agent.turn_started', (event, context) => {
+      handle.supply(context.paseo);
+      startupRecovery();
+      return guard('agent.turn_started', async () => { await listeners.turnStarted?.(event); });
+    }),
   ];
   return () => { for (const dispose of disposers) dispose(); };
 }
