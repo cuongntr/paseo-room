@@ -816,7 +816,10 @@ silently claiming the stronger guarantee.
   and never use a tier advertising automatic delegation. A repository that wants tactical
   routing criteria — task risk, uncertainty, context size, verification burden — states them in
   its own protocol; the room no longer ships a default that states them for every repository.
-  Disposition informs that judgment and never fixes a tier. This is about *task* routing, and it is not a claim of
+  Disposition informs that judgment and never fixes a tier. For runtime-dispatched Peers the operator
+  may allow Lead a per-assignment thinking choice from an envelope set in the runtime's Settings
+  ([peer-effort delta](design/runtime-coordination-peer-effort.md)); the room still ships no routing
+  table, and the model stays the profile's. This is about *task* routing, and it is not a claim of
   capability parity between seats: which capabilities a seat carries is decided by role (§2b),
   because a seat with no room tools has no use for an orchestration surface.
 - **No rewriting of operator control-plane configuration.** A recognizably Paseo-related MCP

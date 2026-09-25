@@ -316,9 +316,11 @@ implementation plan, but its behavior is fixed here:
 - runtime adds no model-selection policy or authority. Human/operator-owned room/provider configuration
   determines the exact model; Lead may choose an eligible exact Peer provider but cannot name, change,
   waive or substitute its model. Runtime records observed identity and refuses assignment drift;
-- the same rule governs how the seat launches. Runtime carries the room profile's `modeId` and
-  `thinkingOptionId` into Peer creation exactly as the operator set them, and chooses neither. It
-  reads them only from the room profile, never from a provider default: a provider's default mode
+- the same rule governs how the seat launches. Runtime carries the room profile's `modeId` into Peer
+  creation exactly as the operator set it, and the profile's `thinkingOptionId` unless Lead chose
+  another inside the operator's envelope ([peer-effort delta](runtime-coordination-peer-effort.md));
+  the runtime itself chooses none of them. It reads them only from the room profile, never from a
+  provider default: a provider's default mode
   is Paseo's choice for a seat a human is watching, and a dispatched Peer is not one. A Peer
   launched into a mode that asks before each tool stalls on its first call with nobody to answer,
   so omitting the mode would silently substitute an operator choice, not decline to make one;
@@ -1640,6 +1642,7 @@ Q-011 do not block Phases 0–1 because those phases contain no sensor and no wo
 
 | Date | Author | Change |
 |---|---|---|
+| 2026-09-25 | Repository owner / Bytes | §3.1 launch rule amended by the [peer-effort delta](runtime-coordination-peer-effort.md): Lead may choose a runtime Peer's thinking option inside an operator-set envelope, validated against Paseo's listed options; the runtime still chooses none, and model identity is unchanged. |
 | 2026-09-25 | Bytes | §4.4: notices to Lead name an assignment by disposition, outcome gist and id, and a runtime Peer is titled from the same parts instead of `Peer <id>`, after an operator found both unreadable across some thirty assignments a day. Text only; no event, authority or identity change. |
 | 2026-09-24 | Bytes | D5: `assignment_create` refuses a base that is not a commit of the repository (`base_unknown`), which only worktree dispatch checked before; a read-only assignment could carry a mistyped base into its brief. |
 | 2026-09-24 | Bytes | §8.1's panel is redesigned per [runtime-panel-ux.md](runtime-panel-ux.md): attention first, one place per project with its runtime record inside, guided modal forms, and the host's Settings controls for Room attention and Room seats. `runtime.room` gains read-only display fields and keeps projects whose seats are all archived; no behaviour changes. |

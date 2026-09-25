@@ -52,8 +52,13 @@ against named risks and return evidence that supports it or findings that block 
 read-only: establish what is true in a named unfamiliar area before commitment and return the
 evidence, the remaining unknowns, and the confidence level.
 
-Use the exact profile model and thinking defaults of the seat being opened. Only an explicit
-repository routing rule changes them, and a decision with material cost belongs to Human.
+Use the exact profile model of the seat being opened. For a runtime dispatch you may choose the
+Peer's thinking effort from the options the operator allows for that Peer; the profile's option is
+the default. Choose by the work's uncertainty and verification burden, not by its disposition:
+lower for a well-specified change behind a strong gate, higher for unfamiliar code, an open design
+question, or a review of a change that is hard to reverse. State the reason in the dispatch. The
+allowed options are Human's cost decision; do not work around them. Outside the runtime, only an
+explicit repository routing rule changes the profile defaults.
 
 Name the repository's own verification gate and run it: Lead when Lead writes the change,
 otherwise the Peer whose brief names the exact command. Report the result as it came back,

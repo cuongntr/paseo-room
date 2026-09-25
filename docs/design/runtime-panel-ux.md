@@ -116,7 +116,9 @@ belongs to an observed project, and falls back to Room otherwise. Row order:
   - *Status*.
   - An egress callout while the sensor sends off the machine.
 - **Settings › Room seats.** Host Settings rows, one per seat, with an account line and a state
-  pill, and **Refresh** in the section header.
+  pill, and **Refresh** in the section header. A second section, *Thinking Lead may choose*, has one
+  switch per thinking option Paseo lists for each Peer provider's profile model; the profile's own
+  option is on and fixed ([peer-effort delta](runtime-coordination-peer-effort.md)).
 - **Role pill (every seat's composer).** Paseo 0.9 draws a tab icon only for a built-in or
   plugin-registered provider, so a room seat's tab shows the generic agent icon, and a plugin cannot
   decorate tabs. Instead, each live seat gets a composer pill that names its role: *Supervisor*
@@ -162,4 +164,5 @@ belongs to an observed project, and falls back to Room otherwise. Row order:
 |---|---|---|
 | 2026-09-24 | Bytes | Created from the operator's request to redesign the panel: attention-first information architecture, project-centred navigation, guided modal forms, host Settings controls for the settings screens. |
 | 2026-09-24 | Bytes | Role pill: each seat's composer shows its room role without renaming the agent, because Paseo 0.9 gives custom providers no tab icon. |
+| 2026-09-25 | Bytes | Room seats gains *Thinking Lead may choose*, the operator's per-Peer-provider thinking envelope. |
 | 2026-09-25 | Bytes | Seat rows and role pills show the model and thinking option each seat runs with; runtime Peers are named by disposition, outcome gist and assignment id instead of `Peer <id>`. |

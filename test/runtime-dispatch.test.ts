@@ -3,6 +3,10 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { assignmentName, peerTitle } from '../src/runtime-plugin/server/brief.js';
 import { latestCapability } from '../src/runtime-plugin/server/capabilities.js';
+import { toolDefinitions } from '../src/runtime-plugin/server/tools.js';
+import { assignmentDetailView } from '../src/runtime-plugin/server/domain/views.js';
+import { DELEGATING_THINKING as PLUGIN_DELEGATING_THINKING } from '../src/runtime-plugin/shared/effort.js';
+import { DELEGATING_THINKING } from '../src/roles.js';
 import { harness, readOnlyBrief, writableBrief, type Harness } from './runtime-harness.js';
 
 const open: Harness[] = [];
@@ -137,6 +141,76 @@ describe('two-step writable dispatch', () => {
     expect(peerTitle(named)).toBe('Reviewer · Review the Docker Compose dev environment for… · asg_12345678');
     expect(assignmentName(named)).toBe('Reviewer "Review the Docker Compose dev environment for…" (asg_12345678)');
     expect(peerTitle({ id: 'asg_12345678', input: { kind: 'scout', outcome: 'Map auth' } })).toBe('Scout · Map auth · asg_12345678');
+  });
+
+  it('lets Lead choose thinking only inside the operator\'s envelope and Paseo\'s options, with a reason', async () => {
+    const h = await harness({ peerEffort: { allowedThinking: { 'codex-peer': ['high', 'max'] } } });
+    open.push(h);
+    h.paseo.peerModels['codex-peer'] = 'gpt-operator';
+    h.paseo.peerThinking['codex-peer'] = 'medium';
+    h.paseo.thinkingCatalog['codex-peer/gpt-operator'] = ['low', 'medium', 'high', 'xhigh'].map(id => ({ id, label: id }));
+    // Read-only work, so several dispatches may hold Peers at once in Lead's workspace.
+    const dispatch = async (thinking: string, thinkingReason?: string) => {
+      const id = await assignment(h, readOnlyBrief(h.base));
+      return { id, result: await h.controller.dispatch(h.lead, { assignmentId: id, peerProvider: 'codex-peer', thinking, ...(thinkingReason === undefined ? {} : { thinkingReason }) }) };
+    };
+    // Each refusal comes before anything is recorded.
+    const noReason = await dispatch('high');
+    expect(noReason.result).toMatchObject({ ok: false, code: 'thinking_reason_missing' });
+    expect((await ledger(h, noReason.id)).types).toEqual(['assignment.created']);
+    expect((await dispatch('xhigh', 'Unfamiliar subsystem.')).result).toMatchObject({ ok: false, code: 'thinking_not_allowed', message: expect.stringContaining('medium, high, max') as unknown });
+    expect((await dispatch('max', 'Unfamiliar subsystem.')).result).toMatchObject({ ok: false, code: 'thinking_unsupported', message: expect.stringContaining('low, medium, high, xhigh') as unknown });
+
+    // The profile's own option needs no reason and records no choice.
+    const kept = await dispatch('medium');
+    expect(kept.result.ok).toBe(true);
+    expect((await ledger(h, kept.id)).view).not.toHaveProperty('chosenThinking');
+
+    const chosen = await dispatch('high', 'Reviews a migration that is hard to reverse.');
+    expect(chosen.result.ok).toBe(true);
+    expect(h.paseo.calls.filter(call => call.operation === 'createAgent').at(-1)?.args[0]).toMatchObject({ model: 'gpt-operator', thinkingOptionId: 'high' });
+    const { state, view } = await ledger(h, chosen.id);
+    expect(view).toMatchObject({ chosenThinking: 'high', thinkingReason: 'Reviews a migration that is hard to reverse.', observedThinking: 'high' });
+    // Supervisor and the panel see the choice, its reason and what the Peer runs.
+    expect(assignmentDetailView(state, chosen.id, 'lead')?.thinking).toEqual({ chosen: 'high', reason: 'Reviews a migration that is hard to reverse.', observed: 'high' });
+  });
+
+  it('never lets Lead choose a thinking option that delegates, whatever the operator allows', async () => {
+    const h = await harness({ peerEffort: { allowedThinking: { 'codex-peer': ['high', 'ultra'] } } });
+    open.push(h);
+    h.paseo.thinkingCatalog['codex-peer/model-x'] = ['medium', 'high', 'ultra'].map(id => ({ id, label: id }));
+    const id = await assignment(h, readOnlyBrief(h.base));
+    expect(await h.controller.dispatch(h.lead, { assignmentId: id, peerProvider: 'codex-peer', thinking: 'ultra', thinkingReason: 'Hardest work.' }))
+      .toMatchObject({ ok: false, code: 'thinking_delegates' });
+    expect(toolDefinitions('lead', undefined, { allowedThinking: { 'codex-peer': ['high', 'ultra'] } }).find(tool => tool.name === 'assignment_dispatch')?.description)
+      .toContain('the operator allows codex-peer: high.');
+    // The plugin keeps its own copy of the CLI's list, since it may not import the CLI.
+    expect(PLUGIN_DELEGATING_THINKING).toEqual(DELEGATING_THINKING);
+  });
+
+  it('takes the model\'s own default when the profile sets no thinking, and records Paseo\'s value only when it fits', async () => {
+    const h = await harness();
+    open.push(h);
+    h.paseo.thinkingCatalog['codex-peer/model-x'] = [{ id: 'low', label: 'Low' }, { id: 'medium', label: 'Medium', isDefault: true }];
+    const kept = await assignment(h, readOnlyBrief(h.base));
+    expect((await h.controller.dispatch(h.lead, { assignmentId: kept, peerProvider: 'codex-peer', thinking: 'medium' })).ok).toBe(true);
+    expect((await ledger(h, kept)).view).not.toHaveProperty('chosenThinking');
+
+    // A value Paseo reports that the event cannot hold is left out rather than failing the binding.
+    h.paseo.peerThinking['codex-peer'] = 'x'.repeat(70);
+    const odd = await assignment(h, readOnlyBrief(h.base));
+    expect((await h.controller.dispatch(h.lead, { assignmentId: odd, peerProvider: 'codex-peer' })).ok).toBe(true);
+    expect((await ledger(h, odd)).view).toMatchObject({ state: 'active' });
+    expect((await ledger(h, odd)).view).not.toHaveProperty('observedThinking');
+  });
+
+  it('describes the thinking the operator allows in Lead\'s dispatch tool', () => {
+    const dispatchTool = (effort?: { allowedThinking: Record<string, string[]> }) => toolDefinitions('lead', undefined, effort).find(tool => tool.name === 'assignment_dispatch')?.description ?? '';
+    expect(dispatchTool()).toContain('allows no other thinking yet');
+    // The criteria are the contract's to state; the tool only points at it.
+    expect(dispatchTool()).toContain('as your contract directs');
+    expect(dispatchTool()).not.toContain('uncertainty');
+    expect(dispatchTool({ allowedThinking: { 'claude-peer': ['low', 'high'], 'pi-peer': [] } })).toContain('the operator allows claude-peer: low, high.');
   });
 
   it('creates the Peer on the operator-owned model and mode, and refuses when no model is configured', async () => {

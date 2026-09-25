@@ -8,6 +8,7 @@
  */
 import { join } from 'node:path';
 import { z } from 'zod';
+import { DEFAULT_PEER_EFFORT_SETTINGS, isDelegating, type PeerEffortSettings } from '../shared/effort.js';
 import { boundedArray, boundedString } from '../shared/limits.js';
 import { LEAD_OPERATIONS, SUPERVISOR_OPERATIONS, type RuntimeRole } from '../shared/policy.js';
 import { LEAD_ACTION_SCHEMAS, SUPERVISOR_ACTION_SCHEMAS } from './contracts/actions.js';
@@ -64,10 +65,28 @@ function handoffSchema(kind: AssignmentKind): Record<string, unknown> {
   }));
 }
 
-export function toolDefinitions(role: RuntimeRole, kind?: AssignmentKind): ToolDefinition[] {
+/**
+ * `assignment_dispatch` with the thinking options the operator currently allows beyond each
+ * profile default (docs/design/runtime-coordination-peer-effort.md §3).
+ */
+function dispatchDescription(effort: PeerEffortSettings): string {
+  const allowed = Object.entries(effort.allowedThinking)
+    .map(([provider, options]) => [provider, options.filter(option => !isDelegating(option))] as const)
+    .filter(([, options]) => options.length > 0);
+  const offer = allowed.length === 0
+    ? 'The operator allows no other thinking yet, so every Peer launches on its default.'
+    : `Besides each Peer's default, the operator allows ${allowed.map(([provider, options]) => `${provider}: ${options.join(', ')}`).join('; ')}.`;
+  return `${DESCRIPTIONS.assignment_dispatch ?? ''} thinking sets the Peer's thinking effort as your contract directs; give thinkingReason when it differs from the default. ${offer}`;
+}
+
+export function toolDefinitions(role: RuntimeRole, kind?: AssignmentKind, effort: PeerEffortSettings = DEFAULT_PEER_EFFORT_SETTINGS): ToolDefinition[] {
   const define = (name: string, schema: Record<string, unknown>): ToolDefinition => ({ name, description: DESCRIPTIONS[name] ?? name, inputSchema: schema });
   if (role === 'supervisor') return SUPERVISOR_OPERATIONS.map(name => define(name, schemaOf(SUPERVISOR_ACTION_SCHEMAS[name])));
-  if (role === 'lead') return LEAD_OPERATIONS.map(name => define(name, schemaOf(LEAD_ACTION_SCHEMAS[name])));
+  if (role === 'lead') {
+    return LEAD_OPERATIONS.map(name => (name === 'assignment_dispatch'
+      ? { ...define(name, schemaOf(LEAD_ACTION_SCHEMAS[name])), description: dispatchDescription(effort) }
+      : define(name, schemaOf(LEAD_ACTION_SCHEMAS[name]))));
+  }
   if (kind === undefined) return [];
   return [define('ask', schemaOf(askInputSchema)), define('handoff', handoffSchema(kind))];
 }
@@ -76,13 +95,16 @@ export function toolsFile(role: RuntimeRole, kind?: AssignmentKind): string {
   return role === 'peer' ? `peer-${String(kind)}.json` : `${role}.json`;
 }
 
-/** Writes every role's tool list where the bridges read it. Rewritten on each plugin start. */
-export async function writeToolFiles(runtimeRoot: string): Promise<void> {
+/**
+ * Writes every role's tool list where the bridges read it: on each plugin start, and again when the
+ * operator changes the thinking envelope, which Lead's dispatch description lists.
+ */
+export async function writeToolFiles(runtimeRoot: string, effort: PeerEffortSettings = DEFAULT_PEER_EFFORT_SETTINGS): Promise<void> {
   const directory = join(runtimeRoot, 'tools');
   await ensurePrivateDirectory(directory);
   const targets: [string, ToolDefinition[]][] = [
     [toolsFile('supervisor'), toolDefinitions('supervisor')],
-    [toolsFile('lead'), toolDefinitions('lead')],
+    [toolsFile('lead'), toolDefinitions('lead', undefined, effort)],
     ...ASSIGNMENT_KINDS.map(kind => [toolsFile('peer', kind), toolDefinitions('peer', kind)] as [string, ToolDefinition[]]),
   ];
   for (const [name, tools] of targets) {

@@ -11,7 +11,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  ASSIGNMENT_LABEL, CreationConflictError, PARENT_AGENT_ID_LABEL, type AgentSnapshot, type CreateAgentInput, type PaseoPort, type PeerLaunch, type ProviderCommand,
+  ASSIGNMENT_LABEL, CreationConflictError, PARENT_AGENT_ID_LABEL, type AgentSnapshot, type CreateAgentInput, type PaseoPort, type PeerLaunch, type ProviderCommand, type ThinkingOption,
   type SendBehavior, type TimelineEntry, type WorkspaceSnapshot, type WorktreeWorkspaceRequest,
 } from '../src/runtime-plugin/server/paseo-port.js';
 
@@ -276,13 +276,22 @@ export class FakePaseo implements PaseoPort {
   readonly peerModels: Record<string, string | null> = {};
   /** Operator-owned launch mode per provider, as the room profile would carry it. */
   readonly peerModes: Record<string, string> = {};
+  /** Operator-owned thinking option per provider, as the room profile would carry it. */
+  readonly peerThinking: Record<string, string> = {};
+  /** The thinking options Paseo lists per provider's model; none unless a test sets them. */
+  readonly thinkingCatalog: Record<string, readonly ThinkingOption[]> = {};
 
   resolveLaunch(provider: string): Promise<PeerLaunch | undefined> {
     const configured = this.peerModels[provider];
     if (configured === null) return Promise.resolve(undefined);
     const model = configured ?? this.models[provider] ?? 'model-x';
     const modeId = this.peerModes[provider];
-    return Promise.resolve({ model, ...(modeId === undefined ? {} : { modeId }) });
+    const thinkingOptionId = this.peerThinking[provider];
+    return Promise.resolve({ model, ...(modeId === undefined ? {} : { modeId }), ...(thinkingOptionId === undefined ? {} : { thinkingOptionId }) });
+  }
+
+  thinkingOptions(provider: string, model: string): Promise<readonly ThinkingOption[]> {
+    return Promise.resolve(this.thinkingCatalog[`${provider}/${model}`] ?? []);
   }
 
   /** Operator-owned launch entries per provider, as Paseo's config would carry them. */

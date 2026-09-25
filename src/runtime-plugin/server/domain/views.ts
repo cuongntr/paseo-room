@@ -61,6 +61,11 @@ export interface AssignmentSummary {
   readonly state: Claim<string>;
   readonly closure: Claim<string>;
   readonly peerProviderId?: string;
+  /**
+   * The Peer's thinking: what Lead chose and why (absent when it kept the default), and what the
+   * Peer reported at creation — both shown, so a choice that was never applied is visible.
+   */
+  readonly thinking?: { readonly chosen?: string; readonly reason?: string; readonly observed?: string };
   readonly candidate?: Claim<string>;
 }
 
@@ -251,11 +256,17 @@ function stateClaim(view: AssignmentView): Claim<string> {
 }
 
 function summary(view: AssignmentView): AssignmentSummary {
+  const thinking = {
+    ...(view.chosenThinking === undefined ? {} : { chosen: view.chosenThinking }),
+    ...(view.thinkingReason === undefined ? {} : { reason: view.thinkingReason }),
+    ...(view.observedThinking === undefined ? {} : { observed: view.observedThinking }),
+  };
   return {
     id: view.id, mode: view.input.mode, kind: view.input.kind, outcome: view.input.outcome,
     state: stateClaim(view),
     closure: { value: view.closure, evidence: view.closure === 'uncertain' ? 'unverifiable' : view.closure === 'closed' ? 'detected' : 'enforced' },
     ...(view.peerProviderId === undefined ? {} : { peerProviderId: view.peerProviderId }),
+    ...(Object.keys(thinking).length === 0 ? {} : { thinking }),
     ...(view.candidate === undefined ? {} : { candidate: { value: view.candidate.commit, evidence: 'detected' as const } }),
   };
 }

@@ -96,6 +96,25 @@ export const runtimeSeatsRpc = defineRpc({
   output: answer(z.strictObject({ checkedAt: z.string(), seats: z.array(seatAccount) })),
 });
 
+/**
+ * For each room Peer provider, what the operator may allow Lead to choose: the profile's model and
+ * thinking, and the thinking options Paseo lists for that model (peer-effort delta §3).
+ */
+export const runtimePeerEffortRpc = defineRpc({
+  name: 'runtime.peer-effort',
+  input: z.strictObject({}),
+  output: answer(z.strictObject({
+    settingsAvailable: z.boolean(),
+    providers: z.array(z.strictObject({
+      providerId: z.string().min(1).max(128),
+      agent: z.enum(RUNTIME_AGENTS),
+      model: z.string().max(256).nullable(),
+      defaultThinking: z.string().max(64).nullable(),
+      options: z.array(z.strictObject({ id: z.string().min(1).max(64), label: z.string().max(200) })),
+    })),
+  })),
+});
+
 const agentId = z.string().min(1).max(128);
 const path = z.string().min(1).max(4_096);
 const attentionItemId = z.string().regex(/^att_[A-Za-z0-9_-]{8,32}$/);
@@ -160,5 +179,5 @@ export const RUNTIME_RPCS = [
   runtimeHealthRpc, runtimeProjectRpc, runtimeAssignmentRpc, runtimeRecoverRpc, runtimeAbandonRpc,
   runtimeResolveOwnershipRpc, runtimeQuarantineRpc, runtimeWorkspaceCloseRpc, runtimeLeaseReclaimRpc,
   runtimeSeatsRpc, runtimeRoomRpc, runtimeStartSupervisorRpc, runtimeProjectPreflightRpc, runtimeStartProjectRpc,
-  runtimeAssignSupervisorRpc, runtimeIncidentFeedbackRpc, runtimeAttentionKeyRpc, runtimeAttentionStatusRpc,
+  runtimeAssignSupervisorRpc, runtimeIncidentFeedbackRpc, runtimeAttentionKeyRpc, runtimeAttentionStatusRpc, runtimePeerEffortRpc,
 ] as const;

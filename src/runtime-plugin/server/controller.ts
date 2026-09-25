@@ -10,6 +10,7 @@
  */
 import { randomBytes, randomUUID } from 'node:crypto';
 import { join } from 'node:path';
+import { isDelegating, type PeerEffortSettings } from '../shared/effort.js';
 import { QUALIFIED_WORKTREE_DAEMONS } from '../shared/identity.js';
 import type { RuntimeRole } from '../shared/policy.js';
 import { assignmentName, peerTitle, renderBrief, renderContinuation } from './brief.js';
@@ -27,7 +28,7 @@ import { hostPaseoVersion } from './host.js';
 import { Notices } from './notices.js';
 import { checkLeadOwnership } from './ownership.js';
 import {
-  ASSIGNMENT_LABEL, CreationConflictError, PARENT_AGENT_ID_LABEL, peerStopped, type AgentSnapshot, type PaseoPort, type PeerLaunch, type WorkspaceSnapshot,
+  ASSIGNMENT_LABEL, CreationConflictError, PARENT_AGENT_ID_LABEL, peerStopped, type AgentSnapshot, type PaseoPort, type PeerLaunch, type ThinkingOption, type WorkspaceSnapshot,
 } from './paseo-port.js';
 import type { Recognition } from './recognition.js';
 import { ProjectStore, type NewEvent } from './store/project.js';
@@ -58,6 +59,8 @@ export interface ControllerDependencies {
   readonly daemonVersion?: () => string | undefined;
   /** Versions on which worktree dispatch is qualified; `QUALIFIED_WORKTREE_DAEMONS` when not supplied. */
   readonly qualifiedDaemons?: readonly string[];
+  /** The operator's thinking envelope; the profile's option alone when not supplied. */
+  readonly peerEffort?: () => PeerEffortSettings;
 }
 
 export interface LoadedProject {
@@ -71,6 +74,8 @@ export interface DispatchInput {
   readonly peerProvider: string;
   readonly isolation?: 'lead-workspace' | 'worktree' | undefined;
   readonly serialOnly?: readonly string[] | undefined;
+  readonly thinking?: string | undefined;
+  readonly thinkingReason?: string | undefined;
 }
 
 /** A worktree lease decided before anything is recorded. */
@@ -301,14 +306,20 @@ export class Controller {
       }
       // The launch settings are operator-owned; without a model the runtime refuses, before
       // recording anything.
-      const launch = await this.deps.paseo.resolveLaunch(input.peerProvider);
-      if (launch === undefined) {
+      const profile = await this.deps.paseo.resolveLaunch(input.peerProvider);
+      if (profile === undefined) {
         return refuse('peer_model_unresolved', `${input.peerProvider} has no default model and its room profile sets none; set one in Paseo before dispatching.`);
       }
+      const effort = await this.thinkingChoice(input, profile);
+      if (!effort.ok) return effort;
+      const launch = effort.value.launch;
       const workspaceId = lease?.value.workspaceId ?? caller.workspaceId ?? 'unknown';
       const lead = this.lead(caller);
       try {
-        await this.append(loaded, { type: 'assignment.dispatch-requested', payloadVersion: 1, assignmentId: view.id, actor: lead, data: { peerProviderId: input.peerProvider, workspaceId } });
+        await this.append(loaded, {
+          type: 'assignment.dispatch-requested', payloadVersion: 1, assignmentId: view.id, actor: lead,
+          data: { peerProviderId: input.peerProvider, workspaceId, ...effort.value.recorded },
+        });
       } catch (error) {
         return refuse('dispatch_refused', error instanceof Error ? error.message : String(error));
       }
@@ -323,6 +334,50 @@ export class Controller {
       if (!worktree.ok) return worktree;
       return await this.launchPeer(loaded, view.id, { caller, provider: input.peerProvider, launch, placement: { kind: 'worktree', workspaceId, path: worktree.value.path, branch: worktree.value.branch } });
     });
+  }
+
+  /**
+   * Lead's thinking choice for a dispatch (docs/design/runtime-coordination-peer-effort.md E-D3):
+   * the Peer's default unless Lead named another, which must pass `thinkingRefusal`. The default is
+   * the profile's option, else the one Paseo marks as the model's. Nothing is substituted or rounded.
+   */
+  private async thinkingChoice(input: DispatchInput, profile: PeerLaunch): Promise<ControllerResult<{ readonly launch: PeerLaunch; readonly recorded: { readonly thinking?: string; readonly thinkingReason?: string } }>> {
+    const chosen = input.thinking;
+    if (chosen === undefined || chosen === profile.thinkingOptionId) return done({ launch: profile, recorded: {} });
+    const options = await this.deps.paseo.thinkingOptions(input.peerProvider, profile.model);
+    const fallback = profile.thinkingOptionId ?? options.find(option => option.isDefault === true)?.id;
+    // Naming what the Peer would launch on anyway is no choice.
+    if (chosen === fallback) return done({ launch: profile, recorded: {} });
+    const reason = input.thinkingReason?.trim() ?? '';
+    if (reason === '') return refuse('thinking_reason_missing', `Say in thinkingReason why this work needs thinking ${chosen} rather than the default ${fallback ?? 'of its model'}.`);
+    const refusal = this.thinkingRefusal(input.peerProvider, profile.model, fallback, options, chosen);
+    if (refusal !== undefined) return refuse(refusal.code, refusal.message);
+    return done({ launch: { ...profile, thinkingOptionId: chosen }, recorded: { thinking: chosen, thinkingReason: reason.slice(0, 1_000) } });
+  }
+
+  /** Why `chosen` may not launch a Peer now: it delegates, the operator does not allow it, or the model does not offer it. */
+  private thinkingRefusal(provider: string, model: string, fallback: string | undefined, options: readonly ThinkingOption[], chosen: string): { readonly code: string; readonly message: string } | undefined {
+    if (isDelegating(chosen)) return { code: 'thinking_delegates', message: `Thinking ${chosen} advertises automatic task delegation, a second control plane; it is never a Lead choice.` };
+    const allowed = [...new Set([...(fallback === undefined ? [] : [fallback]), ...(this.deps.peerEffort?.().allowedThinking[provider] ?? []).filter(option => !isDelegating(option))])];
+    if (!allowed.includes(chosen)) {
+      return { code: 'thinking_not_allowed', message: `The operator allows ${provider} only ${allowed.length === 0 ? 'its default' : allowed.join(', ')}; omit thinking to keep the default.` };
+    }
+    const supported = options.map(option => option.id);
+    if (!supported.includes(chosen)) {
+      return { code: 'thinking_unsupported', message: `${model} on ${provider} offers ${supported.length === 0 ? 'no thinking options' : supported.join(', ')}, not ${chosen}.` };
+    }
+    return undefined;
+  }
+
+  /**
+   * The launch for a reclaimed Peer: the thinking Lead chose at dispatch while the operator and the
+   * model still allow it, else the default — the operator's current cap wins over an earlier choice.
+   */
+  private async reclaimLaunch(provider: string, profile: PeerLaunch, chosen: string | undefined): Promise<PeerLaunch> {
+    if (chosen === undefined || chosen === profile.thinkingOptionId) return profile;
+    const options = await this.deps.paseo.thinkingOptions(provider, profile.model).catch(() => []);
+    const fallback = profile.thinkingOptionId ?? options.find(option => option.isDefault === true)?.id;
+    return this.thinkingRefusal(provider, profile.model, fallback, options, chosen) === undefined ? { ...profile, thinkingOptionId: chosen } : profile;
   }
 
   /**
@@ -511,7 +566,11 @@ export class Controller {
 
     await this.append(loaded, {
       type: 'binding.published', payloadVersion: 1, assignmentId: view.id, actor: this.plugin,
-      data: { agentId, providerId: snapshot.provider, model: snapshot.model ?? 'provider-default', parentAgentId: caller.agentId, workspaceId, roomGeneration: this.roomGeneration() },
+      data: {
+        agentId, providerId: snapshot.provider, model: snapshot.model ?? 'provider-default', parentAgentId: caller.agentId, workspaceId, roomGeneration: this.roomGeneration(),
+        // Display evidence from Paseo: recorded only when it fits the event, never allowed to fail the binding.
+        ...(snapshot.thinking === null || snapshot.thinking === '' || snapshot.thinking.length > 64 ? {} : { thinking: snapshot.thinking }),
+      },
     });
     if (writable) await this.append(loaded, { type: 'ownership.held', payloadVersion: 1, assignmentId: view.id, actor: this.plugin, data: { agentId } });
     const current = loaded.state.assignments.get(view.id) ?? view;
@@ -793,8 +852,10 @@ export class Controller {
         ? `Paseo no longer knows Peer ${prior}, so it cannot be proven stopped; a Human may reclaim from the panel.`
         : `Peer ${prior} is ${live.status}${live.archivedAt === null ? ' and not archived' : ''}; archive it in Paseo before reclaiming.`);
     }
-    const launch = await this.deps.paseo.resolveLaunch(provider);
-    if (launch === undefined) return refuse('peer_model_unresolved', `${provider} has no default model and its room profile sets none.`);
+    const profile = await this.deps.paseo.resolveLaunch(provider);
+    if (profile === undefined) return refuse('peer_model_unresolved', `${provider} has no default model and its room profile sets none.`);
+    // Decided before anything is recorded: the new Peer continues the same work.
+    const launch = await this.reclaimLaunch(provider, profile, view.chosenThinking);
     const epoch = lease.epoch + 1;
     await this.append(loaded, {
       type: 'lease.reclaimed', payloadVersion: 1, assignmentId, actor: decidedBy === 'lead' ? { source: 'seat', role: 'lead', agentId: view.leadAgentId, providerId: view.leadProviderId } : { source: 'human' },

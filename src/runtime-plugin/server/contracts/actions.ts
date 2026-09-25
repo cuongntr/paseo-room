@@ -32,6 +32,10 @@ export const LEAD_ACTION_SCHEMAS = {
     peerProvider: z.string().min(1).max(128),
     isolation: z.enum(['lead-workspace', 'worktree']).optional(),
     serialOnly: boundedArray(boundedString()).optional(),
+    // A thinking option the operator allows for that Peer provider, and why; omitted, the Peer
+    // launches on its profile's option (docs/design/runtime-coordination-peer-effort.md E-D2).
+    thinking: z.string().min(1).max(64).optional(),
+    thinkingReason: boundedString(1024).optional(),
   }),
   assignment_answer: z.strictObject({ ...assignment, answer: boundedString() }),
   assignment_rework: z.strictObject({ ...assignment, instructions: boundedString() }),

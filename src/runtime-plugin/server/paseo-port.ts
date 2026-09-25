@@ -55,6 +55,13 @@ export interface PeerLaunch {
   readonly thinkingOptionId?: string;
 }
 
+/** One thinking option of a model, as Paseo lists it; `isDefault` marks the model's own default. */
+export interface ThinkingOption {
+  readonly id: string;
+  readonly label: string;
+  readonly isDefault?: boolean;
+}
+
 export interface CreateAgentInput extends PeerLaunch {
   readonly provider: string;
   readonly cwd: string;
@@ -142,6 +149,8 @@ export interface PaseoPort {
    * Undefined when no model exists anywhere — dispatch then refuses rather than choosing.
    */
   resolveLaunch(provider: string): Promise<PeerLaunch | undefined>;
+  /** The thinking options Paseo lists for a provider's model; empty when it lists none. */
+  thinkingOptions(provider: string, model: string): Promise<readonly ThinkingOption[]>;
   /** The provider's configured executable and string environment, or undefined when it has none. */
   providerCommand(provider: string): Promise<ProviderCommand | undefined>;
   /** Creates an agent with no initial prompt; the first turn is always a separate `run`. */
@@ -340,6 +349,17 @@ export function sdkPaseoPort(handle: PaseoHandle, waitMs = 10_000): PaseoPort {
       const listed = await paseo.providers.listModels(provider) as { models?: readonly { id: string; isDefault?: boolean }[] };
       const fallback = listed.models?.find(model => model.isDefault === true)?.id;
       return fallback === undefined ? undefined : { model: fallback, ...settings };
+    },
+    async thinkingOptions(provider, model) {
+      const paseo = await api();
+      const listed = await paseo.providers.listModels(provider) as {
+        models?: readonly { id: string; aliases?: readonly string[]; defaultThinkingOptionId?: string; thinkingOptions?: readonly { id: string; label?: string; isDefault?: boolean }[] }[];
+      };
+      const entry = listed.models?.find(candidate => candidate.id === model || candidate.aliases?.includes(model) === true);
+      return (entry?.thinkingOptions ?? []).map(option => ({
+        id: option.id, label: option.label ?? option.id,
+        ...(option.id === entry?.defaultThinkingOptionId || option.isDefault === true ? { isDefault: true } : {}),
+      }));
     },
     async providerCommand(provider) {
       const paseo = await api();

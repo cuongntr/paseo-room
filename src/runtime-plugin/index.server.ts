@@ -7,6 +7,7 @@
  */
 import type { PluginServerContext } from '@getpaseo/plugin/server';
 import { ATTENTION_SETTINGS } from './shared/attention.js';
+import { PEER_EFFORT_SETTINGS } from './shared/effort.js';
 import { createRuntimeContext } from './server/context.js';
 import { ROOM_LOCATION } from './server/generated/location.js';
 import { handleSessionOpen, transformAgentCreate } from './server/hooks.js';
@@ -54,6 +55,22 @@ export default function contribute(server: PluginServerContext): () => void {
     disposers.push(() => { void unsubscribe(); });
   } catch (error) {
     console.error(`[paseo-room-runtime] Room attention settings are unavailable; defaults apply: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  // The Peer thinking envelope lives in the same store; without one, Peers keep their profile default.
+  try {
+    const effort = server.registerSettings(PEER_EFFORT_SETTINGS);
+    runtime.peerEffort.available = true;
+    const adopt = (state: Awaited<ReturnType<typeof effort.read>>): void => {
+      if (state.status !== 'ready') return;
+      runtime.adoptPeerEffort(state.values).catch((error: unknown) => {
+        console.error(`[paseo-room-runtime] The Lead tool list could not be rewritten: ${error instanceof Error ? error.message : String(error)}`);
+      });
+    };
+    effort.read().then(adopt, () => undefined);
+    const unsubscribe = effort.subscribe(adopt);
+    disposers.push(() => { void unsubscribe(); });
+  } catch (error) {
+    console.error(`[paseo-room-runtime] Peer effort settings are unavailable; profile defaults apply: ${error instanceof Error ? error.message : String(error)}`);
   }
   // A notice held for a recipient's pending permission is retried once that agent can take it.
   const retryHeld = (agentId: string): Promise<number> => runtime.controller.notices.retryFor(agentId);

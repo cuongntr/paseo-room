@@ -171,6 +171,37 @@ describe('lease reclaim', () => {
     expect(await report(h, correlation)).toMatchObject({ ok: true, result: { assignmentState: 'handed-back' } });
   });
 
+  it('launches the reclaimed Peer on the thinking Lead chose at dispatch', async () => {
+    const h = await harness({ worktrees: true, peerEffort: { allowedThinking: { 'codex-peer': ['high'] } } });
+    open.push(h);
+    h.paseo.thinkingCatalog['codex-peer/model-x'] = [{ id: 'medium', label: 'Medium' }, { id: 'high', label: 'High' }];
+    const created = await h.controller.createAssignment(h.lead, writableBrief(h.base, { writeScope: ['src'], gate }));
+    const id = created.ok ? created.value.assignmentId : '';
+    const dispatched = await h.controller.dispatch(h.lead, { assignmentId: id, peerProvider: 'codex-peer', isolation: 'worktree', thinking: 'high', thinkingReason: 'Unfamiliar legacy module.' });
+    expect(dispatched.ok).toBe(true);
+    kill(h, dispatched.ok ? dispatched.value.agentId : '');
+    const reclaimed = await h.controller.leaseReclaim(h.lead, { assignmentId: id, reason: 'The Peer stopped.' });
+    expect(reclaimed.ok).toBe(true);
+    expect(h.paseo.agents.get(reclaimed.ok ? reclaimed.value.agentId : '')?.thinking).toBe('high');
+    expect((await ledger(h)).state.assignments.get(id)).toMatchObject({ chosenThinking: 'high', observedThinking: 'high' });
+  });
+
+  it('reclaims on the default once the operator no longer allows the earlier choice', async () => {
+    const effort = { allowedThinking: { 'codex-peer': ['high'] } };
+    const h = await harness({ worktrees: true, peerEffort: effort });
+    open.push(h);
+    h.paseo.thinkingCatalog['codex-peer/model-x'] = [{ id: 'medium', label: 'Medium', isDefault: true }, { id: 'high', label: 'High' }];
+    const created = await h.controller.createAssignment(h.lead, writableBrief(h.base, { writeScope: ['src'], gate }));
+    const id = created.ok ? created.value.assignmentId : '';
+    const dispatched = await h.controller.dispatch(h.lead, { assignmentId: id, peerProvider: 'codex-peer', isolation: 'worktree', thinking: 'high', thinkingReason: 'Unfamiliar legacy module.' });
+    kill(h, dispatched.ok ? dispatched.value.agentId : '');
+    effort.allowedThinking['codex-peer'] = [];
+    const reclaimed = await h.controller.leaseReclaim(h.lead, { assignmentId: id, reason: 'The Peer stopped.' });
+    expect(reclaimed.ok).toBe(true);
+    const successor = h.paseo.calls.filter(call => call.operation === 'createAgentInWorkspace').at(-1)?.args[1] as { thinkingOptionId?: string } | undefined;
+    expect(successor?.thinkingOptionId).toBeUndefined();
+  });
+
   it('lets a Human reclaim from a Peer Paseo no longer knows, but never Lead, and never a live one', async () => {
     const h = await room();
     const s = await seat(h);

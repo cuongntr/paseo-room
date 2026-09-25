@@ -69,7 +69,7 @@ The skill is procedure, not policy. It inspects repository evidence, returns an 
 
 Lead's durable body keeps only the small, visible behavior required in every repository:
 
-- use the exact profile model and thinking defaults unless a repository protocol explicitly routes them;
+- use the exact profile model; choose a runtime Peer's thinking only within the operator's envelope ([peer-effort delta](runtime-coordination-peer-effort.md)), and otherwise keep the profile defaults unless a repository protocol explicitly routes them;
 - keep the four assignment dispositions as compact room vocabulary because every Peer brief must select one;
 - name and run the repository's actual verification gate; an unrun gate cannot support acceptance;
 - use a fresh read-only review when Human or repository policy requires it, or when Lead identifies material technical risk; and

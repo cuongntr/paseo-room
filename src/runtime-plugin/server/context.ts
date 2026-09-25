@@ -21,6 +21,7 @@ import { AttentionKey } from './attention/key.js';
 import { AttentionLog } from './attention/log.js';
 import { SystemOneSensor } from './attention/sensor.js';
 import { DEFAULT_ATTENTION_SETTINGS, type AttentionSettings } from '../shared/attention.js';
+import { DEFAULT_PEER_EFFORT_SETTINGS, type PeerEffortSettings } from '../shared/effort.js';
 
 export interface RuntimeContext {
   readonly location: RoomLocation;
@@ -39,6 +40,10 @@ export interface RuntimeContext {
   /** The current Room attention settings; replaced when the operator saves them. */
   readonly attentionSettings: { current: AttentionSettings; available: boolean };
   readonly attentionKey: AttentionKey;
+  /** The operator's thinking envelope for Peers (peer-effort delta); replaced when it is saved. */
+  readonly peerEffort: { current: PeerEffortSettings; available: boolean };
+  /** Adopts a saved envelope and rewrites the tool lists that describe it. */
+  adoptPeerEffort(settings: PeerEffortSettings): Promise<void>;
   readonly sensor: SystemOneSensor;
   /** Writes the advertised tool lists and starts draining the spool. */
   start(): Promise<void>;
@@ -50,7 +55,17 @@ export function createRuntimeContext(location: RoomLocation, nodePath = process.
   const recognition = new Recognition(location.pluginDirectory);
   const correlations = new CorrelationRegistry(join(location.runtimeRoot, 'correlations'));
   const handle = new PaseoHandle();
-  const controller = new Controller({ runtimeRoot: location.runtimeRoot, paseo: sdkPaseoPort(handle), git: new GitEvidence(), recognition, correlations });
+  const peerEffort = { current: DEFAULT_PEER_EFFORT_SETTINGS, available: false };
+  // One write at a time: start and a settings change may both rewrite the tool lists.
+  let toolWrites: Promise<void> = Promise.resolve();
+  const writeTools = (): Promise<void> => {
+    const next = toolWrites.then(() => writeToolFiles(location.runtimeRoot, peerEffort.current));
+    toolWrites = next.catch(() => undefined);
+    return next;
+  };
+  const controller = new Controller({
+    runtimeRoot: location.runtimeRoot, paseo: sdkPaseoPort(handle), git: new GitEvidence(), recognition, correlations, peerEffort: () => peerEffort.current,
+  });
   const attentionSettings = { current: DEFAULT_ATTENTION_SETTINGS, available: false };
   const attentionKey = AttentionKey.at(location.runtimeRoot);
   const now = (): Date => new Date();
@@ -93,11 +108,16 @@ export function createRuntimeContext(location: RoomLocation, nodePath = process.
     attention,
     attentionSettings,
     attentionKey,
+    peerEffort,
+    async adoptPeerEffort(settings) {
+      peerEffort.current = settings;
+      await writeTools();
+    },
     sensor,
     ready,
     async start() {
       await ready;
-      await writeToolFiles(location.runtimeRoot);
+      await writeTools();
       await spool.start();
     },
   };

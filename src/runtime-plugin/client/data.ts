@@ -7,7 +7,7 @@ import { useEffect, useRef, useState } from 'react';
 import {
   runtimeAbandonRpc, runtimeAssignmentRpc, runtimeAssignSupervisorRpc, runtimeHealthRpc, runtimeIncidentFeedbackRpc, runtimeLeaseReclaimRpc,
   runtimeProjectPreflightRpc, runtimeProjectRpc, runtimeQuarantineRpc, runtimeRecoverRpc, runtimeResolveOwnershipRpc, runtimeRoomRpc,
-  runtimeAttentionKeyRpc, runtimeAttentionStatusRpc, runtimeSeatsRpc, runtimeStartProjectRpc, runtimeStartSupervisorRpc, runtimeWorkspaceCloseRpc,
+  runtimeAttentionKeyRpc, runtimeAttentionStatusRpc, runtimePeerEffortRpc, runtimeSeatsRpc, runtimeStartProjectRpc, runtimeStartSupervisorRpc, runtimeWorkspaceCloseRpc,
 } from '../shared/rpc-contracts.js';
 
 export const POLL_MS = 5_000;
@@ -71,6 +71,7 @@ export function useRuntimeRpcs() {
     incidentFeedback: useRpc(runtimeIncidentFeedbackRpc),
     attentionKey: useRpc(runtimeAttentionKeyRpc),
     attentionStatus: useRpc(runtimeAttentionStatusRpc),
+    peerEffort: useRpc(runtimePeerEffortRpc),
   };
 }
 

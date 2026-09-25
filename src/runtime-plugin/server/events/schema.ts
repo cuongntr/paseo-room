@@ -19,6 +19,8 @@ export const EVENT_SCHEMA = 'paseo-room.runtime-event';
 const id = z.string().min(1).max(128);
 const text = boundedString();
 const reason = boundedString(1024);
+/** A provider thinking option id, as Paseo lists it for a model. */
+const thinkingOption = z.string().min(1).max(64);
 const generation = z.number().int().min(1);
 const digest = z.string().regex(/^sha256:[0-9a-f]{64}$/);
 const timestamp = z.iso.datetime({ offset: true });
@@ -63,7 +65,8 @@ export const EVENT_PAYLOADS = {
 
   // Assignment lifecycle decided by Lead or Human (§5.1).
   'assignment.created': { input: assignmentCreateSchema, leadAgentId: id, leadProviderId: id },
-  'assignment.dispatch-requested': { peerProviderId: id, workspaceId: id },
+  // Lead's thinking choice within the operator's envelope, and why (peer-effort delta E-D2, E-D4).
+  'assignment.dispatch-requested': { peerProviderId: id, workspaceId: id, thinking: thinkingOption.optional(), thinkingReason: reason.optional() },
   'assignment.answered': { answer: text },
   'assignment.rework-requested': { instructions: text },
   'assignment.accepted': {
@@ -99,6 +102,7 @@ export const EVENT_PAYLOADS = {
   'binding.refused': { agentId: id, reason },
   'binding.published': {
     agentId: id, providerId: id, model: z.string().min(1).max(256), parentAgentId: id, workspaceId: id, roomGeneration: id,
+    thinking: thinkingOption.optional(),
   },
   'reporting.generation-opened': { generation, capabilityHash: digest, turn: z.enum(['initial', 'answer', 'rework', 'follow-up']) },
   'run.requested': { intentId: id, generation, promptDigest: digest },

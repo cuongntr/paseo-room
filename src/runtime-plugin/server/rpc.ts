@@ -14,7 +14,7 @@ import type { z } from 'zod';
 import {
   runtimeAbandonRpc, runtimeAssignmentRpc, runtimeAssignSupervisorRpc, runtimeHealthRpc, runtimeIncidentFeedbackRpc, runtimeLeaseReclaimRpc,
   runtimeProjectPreflightRpc, runtimeProjectRpc, runtimeQuarantineRpc, runtimeRecoverRpc, runtimeResolveOwnershipRpc, runtimeRoomRpc,
-  runtimeAttentionKeyRpc, runtimeAttentionStatusRpc, runtimeSeatsRpc, runtimeStartProjectRpc, runtimeStartSupervisorRpc, runtimeWorkspaceCloseRpc,
+  runtimeAttentionKeyRpc, runtimeAttentionStatusRpc, runtimePeerEffortRpc, runtimeSeatsRpc, runtimeStartProjectRpc, runtimeStartSupervisorRpc, runtimeWorkspaceCloseRpc,
 } from '../shared/rpc-contracts.js';
 import { egressRefusal, type AttentionSettings } from '../shared/attention.js';
 import type { AttentionKey } from './attention/key.js';
@@ -43,6 +43,8 @@ export interface RpcRuntime {
   readonly sensor?: SystemOneSensor;
   readonly attentionKey?: AttentionKey;
   readonly attentionSettings?: { readonly current: AttentionSettings; readonly available: boolean };
+  /** Whether Paseo gave the plugin a store for the Peer thinking envelope. */
+  readonly peerEffort?: { readonly available: boolean };
 }
 
 type Answer = { schema: 1; revision: string; data: unknown; warnings: RuntimeWarningV1[] } | {
@@ -228,6 +230,27 @@ export function createRpcHandlers(runtime: RpcRuntime) {
       return answer(runtime, { checkedAt: (controller.deps.now?.() ?? new Date()).toISOString(), seats: accounts });
     },
 
+    async peerEffort(): Promise<Answer> {
+      const manifest = controller.deps.recognition.current.manifest;
+      if (manifest === undefined) return error('manifest_unavailable', 'The room manifest is not loaded, so the room seats are unknown.', 'Run paseo-room verify, then reload the runtime plugin.');
+      // Only the Peer providers a dispatch accepts: an envelope for any other could never apply.
+      const eligible = new Set(controller.deps.recognition.peerProviders());
+      const peers = Object.entries(manifest.providers).filter(([providerId, entry]) => entry.role === 'peer' && eligible.has(providerId));
+      const providers = await Promise.all(peers.map(async ([providerId, entry]) => {
+        const launch = await controller.deps.paseo.resolveLaunch(providerId).catch(() => undefined);
+        // Values from Paseo are bounded here, so one long label cannot void the whole answer.
+        const options = (launch === undefined ? [] : await controller.deps.paseo.thinkingOptions(providerId, launch.model).catch(() => []))
+          .filter(option => option.id.length <= 64);
+        const fallback = launch?.thinkingOptionId ?? options.find(option => option.isDefault === true)?.id;
+        return {
+          providerId, agent: entry.agent, model: launch?.model.slice(0, 256) ?? null,
+          defaultThinking: fallback === undefined || fallback.length > 64 ? null : fallback,
+          options: options.map(option => ({ id: option.id, label: option.label.slice(0, 200) })),
+        };
+      }));
+      return answer(runtime, { settingsAvailable: runtime.peerEffort?.available === true, providers });
+    },
+
     async room(): Promise<Answer> {
       const attention = runtime.attention;
       if (attention === undefined) return unavailable();
@@ -355,4 +378,5 @@ export function registerRpcs(server: Pick<PluginServerContext, 'handle'>, runtim
   server.handle(runtimeIncidentFeedbackRpc, async (input, { paseo }) => { supply(paseo); return runtimeIncidentFeedbackRpc.output.parse(await handlers.incidentFeedback(input)); });
   server.handle(runtimeAttentionKeyRpc, async (input, { paseo }) => { supply(paseo); return runtimeAttentionKeyRpc.output.parse(await handlers.attentionKey(input)); });
   server.handle(runtimeAttentionStatusRpc, async (_input, { paseo }) => { supply(paseo); return runtimeAttentionStatusRpc.output.parse(await handlers.attentionStatus()); });
+  server.handle(runtimePeerEffortRpc, async (_input, { paseo }) => { supply(paseo); return runtimePeerEffortRpc.output.parse(await handlers.peerEffort()); });
 }

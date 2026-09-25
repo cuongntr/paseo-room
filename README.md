@@ -628,6 +628,14 @@ npx paseo-room verify
   Supervisor of several projects) and `attention_feedback`, and cannot change an assignment. Its
   status and findings cover only its portfolio and the project it stands in; `room_status` lists
   the assignments still open or still to close, and only counts settled ones.
+- **Peer thinking.** A runtime-dispatched Peer launches on its room profile's model and thinking
+  option. In **Settings › Room seats › Thinking Lead may choose** you can allow other thinking
+  options per Peer provider, from the ones Paseo lists for its model. Lead may then pass `thinking`
+  (with a `thinkingReason`) to `assignment_dispatch`, as the Lead contract directs. The runtime
+  refuses anything outside what you allowed or what the model offers, and always refuses `ultra` and
+  `ultracode`, which start agents on their own. It records the choice, shows it with the reason to
+  Supervisor and in the panel, and keeps it for a reclaimed Peer while you still allow it. The model
+  itself is never Lead's to change.
 - **A runtime-dispatched Peer** is titled `<Disposition> · <outcome gist> · <assignment id>` (for
   example `Reviewer · Review the Docker Compose dev env… · asg_…`), and the runtime's notices to Lead
   name the assignment the same way. It gets exactly two tools, `ask` and `handoff`, for its own

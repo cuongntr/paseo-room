@@ -10,6 +10,7 @@ import { SettingsAction, SettingsRow, SettingsSection } from '@getpaseo/plugin/c
 import { useEffect, useState } from 'react';
 import { Text, View } from 'react-native';
 import { unwrap, usePolled, useRuntimeRpcs, type Unwrapped } from './data.js';
+import { PeerThinkingSection } from './effort-settings.js';
 import { AssignSupervisorModal, NewProjectModal, NewSupervisorModal } from './forms.js';
 import { Button, Callout, Card, Loading, Page, Pill, SPACE, Title, type Theme } from './kit.js';
 import { agentLabel, type RoomView } from './model.js';
@@ -181,6 +182,7 @@ export function RoomSeatsSettings(props: PluginSurfaceProps) {
           {data === undefined ? null : <SettingsAction label="Checked" hint={new Date(data.checkedAt).toLocaleString()} actionLabel="Check again" disabled={busy} onPress={() => { setTick(tick + 1); }} />}
         </SettingsSection>
         {data === undefined || data.seats.length > 0 ? null : <Card theme={theme}><Text style={{ color: theme.colors.foregroundMuted, padding: SPACE.lg }}>The room manifest lists no seats.</Text></Card>}
+        <PeerThinkingSection />
       </Page>
     </ScrollView>
   );

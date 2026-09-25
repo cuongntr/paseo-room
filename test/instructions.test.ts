@@ -233,7 +233,12 @@ describe('role instructions', () => {
     for (const marker of ['Engineer is writable', 'Architect is read-only', 'Reviewer is read-only', 'Scout is read-only']) {
       expect(lead).toContain(marker);
     }
-    expect(lead).toContain('Use the exact profile model and thinking defaults of the seat being opened');
+    expect(lead).toContain('Use the exact profile model of the seat being opened');
+    // Thinking is Lead's per-dispatch choice inside the operator's envelope, never by disposition name.
+    expect(lead).toContain('you may choose the Peer\'s thinking effort from the options the operator allows for that Peer');
+    expect(lead).toContain('Choose by the work\'s uncertainty and verification burden, not by its disposition');
+    expect(lead).toContain('The allowed options are Human\'s cost decision; do not work around them');
+    expect(lead).toContain('Outside the runtime, only an explicit repository routing rule changes the profile defaults');
     expect(lead).toContain("Name the repository's own verification gate and run it");
     expect(lead).toContain('a candidate whose gate was not run is not a candidate');
     expect(lead).toContain('Use a fresh read-only review when Human or a repository protocol requires one');

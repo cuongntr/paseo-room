@@ -164,9 +164,16 @@ export function RuntimeRecord(props: { readonly theme: Theme; readonly projectId
   );
 }
 
+/** Lead's choice and reason, or the default, and whether the Peer reports running something else. */
+function thinkingLine(thinking: NonNullable<AssignmentDetail['thinking']>): string {
+  const choice = thinking.chosen === undefined ? 'The Peer\'s default' : `Lead chose ${thinking.chosen}${thinking.reason === undefined ? '' : `: ${thinking.reason}`}`;
+  return thinking.chosen !== undefined && thinking.observed !== undefined && thinking.observed !== thinking.chosen ? `${choice} · the Peer reports ${thinking.observed}` : choice;
+}
+
 interface AssignmentDetail {
   readonly id: string; readonly kind: string; readonly mode: string; readonly outcome: string; readonly state: Claim; readonly closure: Claim;
   readonly peerProviderId?: string; readonly candidate?: Claim; readonly peerAgentId?: string; readonly observedModel?: string; readonly reportingGeneration: number;
+  readonly thinking?: { readonly chosen?: string; readonly reason?: string; readonly observed?: string };
   readonly brief: { readonly writeScope?: readonly string[]; readonly exclusions?: readonly string[]; readonly acceptanceEvidence?: readonly string[]; readonly baseCommit?: string; readonly gate?: { readonly command: string } };
   readonly peerVerification: readonly { readonly value: { readonly command: string; readonly outcome: string } }[];
   readonly runtimeGates: readonly { readonly value: { readonly gateRunId: string; readonly status: string; readonly exitCode?: number } }[];
@@ -204,6 +211,7 @@ export function AssignmentDetailView(props: { readonly theme: Theme; readonly pr
         <Row theme={theme} first title={detail.peerProviderId ?? 'Not dispatched'} subtitle={detail.observedModel === undefined ? `Report generation ${String(detail.reportingGeneration)}` : `Model ${detail.observedModel} · report generation ${String(detail.reportingGeneration)}`}
           trailing={detail.peerAgentId !== undefined && props.openAgent !== undefined
             ? <Button theme={theme} small label="Open Peer" icon="ExternalLink" onPress={() => { if (detail.peerAgentId !== undefined) props.openAgent?.(detail.peerAgentId); }} /> : undefined} />
+        {detail.thinking === undefined ? null : <Row theme={theme} title={`Thinking ${detail.thinking.observed ?? detail.thinking.chosen ?? ''}`} subtitle={thinkingLine(detail.thinking)} />}
         {detail.lease === undefined ? null : <Row theme={theme} title={`Worktree ${detail.lease.branch}`} subtitle={`Lease epoch ${String(detail.lease.epoch)}`} />}
       </Card>
       <SectionLabel theme={theme}>Evidence</SectionLabel>

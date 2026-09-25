@@ -5,7 +5,7 @@ import { PaseoHandle, type PaseoApi } from '../src/runtime-plugin/server/paseo-p
 import { Recovery } from '../src/runtime-plugin/server/recovery.js';
 import { createRpcHandlers, registerRpcs, type RpcRuntime } from '../src/runtime-plugin/server/rpc.js';
 import {
-  RUNTIME_RPCS, runtimeAbandonRpc, runtimeAssignmentRpc, runtimeHealthRpc, runtimeProjectRpc, runtimeSeatsRpc,
+  RUNTIME_RPCS, runtimeAbandonRpc, runtimeAssignmentRpc, runtimeHealthRpc, runtimePeerEffortRpc, runtimeProjectRpc, runtimeSeatsRpc,
 } from '../src/runtime-plugin/shared/rpc-contracts.js';
 import { harness, writableBrief, type Harness } from './runtime-harness.js';
 
@@ -58,6 +58,28 @@ describe('read RPCs', () => {
     expect(seats.find(entry => entry.providerId === 'claude-lead')).toMatchObject({ status: 'signed-in', email: 'seat@example.com' });
     expect(seats.filter(entry => entry.providerId !== 'claude-lead').every(entry => entry.status === 'unknown')).toBe(true);
     expect(ran).toEqual([`/bin/claude auth status ${lead}`]);
+  });
+
+  it('lists each Peer provider\'s profile model, default thinking and Paseo\'s options for the settings screen', async () => {
+    const h = await harness();
+    open.push(h);
+    h.paseo.peerModels['claude-peer'] = 'claude-opus-5-5';
+    h.paseo.peerThinking['claude-peer'] = 'medium';
+    h.paseo.thinkingCatalog['claude-peer/claude-opus-5-5'] = [{ id: 'low', label: 'Low' }, { id: 'medium', label: 'Medium' }, { id: 'high', label: 'High' }];
+    const answer = await createRpcHandlers({ controller: h.controller, recovery: new Recovery(h.controller), handle: new PaseoHandle(), peerEffort: { available: true } }).peerEffort();
+    expect(runtimePeerEffortRpc.output.safeParse(answer).success).toBe(true);
+    const providers = data(answer).providers as { providerId: string }[];
+    expect(providers.map(entry => entry.providerId).sort()).toEqual(['claude-peer', 'codex-peer']);
+    expect(data(answer)).toMatchObject({ settingsAvailable: true });
+    expect(providers.find(entry => entry.providerId === 'claude-peer')).toEqual({
+      providerId: 'claude-peer', agent: 'claude', model: 'claude-opus-5-5', defaultThinking: 'medium',
+      options: [{ id: 'low', label: 'Low' }, { id: 'medium', label: 'Medium' }, { id: 'high', label: 'High' }],
+    });
+    // Without a profile option, the default is the one Paseo marks as the model's; a long label is cut, not fatal.
+    h.paseo.thinkingCatalog['codex-peer/model-x'] = [{ id: 'low', label: 'L'.repeat(300) }, { id: 'medium', label: 'Medium', isDefault: true }];
+    const again = await createRpcHandlers({ controller: h.controller, recovery: new Recovery(h.controller), handle: new PaseoHandle(), peerEffort: { available: true } }).peerEffort();
+    expect(runtimePeerEffortRpc.output.safeParse(again).success).toBe(true);
+    expect((data(again).providers as { providerId: string; defaultThinking: string | null }[]).find(entry => entry.providerId === 'codex-peer')?.defaultThinking).toBe('medium');
   });
 
   it('reports plugin and project health, and labels live facts stale without Paseo', async () => {

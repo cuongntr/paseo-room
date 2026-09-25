@@ -117,6 +117,11 @@ export interface AssignmentView {
   readonly peerAgentId?: string;
   readonly observedProviderId?: string;
   readonly observedModel?: string;
+  /** Lead's thinking choice at dispatch and its reason; absent when the profile's option was kept. */
+  readonly chosenThinking?: string;
+  readonly thinkingReason?: string;
+  /** The thinking option the bound Peer reported when it was created. */
+  readonly observedThinking?: string;
   readonly candidate?: CandidateRefV1;
   readonly inspectedCommit?: string;
   readonly reports: readonly AcceptedReport[];
@@ -452,6 +457,7 @@ function reclaimed(view: AssignmentView, event: RuntimeEventV1): AssignmentView 
   delete copy.peerAgentId;
   delete copy.observedProviderId;
   delete copy.observedModel;
+  delete copy.observedThinking;
   return { ...(copy as AssignmentView), state: 'dispatching', reportingState: 'consumed', eventIds: [...view.eventIds, event.id] };
 }
 
@@ -515,7 +521,11 @@ export function applyEvent(state: ProjectState, event: RuntimeEventV1): void {
   const id = view.id;
   switch (event.type) {
     case 'assignment.dispatch-requested':
-      update(state, id, { state: 'dispatching', peerProviderId: event.data.peerProviderId, workspaceId: event.data.workspaceId }, event); return;
+      update(state, id, {
+        state: 'dispatching', peerProviderId: event.data.peerProviderId, workspaceId: event.data.workspaceId,
+        ...(event.data.thinking === undefined ? {} : { chosenThinking: event.data.thinking }),
+        ...(event.data.thinkingReason === undefined ? {} : { thinkingReason: event.data.thinkingReason }),
+      }, event); return;
     case 'ownership.reserved':
       state.ownership.set(id, { assignmentId: id, workspaceId: event.data.workspaceId, baseCommit: event.data.baseCommit, state: 'reserved' });
       update(state, id, {}, event); return;
@@ -536,7 +546,10 @@ export function applyEvent(state: ProjectState, event: RuntimeEventV1): void {
       setOwner(state, id, { state: 'uncertain', agentId: event.data.agentId });
       update(state, id, { state: 'uncertain' }, event); return;
     case 'binding.published':
-      update(state, id, { observedProviderId: event.data.providerId, observedModel: event.data.model, workspaceId: event.data.workspaceId }, event); return;
+      update(state, id, {
+        observedProviderId: event.data.providerId, observedModel: event.data.model, workspaceId: event.data.workspaceId,
+        ...(event.data.thinking === undefined ? {} : { observedThinking: event.data.thinking }),
+      }, event); return;
     case 'ownership.held':
       setOwner(state, id, { state: 'held', agentId: event.data.agentId });
       update(state, id, {}, event); return;

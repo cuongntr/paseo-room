@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { ROLES } from '../src/roles.js';
 import { renderRuntimeManifestFile } from '../src/runtime.js';
+import type { PeerEffortSettings } from '../src/runtime-plugin/shared/effort.js';
 import { Controller, type Caller } from '../src/runtime-plugin/server/controller.js';
 import { actionFingerprint } from '../src/runtime-plugin/server/domain/receipts.js';
 import { CorrelationRegistry } from '../src/runtime-plugin/server/correlations.js';
@@ -43,7 +44,7 @@ export const readOnlyBrief = (base: string): Record<string, unknown> => ({
 /** Worktree dispatch is qualified per daemon version; tests that exercise it qualify a fake one. */
 export const QUALIFIED_TEST_DAEMON = '0.0.0-test';
 
-export async function harness(options: { readonly associationWaitMs?: number; readonly worktrees?: boolean } = {}): Promise<Harness> {
+export async function harness(options: { readonly associationWaitMs?: number; readonly worktrees?: boolean; readonly peerEffort?: PeerEffortSettings } = {}): Promise<Harness> {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'paseo-room-controller-')));
   const repo = join(root, 'repo');
   await mkdir(repo);
@@ -80,6 +81,7 @@ export async function harness(options: { readonly associationWaitMs?: number; re
   const controller = new Controller({
     runtimeRoot, paseo, git: new GitEvidence(), recognition, correlations, associationWaitMs: options.associationWaitMs ?? 200,
     ...(options.worktrees === true ? { daemonVersion: () => QUALIFIED_TEST_DAEMON, qualifiedDaemons: [QUALIFIED_TEST_DAEMON] } : {}),
+    ...(options.peerEffort === undefined ? {} : { peerEffort: () => options.peerEffort as PeerEffortSettings }),
   });
   const lead: Caller = { agentId: 'lead-1', providerId: 'codex-lead', role: 'lead', workspaceId: 'ws-1', cwd: repo };
   return { root, repo, base, runtimeRoot, paseo, controller, hooks, lead, git, cleanup: () => rm(root, { recursive: true, force: true }) };
