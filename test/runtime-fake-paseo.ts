@@ -50,6 +50,7 @@ export interface FakeAgent {
   pendingPermissions: { id: string; name: string }[];
   prompts: { text: string; messageId: string; behavior?: SendBehavior }[];
   title: string | null;
+  thinking: string | null;
   /** Timeline entries, oldest first, for `recentTimeline`. */
   timeline: TimelineEntry[];
   /** Turns cancelled by an interrupting send, and permissions a send cleared (Paseo's behaviour). */
@@ -98,7 +99,7 @@ export class FakePaseo implements PaseoPort {
     const full: FakeAgent = {
       model: this.models[agent.provider] ?? 'model-x', cwd: '/repo', workspaceId: 'ws-1', status: 'idle', activeTurn: false,
       lastUserMessageAt: null, updatedAt: '2026-09-22T09:00:00.000Z', labels: {}, archivedAt: null, pendingPermissions: [], prompts: [],
-      title: null, timeline: [], interrupted: 0, clearedPermissions: [], ...agent,
+      title: null, thinking: null, timeline: [], interrupted: 0, clearedPermissions: [], ...agent,
     };
     this.agents.set(full.id, full);
     return full;
@@ -118,7 +119,7 @@ export class FakePaseo implements PaseoPort {
       id: agent.id, provider: agent.provider, model: agent.model, cwd: agent.cwd, workspaceId: agent.workspaceId, status: agent.status,
       activeTurn: agent.activeTurn, lastUserMessageAt: agent.lastUserMessageAt, updatedAt: agent.updatedAt, labels: { ...agent.labels },
       archivedAt: agent.archivedAt, pendingPermissions: agent.pendingPermissions.map(permission => ({ ...permission })),
-      title: agent.title, parentAgentId: agent.labels[PARENT_AGENT_ID_LABEL] ?? null,
+      title: agent.title, parentAgentId: agent.labels[PARENT_AGENT_ID_LABEL] ?? null, thinking: agent.thinking,
     };
   }
 
@@ -128,7 +129,7 @@ export class FakePaseo implements PaseoPort {
       if (replayed !== undefined) return { agentId: replayed, fresh: false };
       const id = input.agentId ?? `agent-${String(++this.counter)}`;
       this.addAgent({
-        id, provider: input.provider, model: input.model, cwd: input.cwd, workspaceId: this.workspaceFor(input.cwd), title: input.title,
+        id, provider: input.provider, model: input.model, thinking: input.thinkingOptionId ?? null, cwd: input.cwd, workspaceId: this.workspaceFor(input.cwd), title: input.title,
         labels: { ...input.labels, ...(input.parentAgentId === undefined ? {} : { [PARENT_AGENT_ID_LABEL]: input.parentAgentId }) },
       });
       this.remember('agent', input.idempotencyKey, input, id);
@@ -147,7 +148,7 @@ export class FakePaseo implements PaseoPort {
       if (workspace === undefined || workspace.archivedAt !== null) throw new Error(`Workspace ${workspaceId} has no available directory`);
       const id = input.agentId ?? `agent-${String(++this.counter)}`;
       this.addAgent({
-        id, provider: input.provider, model: input.model, cwd: workspace.directory, workspaceId, title: input.title,
+        id, provider: input.provider, model: input.model, thinking: input.thinkingOptionId ?? null, cwd: workspace.directory, workspaceId, title: input.title,
         labels: { ...input.labels, ...(input.parentAgentId === undefined ? {} : { [PARENT_AGENT_ID_LABEL]: input.parentAgentId }) },
       });
       this.remember('agent', input.idempotencyKey, { workspaceId, ...input }, id);

@@ -55,6 +55,9 @@ export interface Seat {
   readonly role: RuntimeRole;
   readonly provider: string;
   title: string | null;
+  /** The model and thinking option Paseo reports the seat runs with, for display. */
+  model: string | null;
+  thinking: string | null;
   cwd: string;
   workspaceId: string | null;
   project: Project;
@@ -149,11 +152,13 @@ export class Observer {
     const known = this.seatsById.get(snapshot.id);
     const project = known !== undefined && known.cwd === snapshot.cwd ? known.project : await this.projectOf(snapshot.cwd);
     const seat: Seat = known ?? {
-      agentId: snapshot.id, role: recognized.role, provider: snapshot.provider, title: snapshot.title, cwd: snapshot.cwd, workspaceId: snapshot.workspaceId, project,
+      agentId: snapshot.id, role: recognized.role, provider: snapshot.provider, title: snapshot.title, model: snapshot.model, thinking: snapshot.thinking, cwd: snapshot.cwd, workspaceId: snapshot.workspaceId, project,
       parentAgentId: snapshot.parentAgentId, state: stateOf(snapshot), archivedAt: snapshot.archivedAt,
       turnStartedAt: undefined, lastTurn: undefined, failures: [], pending: new Map(), writeTurns: [], refreshedAt: this.time,
     };
     seat.title = snapshot.title;
+    seat.model = snapshot.model;
+    seat.thinking = snapshot.thinking;
     seat.cwd = snapshot.cwd;
     seat.workspaceId = snapshot.workspaceId;
     seat.project = project;

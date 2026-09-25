@@ -8,6 +8,7 @@
  * a missing report; the runtime never answers it, because that decision belongs to a person.
  */
 import type { PluginLifecycleEvents } from '@getpaseo/plugin/server';
+import { assignmentName } from '../brief.js';
 import type { Controller, LoadedProject } from '../controller.js';
 import type { AssignmentView } from '../domain/state.js';
 import { BRIDGE_SERVER_NAME } from '../hooks.js';
@@ -58,7 +59,7 @@ export async function settleEndedTurn(controller: Controller, spool: Spool, load
   await controller.append(loaded, { type: 'report.missing', payloadVersion: 1, assignmentId: view.id, actor: plugin, data: { generation: view.reportingGeneration } });
   await controller.notices.notify(loaded, {
     kind: 'report-missing', class: 'owner', disposition: 'lead-now', assignmentId: view.id,
-    text: `The Peer on ${view.id} ended its turn without an accepted ask or handoff. Anything in its final message is not a report; answer with a follow-up or abandon the assignment.`,
+    text: `The Peer of ${assignmentName(view)} ended its turn without an accepted ask or handoff. Anything in its final message is not a report; answer with a follow-up or abandon the assignment.`,
     recipient: { agentId: view.leadAgentId, role: 'lead' },
   });
   return 'missing';
@@ -96,12 +97,12 @@ export function createTurnHandlers(controller: Controller, spool: Spool): TurnHa
         await controller.append(loaded, { type: 'permission.awaiting', payloadVersion: 1, assignmentId: view.id, actor: { source: 'paseo' }, data: { generation: view.reportingGeneration, permissionRequestId: event.request.id, tool } });
         await controller.notices.notify(loaded, {
           kind: 'awaiting-permission', class: 'owner', disposition: 'lead-now', assignmentId: view.id,
-          text: `The Peer on ${view.id} is waiting for someone to allow its ${tool} reporting tool (${event.request.name}). The runtime does not answer permissions.`,
+          text: `The Peer of ${assignmentName(view)} is waiting for someone to allow its ${tool} reporting tool (${event.request.name}). The runtime does not answer permissions.`,
           recipient: { agentId: view.leadAgentId, role: 'lead' },
         });
         await controller.notices.notify(loaded, {
           kind: 'awaiting-permission', class: 'operator', disposition: 'operator-now', assignmentId: view.id,
-          text: `Allow or deny ${event.request.name} for Peer ${event.agent.id} in Paseo.`,
+          text: `Allow or deny ${event.request.name} for the Peer of ${assignmentName(view)} (agent ${event.agent.id}) in Paseo.`,
         });
         return true;
       });

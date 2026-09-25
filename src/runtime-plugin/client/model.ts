@@ -6,6 +6,7 @@ import type { Tone } from './tone.js';
 
 export interface SeatView {
   readonly agentId: string; readonly role: string; readonly provider: string; readonly title: string | null; readonly state: string;
+  readonly model?: string | null; readonly thinking?: string | null;
   readonly cwd: string; readonly displayCwd: string; readonly workspaceId?: string | null; readonly parentAgentId: string | null; readonly pendingPermissions: number;
   readonly lastTurn?: { readonly outcome: string; readonly endedAgo: string; readonly endedAt: string };
 }
@@ -35,6 +36,10 @@ export interface RoomView {
 export type ProjectStatus = 'attention' | 'working' | 'idle';
 
 export const seatName = (seat: SeatView): string => seat.title ?? `${seat.role} ${seat.agentId.slice(0, 8)}`;
+
+/** What a seat runs on, as Paseo reports it — `claude-opus-5-5 · thinking medium` — or '' when unknown. */
+export const launchLabel = (seat: Pick<SeatView, 'model' | 'thinking'>): string =>
+  [seat.model ?? '', seat.thinking === undefined || seat.thinking === null ? '' : `thinking ${seat.thinking}`].filter(part => part !== '').join(' · ');
 
 const AGENT_LABELS: Readonly<Record<string, string>> = { claude: 'Claude', codex: 'Codex', pi: 'Pi' };
 export const agentLabel = (agent: string): string => AGENT_LABELS[agent] ?? agent;

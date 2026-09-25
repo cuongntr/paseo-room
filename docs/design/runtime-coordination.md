@@ -845,7 +845,10 @@ interface IncidentV1 {
 }
 ```
 
-A stable notice ID appears in delivered text. Delivery is at least once. If a crash occurs after
+A stable notice ID appears in delivered text. A notice to Lead about an assignment names it by
+disposition, a one-line gist of its outcome and its id — `Engineer "Add the feature" (asg_…)` — so it
+reads without recalling what the id was; a runtime Peer's seat title is built from the same parts,
+`Engineer · Add the feature · asg_…`, and stays unique per assignment. Delivery is at least once. If a crash occurs after
 Paseo accepts a message but before `notice.sent` persists, retry may produce a duplicate carrying the
 same ID; role instructions and runtime actions treat it as one notice. The product does not claim
 exactly-once messaging from an API that does not provide it. Incident aggregation never rewrites the
@@ -1637,6 +1640,7 @@ Q-011 do not block Phases 0–1 because those phases contain no sensor and no wo
 
 | Date | Author | Change |
 |---|---|---|
+| 2026-09-25 | Bytes | §4.4: notices to Lead name an assignment by disposition, outcome gist and id, and a runtime Peer is titled from the same parts instead of `Peer <id>`, after an operator found both unreadable across some thirty assignments a day. Text only; no event, authority or identity change. |
 | 2026-09-24 | Bytes | D5: `assignment_create` refuses a base that is not a commit of the repository (`base_unknown`), which only worktree dispatch checked before; a read-only assignment could carry a mistyped base into its brief. |
 | 2026-09-24 | Bytes | §8.1's panel is redesigned per [runtime-panel-ux.md](runtime-panel-ux.md): attention first, one place per project with its runtime record inside, guided modal forms, and the host's Settings controls for Room attention and Room seats. `runtime.room` gains read-only display fields and keeps projects whose seats are all archived; no behaviour changes. |
 | 2026-09-24 | Bytes | Attention O1–O2 implemented and live-qualified (attention delta §13.1): the Room Observer, deterministic signals, idle-held letters to a portfolio Supervisor, Human-started seats and the optional System One sensor in shadow or gated assist. [change-003](../plans/runtime-coordination-change-003-attention-implementation-deltas.md) records the Paseo facts that changed the mechanism; the owner accepted it. |

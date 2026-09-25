@@ -10,6 +10,7 @@
  * else. Report content is evidence; identity and the candidate are derived, never copied.
  */
 import { randomBytes } from 'node:crypto';
+import { assignmentName } from '../brief.js';
 import type { BridgeRequestV1 } from '../contracts/envelope.js';
 import { parsePeerToolInput, type PeerReportErrorCodeV1, type PeerReportReceiptV1 } from '../contracts/peer.js';
 import type { Controller, LoadedProject } from '../controller.js';
@@ -190,11 +191,12 @@ function outsideScope(changedPaths: readonly string[], scopes: readonly string[]
 async function notifyLead(controller: Controller, loaded: LoadedProject, view: AssignmentView, tool: Tool, state: PeerReportReceiptV1['assignmentState'], input: unknown, outside: readonly string[]): Promise<void> {
   const report = input as { question?: string; summary?: string; blocker?: string; verification?: readonly { outcome: string }[] };
   const red = report.verification?.some(entry => entry.outcome === 'failed') === true;
+  const name = assignmentName(view);
   const text = tool === 'ask'
-    ? `Peer on ${view.id} asks: ${report.question ?? ''}`
+    ? `${name} asks: ${report.question ?? ''}`
     : state === 'blocked'
-      ? `Peer on ${view.id} handed back blocked: ${report.blocker ?? ''}`
-      : `Peer on ${view.id} handed back: ${report.summary ?? ''}${red ? ' (its gate reported a failure)' : ''}${outside.length > 0 ? ` (${String(outside.length)} changed path(s) outside its write scope, e.g. ${outside[0] ?? ''}; accepting needs an override)` : ''}`;
+      ? `${name} handed back blocked: ${report.blocker ?? ''}`
+      : `${name} handed back: ${report.summary ?? ''}${red ? ' (its gate reported a failure)' : ''}${outside.length > 0 ? ` (${String(outside.length)} changed path(s) outside its write scope, e.g. ${outside[0] ?? ''}; accepting needs an override)` : ''}`;
   await controller.notices.notify(loaded, {
     kind: tool === 'ask' ? 'peer-question' : state === 'blocked' ? 'blocked-handback' : 'handback', class: 'owner', disposition: 'lead-now',
     assignmentId: view.id, text, recipient: { agentId: view.leadAgentId, role: 'lead' },

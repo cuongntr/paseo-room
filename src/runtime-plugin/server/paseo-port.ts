@@ -40,6 +40,8 @@ export interface AgentSnapshot {
   readonly title: string | null;
   /** From Paseo's own parentage label; null for a top-level agent. */
   readonly parentAgentId: string | null;
+  /** The thinking option the agent runs with, for display only; null when Paseo reports none. */
+  readonly thinking: string | null;
 }
 
 /**
@@ -242,6 +244,7 @@ export function toSnapshot(raw: RawSnapshot): AgentSnapshot {
     pendingPermissions: raw.pendingPermissions.map(permission => ({ id: permission.id, name: permission.name })),
     title: raw.title ?? null,
     parentAgentId: raw.labels[PARENT_AGENT_ID_LABEL] ?? null,
+    thinking: raw.thinkingOptionId ?? raw.runtimeInfo?.thinkingOptionId ?? null,
   };
 }
 

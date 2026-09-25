@@ -418,7 +418,7 @@ export class AttentionEngine {
   roomView(only?: readonly string[]): RoomView {
     const now = this.time;
     const seatView = (seat: Seat): SeatView => ({
-      agentId: seat.agentId, role: seat.role, provider: seat.provider, title: seat.title, state: seat.state, cwd: seat.cwd,
+      agentId: seat.agentId, role: seat.role, provider: seat.provider, title: seat.title, model: seat.model, thinking: seat.thinking, state: seat.state, cwd: seat.cwd,
       displayCwd: homeRelative(seat.cwd), workspaceId: seat.workspaceId, parentAgentId: seat.parentAgentId, pendingPermissions: seat.pending.size,
       ...(seat.lastTurn === undefined ? {} : {
         lastTurn: { outcome: seat.lastTurn.outcome, endedAgo: age(now - seat.lastTurn.endedAt), endedAt: new Date(seat.lastTurn.endedAt).toISOString() },
@@ -453,6 +453,8 @@ export interface SeatView {
   readonly role: string;
   readonly provider: string;
   readonly title: string | null;
+  readonly model: string | null;
+  readonly thinking: string | null;
   readonly state: string;
   readonly cwd: string;
   readonly displayCwd: string;

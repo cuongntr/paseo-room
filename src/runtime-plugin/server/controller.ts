@@ -12,7 +12,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { QUALIFIED_WORKTREE_DAEMONS } from '../shared/identity.js';
 import type { RuntimeRole } from '../shared/policy.js';
-import { renderBrief, renderContinuation } from './brief.js';
+import { assignmentName, peerTitle, renderBrief, renderContinuation } from './brief.js';
 import { mintCapability, publishCapability } from './capabilities.js';
 import type { CorrelationRegistry } from './correlations.js';
 import { evaluateAcceptance } from './domain/acceptance.js';
@@ -87,10 +87,6 @@ const done = <T>(value: T): ControllerResult<T> => ({ ok: true, value });
 
 function token(prefix: string): string {
   return `${prefix}_${randomBytes(9).toString('base64url')}`;
-}
-
-export function peerTitle(assignmentId: string): string {
-  return `Peer ${assignmentId}`;
 }
 
 export class Controller {
@@ -470,7 +466,7 @@ export class Controller {
     const { caller, provider, launch, placement } = request;
     const writable = view.input.mode === 'writable';
     const workspaceId = placement.kind === 'worktree' ? placement.workspaceId : placement.workspaceId ?? 'unknown';
-    const title = peerTitle(view.id);
+    const title = peerTitle(view);
     const intentId = token('create');
     // Identities are chosen and recorded before the call (delta P2-D3, Q-P2-04).
     const identity = { agentId: randomUUID(), idempotencyKey: `${view.id}-g${String(view.reportingGeneration + 1)}-create` };
@@ -764,7 +760,7 @@ export class Controller {
     }
     await this.notices.notify(loaded, {
       kind: 'worktree-retained', class: 'owner', disposition: 'lead-now', assignmentId,
-      text: `The worktree of ${assignmentId} (${record.worktreePath}, branch ${record.branch ?? record.branchName}) was retained: it has ${readiness === 'dirty' ? 'uncommitted changes' : 'commits no handoff recorded'}. Inspect it, then call workspace_close — with discardUncommitted and a reason to discard that work.`,
+      text: `The worktree of ${assignmentName(view)} (${record.worktreePath}, branch ${record.branch ?? record.branchName}) was retained: it has ${readiness === 'dirty' ? 'uncommitted changes' : 'commits no handoff recorded'}. Inspect it, then call workspace_close — with discardUncommitted and a reason to discard that work.`,
       recipient: { agentId: view.leadAgentId, role: 'lead' },
     }).catch(() => undefined);
   }

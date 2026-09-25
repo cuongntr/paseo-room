@@ -3,7 +3,7 @@
  * (Paseo gives a custom provider no tab icon, and plugins cannot decorate tabs). Pure: derives
  * the pills from the room view, so the registrar only adds, updates and removes.
  */
-import type { RoomView } from './model.js';
+import { launchLabel, type RoomView } from './model.js';
 
 export type SeatRole = 'supervisor' | 'lead' | 'peer';
 
@@ -36,6 +36,8 @@ export function rolePills(room: RoomView): readonly RolePill[] {
       const lines: [string, string][] = [['Project', `${project.name} · ${project.displayRoot}`]];
       if (seat.role === 'peer') lines.push(['Lead', parent === undefined ? 'not in this project' : titleOf(parent)]);
       lines.push(['Supervisor', project.supervisor === undefined ? 'none — assign one in Room runtime' : titleOf(project.supervisor)]);
+      const runs = launchLabel(seat);
+      if (runs !== '') lines.push(['Runs', runs]);
       pills.set(seat.agentId, {
         agentId: seat.agentId, workspaceId: seat.workspaceId, role: seat.role, label: ROLE_PILL[seat.role].label,
         title: `Room ${ROLE_PILL[seat.role].label} of ${project.name}`, lines,
@@ -45,10 +47,14 @@ export function rolePills(room: RoomView): readonly RolePill[] {
   for (const supervisor of room.supervisors) {
     if (supervisor.workspaceId === undefined || supervisor.workspaceId === null) continue;
     const watched = room.projects.filter(project => project.supervisor?.agentId === supervisor.agentId).map(project => project.name);
+    const runs = launchLabel(supervisor);
     pills.set(supervisor.agentId, {
       agentId: supervisor.agentId, workspaceId: supervisor.workspaceId, role: 'supervisor', label: ROLE_PILL.supervisor.label,
       title: 'Room Supervisor',
-      lines: [['Watching', watched.length === 0 ? 'no project yet — assign projects in Room runtime' : watched.join(', ')], ['Folder', supervisor.displayCwd]],
+      lines: [
+        ['Watching', watched.length === 0 ? 'no project yet — assign projects in Room runtime' : watched.join(', ')], ['Folder', supervisor.displayCwd],
+        ...(runs === '' ? [] : [['Runs', runs] as const]),
+      ],
     });
   }
   return [...pills.values()];

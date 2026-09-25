@@ -499,8 +499,11 @@ describe('attention signals and letters', () => {
   });
 
   it('shows the room by project with its Supervisor and live seats', async () => {
+    const peer = paseo.agents.get('peer');
+    if (peer !== undefined) { peer.model = 'claude-opus-5-5'; peer.thinking = 'medium'; }
     await settle();
     const view = engine.roomView();
+    expect(view.projects[0]?.seats.find(seat => seat.agentId === 'peer')).toMatchObject({ model: 'claude-opus-5-5', thinking: 'medium' });
     expect(view.started).toBe(true);
     expect(view.supervisors.map(seat => seat.agentId)).toEqual(['sup']);
     expect(view.projects).toHaveLength(1);

@@ -10,7 +10,7 @@ import { idempotencyKey, unwrap, useRuntimeRpcs } from './data.js';
 import { ATTENTION_SETTINGS_SCREEN, openSettings } from './host.js';
 import { Button, Callout, Card, Dot, Empty, Glyph, IconButton, Pill, Row, SPACE, SectionLabel, Title, ago, type Theme } from './kit.js';
 import {
-  KIND_LABEL, LEVEL_STYLE, ROLE_ICON, STATE_LABEL, STATUS_TONE, lastActivity, projectHeadline, projectStatus, providerLabel, seatName, sortIncidents, sortProjects, stateTone,
+  KIND_LABEL, LEVEL_STYLE, ROLE_ICON, STATE_LABEL, STATUS_TONE, lastActivity, launchLabel, projectHeadline, projectStatus, providerLabel, seatName, sortIncidents, sortProjects, stateTone,
   type IncidentView, type ProjectView, type RoomView, type SeatView,
 } from './model.js';
 import { RuntimeRecord } from './record.js';
@@ -216,7 +216,7 @@ function SeatTree(props: { readonly theme: Theme; readonly seats: readonly SeatV
           accessibilityLabel={`Open ${seatName(seat)}`}
           leading={<Glyph theme={theme} name={ROLE_ICON[seat.role] ?? 'Bot'} boxed tone={seat.role === 'lead' ? 'accent' : 'muted'} />}
           title={seatName(seat)}
-          subtitle={`${seat.role === 'lead' ? 'Lead' : seat.role === 'peer' ? 'Peer' : 'Supervisor'} · ${providerLabel(seat.provider)}${seat.pendingPermissions > 0 ? ` · ${String(seat.pendingPermissions)} permission${seat.pendingPermissions === 1 ? '' : 's'} waiting` : ''}`}
+          subtitle={`${seat.role === 'lead' ? 'Lead' : seat.role === 'peer' ? 'Peer' : 'Supervisor'} · ${providerLabel(seat.provider)}${launchLabel(seat) === '' ? '' : ` · ${launchLabel(seat)}`}${seat.pendingPermissions > 0 ? ` · ${String(seat.pendingPermissions)} permission${seat.pendingPermissions === 1 ? '' : 's'} waiting` : ''}`}
           {...(seat.lastTurn === undefined ? {} : { meta: `Last turn ${seat.lastTurn.outcome} ${ago(seat.lastTurn.endedAt)}` })}
           trailing={(
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: SPACE.sm }}>

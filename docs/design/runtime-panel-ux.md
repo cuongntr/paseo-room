@@ -86,6 +86,10 @@ belongs to an observed project, and falls back to Room otherwise. Row order:
   and a chevron.
 - **Supervisor row.** Name, `Watching N projects`, a state pill and **Open**. A final row offers
   *New Supervisor*.
+- **Seat row** (a project's Lead → Peer tree). The seat's name, then `role · agent · model ·
+  thinking <option>` as Paseo reports them, any waiting permissions, the last turn, a state pill and
+  **Open**. A runtime-dispatched Peer is named `<Disposition> · <outcome gist> · <assignment id>`, so
+  the tree says what each Peer is doing without opening it.
 - **Empty room.** A setup card: *1 Start a Supervisor → 2 Start a project*, with both buttons.
 - **New Supervisor (modal).**
   - *Agent* is a segmented control over the room's Supervisor providers.
@@ -121,6 +125,7 @@ belongs to an observed project, and falls back to Room otherwise. Row order:
   - for a Lead: the project and its Supervisor;
   - for a Peer: the project, its Lead and its Supervisor;
   - for a Supervisor: the projects it watches and its folder;
+  - *Runs*: the model and thinking option the seat runs with, when Paseo reports them;
   - **Open Room runtime** in every case.
 
   The client re-reads `runtime.room` every 20 s, and adds, redraws or removes a pill only when that
@@ -135,6 +140,7 @@ belongs to an observed project, and falls back to Room otherwise. Row order:
 - for seats, `lastTurnEndedAt` (ISO);
 - for Supervisors, `portfolio` (a count);
 - for seats, `workspaceId` (the Paseo workspace, which the role pill targets);
+- for seats, `model` and `thinking`, read from Paseo's agent record for display only;
 - for projects, `runtime` — `{ projectId, health, assignments, active, findings }` when a runtime
   ledger exists for the same Git common directory.
 
@@ -156,3 +162,4 @@ belongs to an observed project, and falls back to Room otherwise. Row order:
 |---|---|---|
 | 2026-09-24 | Bytes | Created from the operator's request to redesign the panel: attention-first information architecture, project-centred navigation, guided modal forms, host Settings controls for the settings screens. |
 | 2026-09-24 | Bytes | Role pill: each seat's composer shows its room role without renaming the agent, because Paseo 0.9 gives custom providers no tab icon. |
+| 2026-09-25 | Bytes | Seat rows and role pills show the model and thinking option each seat runs with; runtime Peers are named by disposition, outcome gist and assignment id instead of `Peer <id>`. |

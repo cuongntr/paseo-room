@@ -26,6 +26,13 @@ describe('role pills', () => {
     expect(pills[2]?.lines).toEqual([['Watching', 'shop'], ['Folder', '~/desk']]);
   });
 
+  it('says what a seat runs on when Paseo reports it', () => {
+    const [peer] = rolePills(room([project({ seats: [seat('peer-1', 'peer', { model: 'claude-opus-5-5', thinking: 'medium' })] })]));
+    expect(peer?.lines.at(-1)).toEqual(['Runs', 'claude-opus-5-5 · thinking medium']);
+    const [bare] = rolePills(room([project({ seats: [seat('peer-2', 'peer', { model: null, thinking: null })] })]));
+    expect(bare?.lines.map(([key]) => key)).not.toContain('Runs');
+  });
+
   it('says when a project has no Supervisor and a Peer has no Lead here', () => {
     const [peer] = rolePills(room([project({ seats: [seat('peer-1', 'peer', { parentAgentId: 'gone' })] })]));
     expect(peer?.lines).toEqual([['Project', 'shop · ~/w/shop'], ['Lead', 'not in this project'], ['Supervisor', 'none — assign one in Room runtime']]);

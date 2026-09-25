@@ -1,6 +1,7 @@
 import { readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { assignmentName, peerTitle } from '../src/runtime-plugin/server/brief.js';
 import { latestCapability } from '../src/runtime-plugin/server/capabilities.js';
 import { harness, readOnlyBrief, writableBrief, type Harness } from './runtime-harness.js';
 
@@ -131,6 +132,13 @@ describe('two-step writable dispatch', () => {
     expect((await ledger(unsent, other)).view).toMatchObject({ state: 'uncertain', reportingState: 'uncertain' });
   });
 
+  it('names an assignment by its disposition and a one-line gist of its outcome', () => {
+    const named = { id: 'asg_12345678', input: { kind: 'reviewer' as const, outcome: 'Review the\n  Docker Compose dev environment for bead cmdb-469.8 before it lands on main' } };
+    expect(peerTitle(named)).toBe('Reviewer · Review the Docker Compose dev environment for… · asg_12345678');
+    expect(assignmentName(named)).toBe('Reviewer "Review the Docker Compose dev environment for…" (asg_12345678)');
+    expect(peerTitle({ id: 'asg_12345678', input: { kind: 'scout', outcome: 'Map auth' } })).toBe('Scout · Map auth · asg_12345678');
+  });
+
   it('creates the Peer on the operator-owned model and mode, and refuses when no model is configured', async () => {
     const h = await room();
     h.paseo.peerModels['codex-peer'] = 'gpt-operator';
@@ -140,7 +148,7 @@ describe('two-step writable dispatch', () => {
     const id = await assignment(h);
     expect((await h.controller.dispatch(h.lead, { assignmentId: id, peerProvider: 'codex-peer' })).ok).toBe(true);
     expect(h.paseo.calls.find(call => call.operation === 'createAgent')?.args[0])
-      .toMatchObject({ provider: 'codex-peer', model: 'gpt-operator', modeId: 'full-access' });
+      .toMatchObject({ provider: 'codex-peer', model: 'gpt-operator', modeId: 'full-access', title: `Engineer · Add the feature · ${id}` });
     expect((await ledger(h, id)).view?.observedModel).toBe('gpt-operator');
 
     const none = await room();

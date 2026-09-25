@@ -5,6 +5,44 @@
  */
 import type { AssignmentCreateInputV1 } from './contracts/assignment.js';
 
+/** Characters of an assignment's outcome kept where it names the assignment. */
+const GIST = 48;
+
+/** The part of an assignment that names it for a reader: its disposition and its outcome. */
+export interface Nameable {
+  readonly id: string;
+  readonly input: Pick<AssignmentCreateInputV1, 'kind' | 'outcome'>;
+}
+
+/** An assignment's outcome, cut to a short phrase on one line, at a word boundary where one is near. */
+function gist(outcome: string): string {
+  const flat = outcome.replace(/\s+/g, ' ').trim();
+  if (flat.length <= GIST) return flat;
+  const cut = flat.slice(0, GIST - 1);
+  const words = cut.replace(/\s+\S*$/, '');
+  return `${words.length >= GIST / 2 ? words : cut.trimEnd()}…`;
+}
+
+function disposition(kind: string): string {
+  return `${kind.charAt(0).toUpperCase()}${kind.slice(1)}`;
+}
+
+/**
+ * How notices and the panel name an assignment: what kind of work, what it is for, and its id —
+ * readable without remembering the id. For example `Engineer "Add the feature" (asg_…)`.
+ */
+export function assignmentName(assignment: Nameable): string {
+  return `${disposition(assignment.input.kind)} "${gist(assignment.input.outcome)}" (${assignment.id})`;
+}
+
+/**
+ * The runtime Peer's seat title, for example `Engineer · Add the feature · asg_…`. The id keeps it
+ * unique per assignment, which the create correlation relies on.
+ */
+export function peerTitle(assignment: Nameable): string {
+  return `${disposition(assignment.input.kind)} · ${gist(assignment.input.outcome)} · ${assignment.id}`;
+}
+
 function list(title: string, items: readonly string[]): string[] {
   return items.length === 0 ? [] : [`${title}:`, ...items.map(item => `- ${item}`), ''];
 }

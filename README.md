@@ -628,8 +628,10 @@ npx paseo-room verify
   Supervisor of several projects) and `attention_feedback`, and cannot change an assignment. Its
   status and findings cover only its portfolio and the project it stands in; `room_status` lists
   the assignments still open or still to close, and only counts settled ones.
-- **A runtime-dispatched Peer** gets exactly two tools, `ask` and `handoff`, for its own assignment,
-  and still no Paseo room tools. A report exists only once one of those calls is accepted; its
+- **A runtime-dispatched Peer** is titled `<Disposition> · <outcome gist> · <assignment id>` (for
+  example `Reviewer · Review the Docker Compose dev env… · asg_…`), and the runtime's notices to Lead
+  name the assignment the same way. It gets exactly two tools, `ask` and `handoff`, for its own
+  assignment, and still no Paseo room tools. A report exists only once one of those calls is accepted; its
   final message is never read as a report. Claude asks for permission before a Peer's first call
   to `mcp__paseo_room__ask` or `mcp__paseo_room__handoff`: approve it in Paseo, since the runtime
   never answers a permission for a seat. Codex and Pi Peers do not ask.
@@ -642,8 +644,9 @@ npx paseo-room verify
 - **The Room runtime panel** (sidebar item, and a workspace panel that opens on its own project)
   puts what needs you first. Below that come your projects, ordered by status, then your
   Supervisors.
-  - A project shows its Supervisor, its Lead and Peer seats (each opens its agent in Paseo) and its
-    runtime record: assignments, isolated writers, findings and recovery.
+  - A project shows its Supervisor, its Lead and Peer seats (each opens its agent in Paseo, and
+    shows the model and thinking option it runs with) and its runtime record: assignments, isolated
+    writers, findings and recovery.
   - Starting a Supervisor, starting a project and assigning a Supervisor are guided forms.
   - The design notes are in [docs/design/runtime-panel-ux.md](docs/design/runtime-panel-ux.md).
 - **Settings › Room seats** shows which account each seat is signed in to (email, plan and

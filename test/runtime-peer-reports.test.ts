@@ -62,7 +62,7 @@ describe('accepted Peer reports', () => {
     expect(Object.keys(reply.result as object).sort()).toEqual(['assignmentState', 'receipt', 'schema', 'status', 'tool']);
     const { view } = await snapshot(s);
     expect(view).toMatchObject({ state: 'questioned', reportingState: 'consumed' });
-    expect(s.h.paseo.agents.get('lead-1')?.prompts.at(-1)?.text).toContain('Which base?');
+    expect(s.h.paseo.agents.get('lead-1')?.prompts.at(-1)?.text).toContain(`Engineer "Add the feature" (${s.id}) asks: Which base?`);
   });
 
   it('derives the candidate from the committed workspace on a complete writable handoff', async () => {
