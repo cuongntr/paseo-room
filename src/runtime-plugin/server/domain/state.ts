@@ -27,6 +27,11 @@ export type OwnershipState = 'reserved' | 'held' | 'releasing' | 'released' | 'u
 
 export const TERMINAL_STATES: readonly AssignmentState[] = ['accepted', 'rejected', 'abandoned'];
 
+/** Decided, with nothing left to close: its Peer is archived, or none was ever placed. */
+export function settled(view: AssignmentView): boolean {
+  return TERMINAL_STATES.includes(view.state) && (view.closure === 'closed' || view.peerAgentId === undefined);
+}
+
 export interface AcceptedReport {
   readonly generation: number;
   readonly tool: 'ask' | 'handoff';

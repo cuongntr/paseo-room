@@ -70,7 +70,8 @@ so the design is about deciding, cheaply and accountably, what reaches it.
 - A fix to existing runtime notice delivery (§7.4).
 
 **Out:** any change to the assignment ledger, its events or Lead/Peer tools; Lead contract changes
-(runtime-first delegation is a separate question); Supervisor directing Peers; automatic acceptance,
+other than the marker lines of §6.1a (runtime-first delegation is a separate question); Supervisor
+directing Peers; automatic acceptance,
 merge or lifecycle decisions by the sensor; model-written notification text; a sensor on the Human's
 own messages; retention/compaction UI and role-filtered history (original Phase 3 rows, deferred).
 
@@ -357,9 +358,11 @@ unrelayed Lead turn, never a page.
 
 ### 7.4 Letter format and receipts
 One line per item: `[paseo-room attention <id>] <project> · <seat> · <signal or outcome> · <age> —
-<masked excerpt ≤ 240 chars>`, plus the agent ids involved. There is no advice and no model text beyond
-the excerpt. Details come from `room_status` and `get_agent_activity`. The id doubles as the
-`messageId`, and a retry checks `promptDelivered` first, as for Phase 1 notices.
+<masked excerpt ≤ 240 chars>`, plus the agent ids involved; a Lead turn with marker lines quotes
+those instead (§6.1a). There is no advice and no model text beyond the excerpt. Details come from
+`room_status` and `get_agent_activity`. The letter id doubles as the `messageId`, and a retry checks
+`promptDelivered` first, as for Phase 1 notices; given to `attention_feedback`, it rates every item
+of the letter.
 
 **Steering** (change-003 D-4, D-5). Claude, Codex, Pi and mock accept a steer, except while Claude is
 compacting, running a slash command or switching streams. In those cases Paseo replaces — interrupts
@@ -535,7 +538,7 @@ deletes them together with the room home, as today.
 |---|---|
 | Sensitive text leaves the host | Off by default; host-acknowledged consent; masking (§6.2); bounded excerpt; no timeline, tool output or source; per-call audit in the log |
 | API key disclosure | Write-only RPC, `0600` file, never in settings values, status or export; `Authorization` header only |
-| Prompt injection through agent text | The sensor affects only non-mandatory attention levels and can lower only `completed`/`continuing`; pages and time-based signals are code; `project-quiet` backstop |
+| Prompt injection through agent text | The sensor affects only non-mandatory attention levels and can lower only `completed`/`continuing`; pages and time-based signals are code; `project-quiet` backstop. Lead's own `INCIDENT:` line can raise a page: Lead is a room seat reporting under its contract, each line is relayed once, and code still chooses the recipient |
 | Supervisor overreach from more information | Contract §9.3; no Peer channel; letters carry facts, not instructions |
 | Notification flood / attention dilution (§8.14) | Idle hold, digests, wake budget, dedup, feedback |
 | Wrong recipient | Code-resolved portfolio; never a Peer; never a model-chosen audience |
@@ -651,7 +654,7 @@ files under `runtime/v1/attention` stay until `remove --apply`.
 
 | Date | Author | Change |
 |---|---|---|
-| 2026-09-25 | Bytes | Code review of the field-report fixes: a marker line goes even for a turn the Supervisor prompted, since Paseo reports only the last message; incidents come first and are never cut to 240 characters or crowded out; formatted empty templates and numbered, heading and code prefixes are read correctly; a restated marker is relayed once; only digest items are superseded (§6.1a). `room_status` keeps listing decided assignments that still have a Peer to close, and its observed map is the portfolio's alone (§9.4). `writers-observed` states when each turn ended as a time, not an age that goes stale in a held letter; `assignment_create` checks the base in Lead's own checkout. |
+| 2026-09-25 | Bytes | Code review of the field-report fixes: a marker line goes even for a turn the Supervisor prompted, since Paseo reports only the last message; incidents come first and are never cut to 240 characters or crowded out; formatted empty templates and numbered, heading and code prefixes are read correctly; a restated marker is relayed once; only digest items are superseded (§6.1a). `room_status` keeps listing decided assignments that still have a Peer to close, and its observed map is the portfolio's alone (§9.4). `writers-observed` states when each turn ended as a time, not an age that goes stale in a held letter; `assignment_create` and worktree dispatch check the base in the repository's common Git directory, not in the checkout that first opened the project, which may be a worktree removed since. |
 | 2026-09-24 | Repository owner / Bytes | Lead marker lines (§6.1a), chosen by the owner over sensor assist from the same field report: the Lead contract gains "Human Questions and Incidents", an `INCIDENT` line pages and a `NEEDS-HUMAN` line wakes the Supervisor, quoted instead of the message tail. This amends §1's exclusion of Lead contract changes for this one section; it adds a reporting duty to Lead and grants no authority. Supervisor and Peer contracts and every tool list are unchanged. |
 | 2026-09-24 | Bytes | Fixes from a Supervisor's field report: `room_status` and `runtime_findings` keep to the portfolio and the Supervisor's own project, and `room_status` lists only open assignments (§9.4); a turn without a message is no longer reported with an earlier turn's (§4); `writers-observed` counts only writes inside the working directory and names the files (§5); `attention_feedback` accepts a letter's id (§9.4). |
 | 2026-09-24 | Bytes | A-D6: the adapter accepts a dated snapshot of the pinned model (`<pinned>-YYYYMMDD`), so Jev works through OpenRouter's System One endpoint when TypeSafe's own sign-up is unavailable. Aliases and other versions are still no answer. |

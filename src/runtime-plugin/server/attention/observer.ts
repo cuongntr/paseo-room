@@ -46,8 +46,8 @@ export interface TurnFacts {
   readonly lastMessage?: string;
   /** The message that started the turn, bounded; a Peer's brief on its first turn. */
   readonly firstMessage?: string;
-  /** A Lead's marker lines anywhere in the turn's own messages (Lead contract). */
-  readonly markers?: readonly Marker[];
+  /** A Lead's marker lines anywhere in the turn's own messages (Lead contract); none for another seat. */
+  readonly markers: readonly Marker[];
 }
 
 export interface Seat {
@@ -228,11 +228,10 @@ export class Observer {
   }
 
   private turnFrom(seat: Seat, entries: readonly TimelineEntry[], outcome: TurnOutcome, now: number): TurnFacts {
-    const assistant = entries.filter(entry => entry.kind === 'assistant' && entry.text.trim() !== '').at(-1);
+    const said = entries.filter(entry => entry.kind === 'assistant' && entry.text.trim() !== '');
+    const assistant = said.at(-1);
     const firstUser = entries.find(entry => entry.kind === 'user');
     const writes = [...new Set(entries.flatMap(entry => (entry.writes === undefined ? [] : [entry.writes])))];
-    // Every message of the turn, not only the last: an incident may be reported anywhere in it.
-    const markers = seat.role === 'lead' ? leadMarkers(entries.filter(entry => entry.kind === 'assistant').map(entry => entry.text).join('\n')) : [];
     return {
       startedAt: seat.turnStartedAt ?? now,
       endedAt: now,
@@ -240,9 +239,10 @@ export class Observer {
       ...(outcome.kind === 'failed' ? { errorKey: errorKey(outcome.error) } : {}),
       trigger: triggerOf(firstUser?.text),
       writes,
+      // Every message of the turn, not only the last: an incident may be reported anywhere in it.
+      markers: seat.role === 'lead' ? leadMarkers(said.map(entry => entry.text).join('\n')) : [],
       ...(assistant === undefined ? {} : { lastMessage: assistant.text.slice(-MESSAGE_TAIL) }),
       ...(firstUser === undefined || firstUser.text.trim() === '' ? {} : { firstMessage: firstUser.text.slice(0, MESSAGE_TAIL) }),
-      ...(markers.length === 0 ? {} : { markers }),
     };
   }
 

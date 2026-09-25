@@ -8,14 +8,13 @@
  * transition any assignment.
  */
 import { existsSync } from 'node:fs';
-import { basename } from 'node:path';
 import { z } from 'zod';
 import type { AttentionEngine } from '../attention/engine.js';
 import type { Project } from '../attention/observer.js';
 import { LEAD_ACTION_SCHEMAS, SUPERVISOR_ACTION_SCHEMAS } from '../contracts/actions.js';
 import type { BridgeRequestV1 } from '../contracts/envelope.js';
 import type { Caller, Controller, ControllerResult } from '../controller.js';
-import { project, TERMINAL_STATES, type AssignmentView } from '../domain/state.js';
+import { project } from '../domain/state.js';
 import { assignmentDetailView, findings, projectStatusView, revision, type StatusInput } from '../domain/views.js';
 import { projectLeads } from '../ownership.js';
 import type { HandlerReply, OperationHandler } from '../spool.js';
@@ -48,11 +47,12 @@ function parse<S extends z.ZodType>(schema: S, payload: unknown): z.infer<S> | H
 const isReply = (value: unknown): value is HandlerReply =>
   typeof value === 'object' && value !== null && 'ok' in value && 'result' in value && Object.keys(value).length === 2;
 
-/** Status inputs of every runtime project, or only of the projects whose keys are `only`. */
-async function statusInputs(controller: Controller, only?: ReadonlySet<string>): Promise<StatusInput[]> {
+/** Status inputs of the runtime projects among `projects`. */
+async function statusInputs(controller: Controller, projects: readonly Project[]): Promise<StatusInput[]> {
+  const keys = new Set(projects.map(entry => entry.key));
   const inputs: StatusInput[] = [];
   for (const store of await ProjectStore.list(controller.deps.runtimeRoot, controller.deps.now)) {
-    if (only !== undefined && !only.has(store.meta.gitCommonDir)) continue;
+    if (!keys.has(store.meta.gitCommonDir)) continue;
     const replay = await store.replay();
     const projection = project(store.meta.projectId, replay.events);
     inputs.push({
@@ -102,23 +102,26 @@ export function createLeadHandlers(controller: Controller): Record<string, Opera
   };
 }
 
-/** The projects a calling Supervisor may see and address: its portfolio, and the project it stands in. */
-async function supervisorProjects(controller: Controller, attention: AttentionEngine, caller: Caller): Promise<{ readonly allowed: readonly Project[]; readonly own: Project | undefined }> {
+/**
+ * The projects a calling Supervisor may see and address: its portfolio, and the Git project it
+ * stands in. The Observer resolves that project, with its identity cache.
+ */
+async function supervisorProjects(attention: AttentionEngine, caller: Caller): Promise<{ readonly portfolio: readonly string[]; readonly allowed: readonly Project[]; readonly own: Project | undefined }> {
   await attention.run(() => attention.sweep());
   const portfolio = attention.portfolioOf(caller.agentId);
   const projects = [...attention.observer.projects().values()];
-  const identity = await controller.deps.git.identity(caller.cwd).catch(() => undefined);
-  const own = identity === undefined ? undefined : projects.find(project => project.key === identity.gitCommonDir) ?? { key: identity.gitCommonDir, root: identity.canonicalRoot, name: basename(identity.canonicalRoot), git: true };
+  const standing = await attention.observer.projectOf(caller.cwd);
+  const own = standing.git ? projects.find(project => project.key === standing.key) ?? standing : undefined;
   const allowed = projects.filter(project => portfolio.includes(project.key));
   if (own !== undefined && !allowed.some(project => project.key === own.key)) allowed.push(own);
-  return { allowed, own };
+  return { portfolio, allowed, own };
 }
 
 /** A project the calling Supervisor may address: in its portfolio, or the project it stands in. */
 async function projectFor(controller: Controller, attention: AttentionEngine, caller: Caller, named: string | undefined): Promise<{ readonly root: string } | HandlerReply> {
-  const { allowed, own: ownProject } = await supervisorProjects(controller, attention, caller);
+  const { allowed, own } = await supervisorProjects(attention, caller);
   if (named === undefined) {
-    if (ownProject !== undefined) return { root: ownProject.root };
+    if (own !== undefined) return { root: own.root };
     const [only] = allowed;
     if (allowed.length === 1 && only !== undefined) return { root: only.root };
     return failure('project_required', allowed.length === 0
@@ -148,23 +151,15 @@ export function createSupervisorHandlers(controller: Controller, attention: Atte
     };
   return {
     room_status: supervisor('room_status', async caller => {
-      const { allowed } = await supervisorProjects(controller, attention, caller);
-      // Settled assignments are only counted: a project's history would soon outgrow one tool
-      // result. Settled means decided and closed, or decided without a Peer to close.
-      const settled = (view: AssignmentView): boolean => TERMINAL_STATES.includes(view.state) && (view.closure === 'closed' || view.peerAgentId === undefined);
-      const projects = (await statusInputs(controller, new Set(allowed.map(project => project.key)))).map(input => {
-        const hidden = new Set([...input.state.assignments.values()].filter(settled).map(view => view.id));
-        const view = projectStatusView(input);
-        return { ...view, assignments: view.assignments.filter(entry => !hidden.has(entry.id)), settledAssignments: hidden.size };
-      });
+      const { portfolio, allowed } = await supervisorProjects(attention, caller);
+      const projects = (await statusInputs(controller, allowed)).map(input => projectStatusView(input, { countSettled: true }));
       // The observed map is the portfolio's alone: it carries each project's letters' incidents.
-      const observed = attention.roomView(attention.portfolioOf(caller.agentId)).projects;
+      const observed = attention.roomView(portfolio).projects;
       return success({ revision: revision({ projects, observed }), projects, observed });
     }),
     runtime_findings: supervisor('runtime_findings', async caller => {
-      const { allowed } = await supervisorProjects(controller, attention, caller);
-      const all = (await statusInputs(controller, new Set(allowed.map(project => project.key))))
-        .flatMap(input => findings(input).map(finding => ({ projectId: input.projectId, ...finding })));
+      const { allowed } = await supervisorProjects(attention, caller);
+      const all = (await statusInputs(controller, allowed)).flatMap(input => findings(input).map(finding => ({ projectId: input.projectId, ...finding })));
       const incidents = attention.openIncidents(caller.agentId).map(incident => ({ id: incident.id, kind: incident.kind, level: incident.level, count: incident.count, text: incident.text }));
       return success({ revision: revision({ all, incidents }), findings: all, incidents });
     }),

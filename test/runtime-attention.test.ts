@@ -7,6 +7,7 @@ import { ROLES } from '../src/roles.js';
 import { renderRuntimeManifestFile } from '../src/runtime.js';
 import { DEFAULT_ATTENTION_SETTINGS, type AttentionSettings } from '../src/runtime-plugin/shared/attention.js';
 import { AttentionEngine } from '../src/runtime-plugin/server/attention/engine.js';
+import { head } from '../src/runtime-plugin/server/attention/mask.js';
 import { leadMarkers } from '../src/runtime-plugin/server/attention/triage.js';
 import { rolePills } from '../src/runtime-plugin/client/pills.js';
 import { GitEvidence } from '../src/runtime-plugin/server/git.js';
@@ -67,6 +68,15 @@ const setBusy = async (agentId: string): Promise<void> => {
   await engine.onTurnStarted(agentId);
 };
 const setIdle = async (agentId: string): Promise<void> => { paseo.endTurn(agentId); await engine.onTurnEnded(agentId, { kind: 'completed' }, []); };
+/** The Supervisor prompts the Lead now, as its timeline records a `send_agent_prompt` call. */
+const supervisorPrompts = (notified = true): void => {
+  paseo.agents.get('sup')?.timeline.push({ kind: 'tool', text: '', timestamp: clock.toISOString(), prompts: { tool: 'send_agent_prompt', agentId: 'lead', notified } });
+};
+/** A turn that edits one file. */
+const editTurn = (path: string) => [
+  { type: 'user_message' as const, text: `Change ${path}` },
+  { type: 'tool_call' as const, callId: path, name: 'Edit', status: 'completed' as const, error: null, detail: { type: 'edit' as const, filePath: path } },
+];
 const request = async (agentId: string, permissionId: string): Promise<void> => {
   paseo.agents.get(agentId)?.pendingPermissions.push({ id: permissionId, name: 'Bash' });
   await engine.onPermissionRequested(agentId, permissionId);
@@ -163,9 +173,8 @@ describe('attention signals and letters', () => {
 
     // The Supervisor prompted the Lead itself: Paseo reports that turn to it, so nothing is relayed.
     await setIdle('sup');
-    const sup = paseo.agents.get('sup');
     advance(MINUTE);
-    sup?.timeline.push({ kind: 'tool', text: '', timestamp: clock.toISOString(), prompts: { tool: 'send_agent_prompt', agentId: 'lead', notified: true } });
+    supervisorPrompts();
     advance(MINUTE);
     await engine.onTurnEnded('lead', { kind: 'completed' }, [{ type: 'assistant_message', text: 'Pushed.' }]);
     advance(16 * MINUTE);
@@ -185,7 +194,7 @@ describe('attention signals and letters', () => {
     await settle();
     await engine.onTurnEnded('lead', { kind: 'completed' }, [{ type: 'assistant_message', text: 'First.' }]);
     advance(MINUTE);
-    paseo.agents.get('sup')?.timeline.push({ kind: 'tool', text: '', timestamp: clock.toISOString(), prompts: { tool: 'send_agent_prompt', agentId: 'lead', notified: false } });
+    supervisorPrompts(false);
     advance(MINUTE);
     await engine.onTurnEnded('lead', { kind: 'completed' }, [{ type: 'assistant_message', text: 'Fire and forget done.' }]);
     advance(16 * MINUTE);
@@ -229,6 +238,10 @@ describe('attention signals and letters', () => {
     // A template filled in with formatting is still empty; a report that merely starts with "No" is not.
     expect(leadMarkers('**INCIDENT: none**\n_INCIDENT: none_\n`INCIDENT: none`\nINCIDENT: Nothing to report.\nINCIDENT: None this turn.\nINCIDENT: —')).toEqual([]);
     expect(leadMarkers('INCIDENT: No backups exist for xcmdb-db.')).toEqual([{ kind: 'INCIDENT', text: 'No backups exist for xcmdb-db.' }]);
+    // A line over the bound keeps one character more, so the quote cut from it shows the cut.
+    const [long] = leadMarkers(`INCIDENT: ${'x'.repeat(600)}`);
+    expect(long?.text).toHaveLength(501);
+    expect(head(long?.text ?? '', 500).endsWith('…')).toBe(true);
     expect(leadMarkers('1. NEEDS-HUMAN: pick A or B?\n### INCIDENT: data gone\n`INCIDENT:` Peer ran `docker volume prune -f`').map(marker => marker.text))
       .toEqual(['data gone', 'Peer ran `docker volume prune -f`', 'pick A or B?']);
   });
@@ -246,7 +259,7 @@ describe('attention signals and letters', () => {
   it('relays a NEEDS-HUMAN line from an earlier message of a turn the Supervisor prompted, since Paseo reports only the last', async () => {
     await settle();
     advance(MINUTE);
-    paseo.agents.get('sup')?.timeline.push({ kind: 'tool', text: '', timestamp: clock.toISOString(), prompts: { tool: 'send_agent_prompt', agentId: 'lead', notified: true } });
+    supervisorPrompts();
     await engine.onTurnStarted('lead');
     advance(MINUTE);
     await engine.onTurnEnded('lead', { kind: 'completed' }, [
@@ -277,7 +290,7 @@ describe('attention signals and letters', () => {
   it('pages an INCIDENT line from anywhere in the turn, even on a turn Paseo reports to the Supervisor', async () => {
     await settle();
     advance(MINUTE);
-    paseo.agents.get('sup')?.timeline.push({ kind: 'tool', text: '', timestamp: clock.toISOString(), prompts: { tool: 'send_agent_prompt', agentId: 'lead', notified: true } });
+    supervisorPrompts();
     await setBusy('sup');
     await engine.onTurnStarted('lead');
     advance(MINUTE);
@@ -395,12 +408,8 @@ describe('attention signals and letters', () => {
     await engine.onTurnStarted('lead');
     await engine.onTurnStarted('peer');
     advance(MINUTE);
-    const edit = (path: string) => [
-      { type: 'user_message' as const, text: `Change ${path}` },
-      { type: 'tool_call' as const, callId: path, name: 'Edit', status: 'completed' as const, error: null, detail: { type: 'edit' as const, filePath: path } },
-    ];
-    await engine.onTurnEnded('peer', { kind: 'completed' }, edit('src/a.ts'));
-    await engine.onTurnEnded('lead', { kind: 'completed' }, edit(join(repo, '.beads', 'beads.db')));
+    await engine.onTurnEnded('peer', { kind: 'completed' }, editTurn('src/a.ts'));
+    await engine.onTurnEnded('lead', { kind: 'completed' }, editTurn(join(repo, '.beads', 'beads.db')));
     const letter = letters().find(entry => entry.text.includes('during overlapping turns'))?.text ?? '';
     expect(letter).toContain(`In ${repo}, during overlapping turns,`);
     expect(letter).toContain('lead shop — Lead (lead) edited .beads/beads.db (turn ended 2026-09-24T08:01Z)');
@@ -412,12 +421,8 @@ describe('attention signals and letters', () => {
     await engine.onTurnStarted('lead');
     await engine.onTurnStarted('peer');
     advance(MINUTE);
-    const edit = (path: string) => [
-      { type: 'user_message' as const, text: 'Review it' },
-      { type: 'tool_call' as const, callId: path, name: 'Write', status: 'completed' as const, error: null, detail: { type: 'write' as const, filePath: path } },
-    ];
-    await engine.onTurnEnded('peer', { kind: 'completed' }, edit('/tmp/review-notes.md'));
-    await engine.onTurnEnded('lead', { kind: 'completed' }, edit('src/b.ts'));
+    await engine.onTurnEnded('peer', { kind: 'completed' }, editTurn('/tmp/review-notes.md'));
+    await engine.onTurnEnded('lead', { kind: 'completed' }, editTurn('src/b.ts'));
     await settle();
     expect(engine.openIncidents().map(incident => incident.kind)).not.toContain('writers-observed');
   });

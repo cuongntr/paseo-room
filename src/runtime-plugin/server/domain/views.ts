@@ -8,7 +8,7 @@
 import type { RuntimeEventV1 } from '../events/schema.js';
 import { canonicalJson, sha256 } from './receipts.js';
 import {
-  activeLeases, leadWorkspaceWriter, reclaimCheck, TERMINAL_STATES, type AssignmentView, type ProjectState, type Violation, type WorkspaceRecord,
+  activeLeases, leadWorkspaceWriter, reclaimCheck, settled, TERMINAL_STATES, type AssignmentView, type ProjectState, type Violation, type WorkspaceRecord,
 } from './state.js';
 
 export type EvidenceClass = 'enforced' | 'detected' | 'procedural' | 'unverifiable';
@@ -101,6 +101,8 @@ export interface ProjectStatusView {
   /** Said wherever scopes are shown (PRD REQ-011). */
   readonly scopeStatement: string;
   readonly assignments: readonly AssignmentSummary[];
+  /** Present when settled assignments are counted instead of listed. */
+  readonly settledAssignments?: number;
   readonly findings: readonly Finding[];
 }
 
@@ -260,13 +262,17 @@ function summary(view: AssignmentView): AssignmentSummary {
 
 /**
  * Project status is the same for every viewer that may see it — Supervisor, Lead and the
- * operator. `ViewerRole` has no Peer member, so a Peer cannot be handed a view at all.
+ * operator — except that `countSettled` counts settled assignments instead of listing them, so a
+ * long-lived project fits one Supervisor tool result. `ViewerRole` has no Peer member, so a Peer
+ * cannot be handed a view at all.
  */
-export function projectStatusView(input: StatusInput): ProjectStatusView {
+export function projectStatusView(input: StatusInput, options: { readonly countSettled?: boolean } = {}): ProjectStatusView {
   const found = findings(input);
   const paused = found.some(finding => finding.kind === 'project-paused' || finding.kind === 'ownership-conflict');
   // The one writer in Lead's workspace; isolated writers are listed under `leases`.
   const writer = leadWorkspaceWriter(input.state);
+  const all = [...input.state.assignments.values()];
+  const shown = options.countSettled === true ? all.filter(view => !settled(view)) : all;
   return {
     projectId: input.projectId,
     canonicalRoot: input.canonicalRoot,
@@ -276,7 +282,8 @@ export function projectStatusView(input: StatusInput): ProjectStatusView {
     leases: activeLeases(input.state).flatMap(owner => leaseView(input.state, owner.assignmentId) ?? []),
     worktrees: [...dispositions(input.state, input.present)].filter(([, disposition]) => disposition !== 'gone').map(([record, disposition]) => worktreeView(record, disposition)),
     scopeStatement: SCOPE_STATEMENT,
-    assignments: [...input.state.assignments.values()].map(summary),
+    assignments: shown.map(summary),
+    ...(options.countSettled === true ? { settledAssignments: all.length - shown.length } : {}),
     findings: found,
   };
 }

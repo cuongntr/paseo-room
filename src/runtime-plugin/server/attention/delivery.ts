@@ -28,6 +28,14 @@ export function letterId(): string {
   return `att_${randomBytes(9).toString('base64url')}`;
 }
 
+/** Deletes the oldest entries of an insertion-ordered Map or Set until at most `limit` remain. */
+export function keepNewest<K>(collection: { readonly size: number; keys(): Iterable<K>; delete(key: K): boolean }, limit: number): void {
+  for (const key of collection.keys()) {
+    if (collection.size <= limit) return;
+    collection.delete(key);
+  }
+}
+
 export interface LetterItem {
   /** The incident or item id Supervisor may give feedback on. */
   readonly id: string;
@@ -120,14 +128,6 @@ export class Delivery {
     return this.sentLetters.get(letterId);
   }
 
-  private remember(letterId: string, letter: SentLetter): void {
-    this.sentLetters.set(letterId, letter);
-    if (this.sentLetters.size > LETTER_MEMORY) {
-      const oldest = this.sentLetters.keys().next().value;
-      if (oldest !== undefined) this.sentLetters.delete(oldest);
-    }
-  }
-
   /** Sends whatever each Supervisor may receive now. */
   async pump(): Promise<void> {
     for (const supervisorAgentId of [...this.queues.keys()]) await this.pumpOne(supervisorAgentId);
@@ -190,17 +190,19 @@ export class Delivery {
 
   private async send(supervisorAgentId: string, queue: Queue, id: string, text: string, items: readonly LetterItem[], level: Level): Promise<void> {
     const ids = items.map(item => item.id);
+    const sent = async (): Promise<void> => {
+      queue.retry = undefined;
+      this.sentLetters.set(id, { recipient: supervisorAgentId, items: ids });
+      keepNewest(this.sentLetters, LETTER_MEMORY);
+      await this.deps.log.append({ type: 'letter.sent', id, supervisorAgentId, level, items: ids });
+    };
     try {
       await this.deps.paseo.send(supervisorAgentId, text, id, 'steer');
-      queue.retry = undefined;
-      this.remember(id, { recipient: supervisorAgentId, items: ids });
-      await this.deps.log.append({ type: 'letter.sent', id, supervisorAgentId, level, items: ids });
+      await sent();
     } catch (error) {
       const delivered = await this.deps.paseo.promptDelivered(supervisorAgentId, id).catch(() => 'unknown' as const);
       if (delivered === 'delivered') {
-        queue.retry = undefined;
-        this.remember(id, { recipient: supervisorAgentId, items: ids });
-        await this.deps.log.append({ type: 'letter.sent', id, supervisorAgentId, level, items: ids });
+        await sent();
         return;
       }
       const attempts = (queue.retry?.id === id ? queue.retry.attempts : 0) + 1;

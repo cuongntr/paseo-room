@@ -34,11 +34,19 @@ export function leadMarkers(text: string): readonly Marker[] {
   const found: Marker[] = [];
   for (const match of text.matchAll(MARKER)) {
     // Emphasis closing the line is formatting, not what Lead said; inline code may be what it said.
-    const said = (match[2] ?? '').replace(/[\s*_]+$/, '');
+    const said = (match[2] ?? '').replace(/[\s*_]+$/, '').replace(/\s+/g, ' ');
     if (said === '' || EMPTY_MARKER.test(said.replace(/`/g, ''))) continue;
-    found.push({ kind: match[1] as MarkerKind, text: said.slice(0, MAX_MARKER_TEXT) });
+    // One character over the bound, so a quote cut to it still shows that it was cut.
+    found.push({ kind: match[1] as MarkerKind, text: said.slice(0, MAX_MARKER_TEXT + 1) });
   }
   return [...found.filter(marker => marker.kind === 'INCIDENT'), ...found.filter(marker => marker.kind !== 'INCIDENT')].slice(0, MAX_MARKERS);
+}
+
+/** The class a Lead's marker lines give its turn: an incident pages, a Human question wakes. The sensor never pages. */
+export function markedLeadTurn(markers: readonly Marker[]): Triaged<'page' | 'now'> | undefined {
+  if (markers.length === 0) return undefined;
+  const kinds = [...new Set(markers.map(marker => marker.kind))];
+  return { decision: kinds.includes('INCIDENT') ? 'page' : 'now', reason: `Lead marked the turn ${kinds.join(' and ')}` };
 }
 
 export interface LeadTurnFacts {
@@ -57,8 +65,8 @@ export interface Assessment {
   readonly inputTokens?: number;
 }
 
-export interface Triaged {
-  readonly decision: Decision;
+export interface Triaged<D extends string = Decision> {
+  readonly decision: D;
   readonly reason: string;
   /** Set when the sensor's outcome should arm the `project-quiet` backstop. */
   readonly continuing?: boolean;

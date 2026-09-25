@@ -12,13 +12,13 @@ import type { GitEvidence } from '../git.js';
 import type { PaseoPort } from '../paseo-port.js';
 import type { Recognition } from '../recognition.js';
 import { ProjectStore } from '../store/project.js';
-import { Delivery, LETTER_PREFIX, letterId } from './delivery.js';
+import { Delivery, LETTER_PREFIX, keepNewest, letterId } from './delivery.js';
 import { AttentionLog } from './log.js';
 import { head, mask, tail } from './mask.js';
 import { Observer, type Seat, type TurnFacts } from './observer.js';
 import { Portfolio, type Resolution } from './portfolio.js';
 import { age, conditions, seatLabel, type Condition, type Level, type SignalKind } from './signals.js';
-import { BASELINE, MAX_MARKER_TEXT, assistLeadTurn, type Assessment, type LeadTurnFacts, type Marker, type Triaged } from './triage.js';
+import { BASELINE, MAX_MARKER_TEXT, assistLeadTurn, markedLeadTurn, type Assessment, type Decision, type LeadTurnFacts, type Marker, type Triaged } from './triage.js';
 
 export const SWEEP_MS = 30_000;
 const STALE_SNAPSHOT_MS = 5 * 60_000;
@@ -31,9 +31,9 @@ const LETTER_MARKERS = 3;
 /** Relayed marker lines remembered per Lead. */
 const RELAYED_MARKERS = 100;
 
-/** A marker line as relayed: kind and words, whitespace aside. */
+/** A marker line as relayed; the parser has already collapsed its whitespace. */
 function markerKey(marker: Marker): string {
-  return `${marker.kind}:${marker.text.replace(/\s+/g, ' ').trim()}`;
+  return `${marker.kind}:${marker.text}`;
 }
 
 /** A path for display: the home directory shown as `~`. */
@@ -252,10 +252,7 @@ export class AttentionEngine {
 
   private remember(id: string, item: Item): void {
     this.items.set(id, item);
-    if (this.items.size > ITEM_MEMORY) {
-      const oldest = this.items.keys().next().value;
-      if (oldest !== undefined) this.items.delete(oldest);
-    }
+    keepNewest(this.items, ITEM_MEMORY);
   }
 
   // ── Conditions → incidents ──────────────────────────────────────────────────────────────────
@@ -339,8 +336,7 @@ export class AttentionEngine {
     const supervisor = this.supervisorOf(project.key).supervisorAgentId;
     if (supervisor === undefined) { await record('record', 'no Supervisor for this project'); return; }
     const relayed = this.relayedMarkers.get(lead.agentId) ?? new Set<string>();
-    const markers = (pending.turn.markers ?? []).filter(marker => !relayed.has(markerKey(marker)));
-    const incident = markers.some(marker => marker.kind === 'INCIDENT');
+    const markers = pending.turn.markers.filter(marker => !relayed.has(markerKey(marker)));
     // Paseo's own report of a prompted turn carries only its last message, so a marker still goes.
     if (markers.length === 0 && await this.supervisorPrompted(supervisor, pending)) { await record('record', 'Paseo reports this turn to the Supervisor that prompted it'); return; }
 
@@ -350,15 +346,13 @@ export class AttentionEngine {
       peersRunning: this.observer.descendants(lead.agentId).filter(seat => seat.state === 'running' || seat.state === 'permission').length,
       permissionPending: lead.pending.size > 0,
     };
-    let triaged: Triaged = BASELINE;
-    if (markers.length > 0) {
-      // Lead's own marker lines decide, in code; the sensor is not asked.
-      triaged = { decision: 'now', reason: `Lead marked the turn ${[...new Set(markers.map(marker => marker.kind))].join(' and ')}` };
-    } else if (this.deps.sensor !== undefined && message.trim() !== '') {
+    // Lead's own marker lines decide, in code; the sensor is asked only about an unmarked turn.
+    let triaged: Triaged<Decision | 'page'> = markedLeadTurn(markers) ?? BASELINE;
+    if (markers.length === 0 && this.deps.sensor !== undefined && message.trim() !== '') {
       const sensed = await this.deps.sensor.leadTurn({ id: pending.id, message, facts, seatName: `Lead of ${project.name}` }).catch(() => undefined);
       if (sensed !== undefined && sensed.mode === 'assist' && sensed.assist) triaged = assistLeadTurn(sensed.assessment, facts);
     }
-    const level: Level | 'record' = incident ? 'page' : triaged.decision;
+    const level = triaged.decision;
     await record(level, triaged.reason);
     if (triaged.continuing === true) this.quiet.set(project.key, pending.turn.endedAt);
     else this.quiet.delete(project.key);
@@ -372,13 +366,17 @@ export class AttentionEngine {
     if (level === 'digest') this.queuedTurn.set(lead.agentId, pending.id);
     else this.queuedTurn.delete(lead.agentId);
     for (const marker of markers) relayed.add(markerKey(marker));
-    for (const oldest of [...relayed].slice(0, Math.max(0, relayed.size - RELAYED_MARKERS))) relayed.delete(oldest);
+    keepNewest(relayed, RELAYED_MARKERS);
     this.relayedMarkers.set(lead.agentId, relayed);
-    const excerpt = message.trim() === '' ? '(no message in this turn)' : `"${tail(mask(message), LETTER_EXCERPT)}"`;
-    const more = markers.length > LETTER_MARKERS ? ` · and ${String(markers.length - LETTER_MARKERS)} more marker line(s)` : '';
-    const said = markers.length > 0
-      ? ` — ${markers.slice(0, LETTER_MARKERS).map(marker => `${marker.kind}: "${head(mask(marker.text), MAX_MARKER_TEXT)}"`).join(' · ')}${more}`
-      : `${triaged === BASELINE ? '' : ` [${triaged.reason}]`}: ${excerpt}`;
+    let said: string;
+    if (markers.length > 0) {
+      const quoted = markers.slice(0, LETTER_MARKERS).map(marker => `${marker.kind}: "${head(mask(marker.text), MAX_MARKER_TEXT)}"`);
+      if (markers.length > LETTER_MARKERS) quoted.push(`and ${String(markers.length - LETTER_MARKERS)} more marker line(s)`);
+      said = ` — ${quoted.join(' · ')}`;
+    } else {
+      const excerpt = message.trim() === '' ? '(no message in this turn)' : `"${tail(mask(message), LETTER_EXCERPT)}"`;
+      said = `${triaged === BASELINE ? '' : ` [${triaged.reason}]`}: ${excerpt}`;
+    }
     this.delivery.enqueue(supervisor, {
       id: pending.id, level,
       line: `${project.name} · ${seatLabel(lead)} ended a turn (${pending.turn.outcome})${said}`,
@@ -394,12 +392,12 @@ export class AttentionEngine {
    */
   async feedback(id: string, verdict: Verdict, by: { readonly source: 'human' } | { readonly source: 'supervisor'; readonly agentId: string }): Promise<'recorded' | 'unknown' | 'forbidden'> {
     const letter = this.delivery.sent(id);
-    const incident = (entry: string): Incident | undefined => [...this.incidents.values()].find(known => known.id === entry);
-    const recipient = letter?.recipient ?? this.items.get(id)?.recipient ?? incident(id)?.recipient;
+    const incidents = new Map([...this.incidents.values()].map(incident => [incident.id, incident]));
+    const recipient = letter?.recipient ?? this.items.get(id)?.recipient ?? incidents.get(id)?.recipient;
     if (recipient === undefined) return 'unknown';
     if (by.source === 'supervisor' && recipient !== by.agentId) return 'forbidden';
     for (const entry of letter?.items ?? [id]) {
-      const known = incident(entry);
+      const known = incidents.get(entry);
       if (known !== undefined) known.feedback = verdict;
       await this.log.append({ type: 'feedback.recorded', id: entry, verdict, by: by.source === 'human' ? 'human' : by.agentId });
     }

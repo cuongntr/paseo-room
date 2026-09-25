@@ -311,6 +311,9 @@ has to ask it to check.
 - The Observer derives every seat's state from Paseo's lifecycle events.
 - Code raises the conditions worth a Supervisor's attention, such as a waiting permission, an
   unread Peer result, a repeated failure, or a Lead turn the Supervisor did not prompt.
+- Lead's contract has it put a Human question on a `NEEDS-HUMAN:` line and an incident on an
+  `INCIDENT:` line. Code reads those lines from the whole turn, wakes or pages the Supervisor on
+  them and quotes them, because a letter's excerpt of a long message missed exactly those parts.
 - It delivers them as letters: only when the Supervisor is idle, never while it holds a permission,
   batched into digests and budgeted.
 - The optional sensor ranks only Lead turns, only when the operator enables it, and only on masked

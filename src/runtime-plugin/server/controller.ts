@@ -181,8 +181,7 @@ export class Controller {
     }
     const store = await this.projectFor(caller.cwd);
     // A mistyped base passes the shape check; refuse it here rather than brief a Peer against it.
-    // Asked in Lead's own checkout: the store's first root may be a worktree removed since.
-    if (!await this.deps.git.hasCommit(caller.cwd, validation.input.baseCommit)) {
+    if (!await this.deps.git.hasCommit(store.meta.gitCommonDir, validation.input.baseCommit)) {
       return refuse('base_unknown', `The base ${validation.input.baseCommit} is not a commit of this repository; read it with git rev-parse.`);
     }
     return await this.serial(store.meta.projectId, async () => {
@@ -340,7 +339,9 @@ export class Controller {
     if (version === undefined || !qualified.includes(version)) {
       return refuse('worktree_unqualified', `Worktree dispatch has not been qualified on Paseo ${version ?? '(unknown version)'}; dispatch without isolation.`);
     }
-    const root = loaded.store.meta.canonicalRoot;
+    // Commit questions go to the common directory, which every worktree shares and none removes;
+    // the checkout that first opened the project may be a worktree removed since.
+    const root = loaded.store.meta.gitCommonDir;
     if (!await this.deps.git.hasCommit(root, view.input.baseCommit)) return refuse('base_unknown', `The base ${view.input.baseCommit} is not a commit of this repository.`);
     const setup = await this.deps.git.setupDeclared(root, view.input.baseCommit);
     if (setup === 'declared' || setup === 'unreadable') {

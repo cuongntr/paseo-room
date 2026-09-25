@@ -100,36 +100,26 @@ function writersObserved(ctx: SignalContext): Condition[] {
     byCwd.set(seat.cwd, [...(byCwd.get(seat.cwd) ?? []), seat]);
   }
   const found: Condition[] = [];
+  type WriteTurn = Seat['writeTurns'][number];
+  const overlaps = (x: WriteTurn, y: WriteTurn): boolean => x.start < y.end && y.start < x.end;
+  const files = (paths: readonly string[]): string =>
+    paths.slice(0, MAX_PATHS).join(', ') + (paths.length > MAX_PATHS ? ` and ${String(paths.length - MAX_PATHS)} more` : '');
   for (const [cwd, seats] of byCwd) {
-    // The write turns of each seat that overlap another seat's, so the letter names what to check.
-    const overlapping = new Map<string, Set<Seat['writeTurns'][number]>>();
-    const note = (seat: Seat, turn: Seat['writeTurns'][number]): void => {
-      overlapping.set(seat.agentId, (overlapping.get(seat.agentId) ?? new Set()).add(turn));
-    };
-    for (const a of seats) {
-      for (const b of seats) {
-        if (a.agentId >= b.agentId) continue;
-        for (const x of a.writeTurns) {
-          for (const y of b.writeTurns) {
-            if (x.start < y.end && y.start < x.end) { note(a, x); note(b, y); }
-          }
-        }
-      }
-    }
-    if (overlapping.size < 2) continue;
-    const ids = [...overlapping.keys()].sort();
-    const first = seats[0];
-    if (first === undefined) continue;
-    const writes = ids.map(id => {
-      const turns = [...(overlapping.get(id) ?? [])];
-      return { id, paths: [...new Set(turns.flatMap(turn => turn.paths))].sort(), ended: Math.max(...turns.map(turn => turn.end)) };
-    });
-    const files = (paths: readonly string[]): string =>
-      paths.slice(0, MAX_PATHS).join(', ') + (paths.length > MAX_PATHS ? ` and ${String(paths.length - MAX_PATHS)} more` : '');
+    // Each seat's write turns that overlap another seat's, so the letter names what to check.
+    const writes = seats
+      .map(seat => ({ seat, turns: seat.writeTurns.filter(x => seats.some(other => other !== seat && other.writeTurns.some(y => overlaps(x, y)))) }))
+      .filter(write => write.turns.length > 0)
+      .sort((a, b) => (a.seat.agentId < b.seat.agentId ? -1 : 1))
+      .map(({ seat, turns }) => ({ seat, paths: [...new Set(turns.flatMap(turn => turn.paths))].sort(), ended: Math.max(...turns.map(turn => turn.end)) }));
+    const [first] = writes;
+    if (writes.length < 2 || first === undefined) continue;
+    const ids = writes.map(write => write.seat.agentId);
+    const say = (label: Label): string =>
+      `In ${cwd}, during overlapping turns, ${writes.map(write => `${label(write.seat)} edited ${files(write.paths)} (turn ended ${minuteStamp(write.ended)})`).join('; ')} (observed, not proven); one working tree admits one writer.`;
     found.push({
-      key: `writers:${cwd}:${ids.join(',')}`, kind: 'writers-observed', level: 'now', projectKey: first.project.key, subjects: ids,
-      ...both(label => `In ${cwd}, during overlapping turns, ${writes.map(write => `${label(ctx.observer.seat(write.id))} edited ${files(write.paths)} (turn ended ${minuteStamp(write.ended)})`).join('; ')} (observed, not proven); one working tree admits one writer.`),
-      evidence: writes.map(write => `${write.id}@${String(write.ended)}:${write.paths.join('|')}`).join(','),
+      key: `writers:${cwd}:${ids.join(',')}`, kind: 'writers-observed', level: 'now', projectKey: first.seat.project.key, subjects: ids,
+      ...both(say),
+      evidence: writes.map(write => `${write.seat.agentId}@${String(write.ended)}:${write.paths.join('|')}`).join(','),
     });
   }
   return found;

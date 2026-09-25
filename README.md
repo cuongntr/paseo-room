@@ -483,7 +483,9 @@ vocabulary for Lead and Peer, and exactly one body per role. TypeScript selects 
   that settles it rather than pre-solving the work; any plan or file list in it is provisional.
   One moving write scope has exactly one owner, and at most one Peer is writable at a time. It
   explicitly requests native Paseo completion/error/permission notification for Peer creation and
-  every background follow-up, then waits for events rather than polling. Room tools: on.
+  every background follow-up, then waits for events rather than polling. A question only Human can
+  answer goes on its own `NEEDS-HUMAN:` line, and an effect beyond the work's intended scope on an
+  `INCIDENT:` line, so neither is lost in a long message. Room tools: on.
 - **Peer** owns one bounded assignment — writable inside an assigned scope, or read-only
   against a named candidate, question or area — under exactly one disposition Lead names in the
   brief (Engineer, Architect, Reviewer or Scout), forms its own technical position from the code
@@ -621,8 +623,11 @@ npx paseo-room verify
   working.
 - **Lead** gains room tools such as `assignment_create`, `assignment_dispatch`, `assignment_answer`,
   `assignment_accept`, `gate_run`, and for isolated writers `workspace_close` and `lease_reclaim`.
+  `assignment_create` refuses a base that is not a commit of the repository (`base_unknown`).
   **Supervisor** gains `room_status`, `runtime_findings`, `message_lead` (with a `project` for a
-  Supervisor of several projects) and `attention_feedback`, and cannot change an assignment.
+  Supervisor of several projects) and `attention_feedback`, and cannot change an assignment. Its
+  status and findings cover only its portfolio and the project it stands in; `room_status` lists
+  the assignments still open or still to close, and only counts settled ones.
 - **A runtime-dispatched Peer** gets exactly two tools, `ask` and `handoff`, for its own assignment,
   and still no Paseo room tools. A report exists only once one of those calls is accepted; its
   final message is never read as a report. Claude asks for permission before a Peer's first call
@@ -659,7 +664,8 @@ learn only when you ask it to check.
   - They report a permission waiting on any seat for 5 minutes, and a Peer result its idle Lead has
     not read for 10 minutes.
   - They report the same failure twice in a row, and possible concurrent writers in one working
-    tree.
+    tree, naming each seat's files and when its turn ended. A write outside that tree does not
+    count.
   - They report a Lead archived while its seats still work, and a Lead's finished turn that the
     Supervisor did not prompt itself.
   - The Lead contract has Lead put a question for you on a line beginning `NEEDS-HUMAN:` and an
@@ -669,9 +675,9 @@ learn only when you ask it to check.
   - Letters are held until the Supervisor is idle, batched into digests, and limited to a few wakes
     an hour. They are never sent while the Supervisor holds a permission, because a send would
     deny it.
-  - Each item, and each letter, has an id for `attention_feedback`. A letter is evidence, not an instruction: the
-    Supervisor contract has it ask or nudge the Lead, or relay a question to you, and never direct a
-    Peer.
+  - Each item has an id for `attention_feedback`, and a letter's own id rates every item in it. A
+    letter is evidence, not an instruction: the Supervisor contract has it ask or nudge the Lead, or
+    relay a question to you, and never direct a Peer.
 - **Starting seats.** From the **Room** view, **Start Supervisor** opens one in an existing directory
   outside every repository. **Start project** checks a repository, opens its Lead under the
   Supervisor you pick, and sends a fixed kickoff with your first directive verbatim. **Assign
