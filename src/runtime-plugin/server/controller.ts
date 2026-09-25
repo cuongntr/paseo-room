@@ -181,7 +181,8 @@ export class Controller {
     }
     const store = await this.projectFor(caller.cwd);
     // A mistyped base passes the shape check; refuse it here rather than brief a Peer against it.
-    if (!await this.deps.git.hasCommit(store.meta.canonicalRoot, validation.input.baseCommit)) {
+    // Asked in Lead's own checkout: the store's first root may be a worktree removed since.
+    if (!await this.deps.git.hasCommit(caller.cwd, validation.input.baseCommit)) {
       return refuse('base_unknown', `The base ${validation.input.baseCommit} is not a commit of this repository; read it with git rev-parse.`);
     }
     return await this.serial(store.meta.projectId, async () => {

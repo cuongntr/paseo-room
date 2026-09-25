@@ -161,7 +161,7 @@ describe('role instructions', () => {
     expect(lead).toContain('on its own line that begins NEEDS-HUMAN:');
     expect(lead).toContain('on its own line that begins INCIDENT:');
     expect(lead).toContain('Omit them when there is nothing to report');
-    expect(leadMarkers('NEEDS-HUMAN: Q-a?\nINCIDENT: prune ran.').map(marker => marker.kind)).toEqual(['NEEDS-HUMAN', 'INCIDENT']);
+    expect(leadMarkers('NEEDS-HUMAN: Q-a?\nINCIDENT: prune ran.').map(marker => marker.kind)).toEqual(['INCIDENT', 'NEEDS-HUMAN']);
     for (const role of ['supervisor', 'peer'] as const) {
       expect(renderInstructions(role)).not.toContain('NEEDS-HUMAN');
       expect(renderInstructions(role)).not.toContain('INCIDENT:');

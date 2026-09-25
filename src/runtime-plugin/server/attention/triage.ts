@@ -21,23 +21,24 @@ export interface Marker {
   readonly text: string;
 }
 
-const MARKER = /^[ \t>*_-]*(INCIDENT|NEEDS-HUMAN)[*_]*:[*_ \t]*(\S.*)$/gm;
-/** A filled-in template ("INCIDENT: none") is not a report. */
-const EMPTY_MARKER = /^(?:none|n\/a|no|không(?: có)?)[.!]?$/i;
-const MAX_MARKERS = 5;
-const MAX_MARKER_TEXT = 500;
+/** A marker line, after any list, quote, heading, numbering, emphasis or code prefix. */
+const MARKER = /^[ \t>*_#`-]*(?:\d+[.)][ \t]*)?[*_`]*(INCIDENT|NEEDS-HUMAN)[*_`]*:[*_` \t]*(\S.*)$/gm;
+/** A filled-in template ("INCIDENT: none") is not a report; a real one is never matched by a prefix. */
+const EMPTY_MARKER = /^(?:none|nothing|n\/a|no|không(?: có)?|—|–|-)(?: to report)?(?: this turn)?[.!]?$/i;
+/** Markers kept per turn, incidents first. */
+const MAX_MARKERS = 20;
+export const MAX_MARKER_TEXT = 500;
 
-/** The marker lines of a Lead's words, in order, bounded. */
+/** The marker lines of a Lead's words, incidents first so no number of questions crowds one out. */
 export function leadMarkers(text: string): readonly Marker[] {
   const found: Marker[] = [];
   for (const match of text.matchAll(MARKER)) {
-    const kind = match[1] as MarkerKind;
-    const said = (match[2] ?? '').trim();
-    if (EMPTY_MARKER.test(said)) continue;
-    found.push({ kind, text: said.slice(0, MAX_MARKER_TEXT) });
-    if (found.length === MAX_MARKERS) break;
+    // Emphasis closing the line is formatting, not what Lead said; inline code may be what it said.
+    const said = (match[2] ?? '').replace(/[\s*_]+$/, '');
+    if (said === '' || EMPTY_MARKER.test(said.replace(/`/g, ''))) continue;
+    found.push({ kind: match[1] as MarkerKind, text: said.slice(0, MAX_MARKER_TEXT) });
   }
-  return found;
+  return [...found.filter(marker => marker.kind === 'INCIDENT'), ...found.filter(marker => marker.kind !== 'INCIDENT')].slice(0, MAX_MARKERS);
 }
 
 export interface LeadTurnFacts {

@@ -7,6 +7,7 @@ import { promisify } from 'node:util';
 import { ROLES } from '../src/roles.js';
 import { renderRuntimeManifestFile } from '../src/runtime.js';
 import { Controller, type Caller } from '../src/runtime-plugin/server/controller.js';
+import { actionFingerprint } from '../src/runtime-plugin/server/domain/receipts.js';
 import { CorrelationRegistry } from '../src/runtime-plugin/server/correlations.js';
 import { GitEvidence } from '../src/runtime-plugin/server/git.js';
 import { CORRELATION_ENV, handleSessionOpen, transformAgentCreate, type HookDependencies } from '../src/runtime-plugin/server/hooks.js';
@@ -82,4 +83,26 @@ export async function harness(options: { readonly associationWaitMs?: number; re
   });
   const lead: Caller = { agentId: 'lead-1', providerId: 'codex-lead', role: 'lead', workspaceId: 'ws-1', cwd: repo };
   return { root, repo, base, runtimeRoot, paseo, controller, hooks, lead, git, cleanup: () => rm(root, { recursive: true, force: true }) };
+}
+
+/** Creates and dispatches `brief`, then records an accepted complete handoff on a committed candidate. */
+export async function dispatchAndHandBack(h: Harness, brief: Record<string, unknown>): Promise<{ id: string; peer: string }> {
+  const created = await h.controller.createAssignment(h.lead, brief);
+  if (!created.ok) throw new Error(created.message);
+  const dispatched = await h.controller.dispatch(h.lead, { assignmentId: created.value.assignmentId, peerProvider: 'codex-peer' });
+  if (!dispatched.ok) throw new Error(dispatched.message);
+  await writeFile(join(h.repo, 'work.ts'), 'x');
+  await h.git('add', '.');
+  await h.git('commit', '-q', '-m', 'work');
+  const project = await h.controller.load(await h.controller.projectFor(h.repo));
+  if (!project.ok) throw new Error(project.message);
+  const derived = await h.controller.deps.git.deriveCandidate(h.repo, { gitCommonDir: project.value.store.meta.gitCommonDir, baseCommit: h.base, workspaceId: 'ws-1' });
+  if (!derived.ok) throw new Error(derived.message);
+  const payload = { completion: 'complete', verification: [{ command: 'sleep 1', outcome: 'passed' }] };
+  await h.controller.append(project.value, {
+    type: 'report.accepted', payloadVersion: 1, assignmentId: created.value.assignmentId, actor: { source: 'seat', role: 'peer' },
+    data: { generation: 1, tool: 'handoff', requestId: 'req_handback1', fingerprint: actionFingerprint(1, 'handoff', payload), receipt: { schema: 1, receipt: 'r', tool: 'handoff', status: 'accepted', assignmentState: 'handed-back' }, report: payload, candidate: derived.candidate },
+  });
+  h.paseo.endTurn(dispatched.value.agentId);
+  return { id: created.value.assignmentId, peer: dispatched.value.agentId };
 }

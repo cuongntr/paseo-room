@@ -63,6 +63,11 @@ const both = (say: (label: Label) => string): { readonly text: string; readonly 
   text: say(seat => seatLabel(seat)), summary: say(seat => seatName(seat)),
 });
 
+/** An absolute time to the minute, for text that may be read long after it was written. */
+function minuteStamp(ms: number): string {
+  return `${new Date(ms).toISOString().slice(0, 16)}Z`;
+}
+
 export function age(ms: number): string {
   const minutes = Math.max(0, Math.round(ms / MINUTE));
   if (minutes < 60) return `${String(minutes)} min`;
@@ -123,7 +128,7 @@ function writersObserved(ctx: SignalContext): Condition[] {
       paths.slice(0, MAX_PATHS).join(', ') + (paths.length > MAX_PATHS ? ` and ${String(paths.length - MAX_PATHS)} more` : '');
     found.push({
       key: `writers:${cwd}:${ids.join(',')}`, kind: 'writers-observed', level: 'now', projectKey: first.project.key, subjects: ids,
-      ...both(label => `In ${cwd}, during overlapping turns, ${writes.map(write => `${label(ctx.observer.seat(write.id))} edited ${files(write.paths)} (turn ended ${age(ctx.now - write.ended)} ago)`).join('; ')} (observed, not proven); one working tree admits one writer.`),
+      ...both(label => `In ${cwd}, during overlapping turns, ${writes.map(write => `${label(ctx.observer.seat(write.id))} edited ${files(write.paths)} (turn ended ${minuteStamp(write.ended)})`).join('; ')} (observed, not proven); one working tree admits one writer.`),
       evidence: writes.map(write => `${write.id}@${String(write.ended)}:${write.paths.join('|')}`).join(','),
     });
   }

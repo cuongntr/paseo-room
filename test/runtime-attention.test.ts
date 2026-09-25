@@ -226,6 +226,52 @@ describe('attention signals and letters', () => {
         { kind: 'NEEDS-HUMAN', text: 'Keep xcmdb-db data? Yes restores, no drops.' },
       ]);
     expect(leadMarkers('INCIDENT: none\nNEEDS-HUMAN: Không.\nNo incident: all fine. The INCIDENT: mid-line is prose.')).toEqual([]);
+    // A template filled in with formatting is still empty; a report that merely starts with "No" is not.
+    expect(leadMarkers('**INCIDENT: none**\n_INCIDENT: none_\n`INCIDENT: none`\nINCIDENT: Nothing to report.\nINCIDENT: None this turn.\nINCIDENT: —')).toEqual([]);
+    expect(leadMarkers('INCIDENT: No backups exist for xcmdb-db.')).toEqual([{ kind: 'INCIDENT', text: 'No backups exist for xcmdb-db.' }]);
+    expect(leadMarkers('1. NEEDS-HUMAN: pick A or B?\n### INCIDENT: data gone\n`INCIDENT:` Peer ran `docker volume prune -f`').map(marker => marker.text))
+      .toEqual(['data gone', 'Peer ran `docker volume prune -f`', 'pick A or B?']);
+  });
+
+  it('puts incidents first, so no number of questions crowds one out of a letter', async () => {
+    await settle();
+    const questions = [1, 2, 3, 4, 5, 6].map(index => `NEEDS-HUMAN: Q-${String(index)}?`).join('\n');
+    await engine.onTurnEnded('lead', { kind: 'completed' }, [{ type: 'assistant_message', text: `${questions}\nINCIDENT: volumes of xcmdb-db are gone.` }]);
+    advance(61_000);
+    await settle();
+    const text = letters()[0]?.text ?? '';
+    expect(text).toContain('— INCIDENT: "volumes of xcmdb-db are gone." · NEEDS-HUMAN: "Q-1?" · NEEDS-HUMAN: "Q-2?" · and 4 more marker line(s)');
+  });
+
+  it('relays a NEEDS-HUMAN line from an earlier message of a turn the Supervisor prompted, since Paseo reports only the last', async () => {
+    await settle();
+    advance(MINUTE);
+    paseo.agents.get('sup')?.timeline.push({ kind: 'tool', text: '', timestamp: clock.toISOString(), prompts: { tool: 'send_agent_prompt', agentId: 'lead', notified: true } });
+    await engine.onTurnStarted('lead');
+    advance(MINUTE);
+    await engine.onTurnEnded('lead', { kind: 'completed' }, [
+      { type: 'user_message', text: 'Supervisor: check xcmdb-db' },
+      { type: 'assistant_message', text: 'Found real data.\nNEEDS-HUMAN: keep the production copy in xcmdb-db?' },
+      { type: 'tool_call', callId: 'c1', name: 'Bash', status: 'completed', error: null, detail: { type: 'shell', command: 'git status' } },
+      { type: 'assistant_message', text: 'Waiting for the reviewer.' },
+    ]);
+    await settle();
+    expect(letters().at(-1)?.text).toContain('NEEDS-HUMAN: "keep the production copy in xcmdb-db?"');
+  });
+
+  it('pages a restated INCIDENT line once', async () => {
+    await settle();
+    for (const status of ['Reviewer done.', 'Gate running.', 'Gate passed.']) {
+      await engine.onTurnEnded('lead', { kind: 'completed' }, [{ type: 'assistant_message', text: `${status}\nINCIDENT: prune ran host-wide (contained).` }]);
+      await settle();
+    }
+    await setIdle('sup');
+    advance(16 * MINUTE);
+    await settle();
+    const relayed = letters().filter(letter => letter.text.includes('INCIDENT: "prune ran host-wide (contained)."'));
+    expect(relayed).toHaveLength(1);
+    // The restatements are ordinary turns now: the latest one waits in a digest.
+    expect(letters().at(-1)?.text).toContain('"Gate passed. INCIDENT: prune ran host-wide (contained)."');
   });
 
   it('pages an INCIDENT line from anywhere in the turn, even on a turn Paseo reports to the Supervisor', async () => {
@@ -357,8 +403,8 @@ describe('attention signals and letters', () => {
     await engine.onTurnEnded('lead', { kind: 'completed' }, edit(join(repo, '.beads', 'beads.db')));
     const letter = letters().find(entry => entry.text.includes('during overlapping turns'))?.text ?? '';
     expect(letter).toContain(`In ${repo}, during overlapping turns,`);
-    expect(letter).toContain('lead shop — Lead (lead) edited .beads/beads.db (turn ended 0 min ago)');
-    expect(letter).toContain('peer Engineer (peer) edited src/a.ts (turn ended 0 min ago)');
+    expect(letter).toContain('lead shop — Lead (lead) edited .beads/beads.db (turn ended 2026-09-24T08:01Z)');
+    expect(letter).toContain('peer Engineer (peer) edited src/a.ts (turn ended 2026-09-24T08:01Z)');
   });
 
   it('does not count a write outside the working tree as a writer of it', async () => {

@@ -15,7 +15,7 @@ import type { Project } from '../attention/observer.js';
 import { LEAD_ACTION_SCHEMAS, SUPERVISOR_ACTION_SCHEMAS } from '../contracts/actions.js';
 import type { BridgeRequestV1 } from '../contracts/envelope.js';
 import type { Caller, Controller, ControllerResult } from '../controller.js';
-import { project, TERMINAL_STATES } from '../domain/state.js';
+import { project, TERMINAL_STATES, type AssignmentView } from '../domain/state.js';
 import { assignmentDetailView, findings, projectStatusView, revision, type StatusInput } from '../domain/views.js';
 import { projectLeads } from '../ownership.js';
 import type { HandlerReply, OperationHandler } from '../spool.js';
@@ -149,14 +149,16 @@ export function createSupervisorHandlers(controller: Controller, attention: Atte
   return {
     room_status: supervisor('room_status', async caller => {
       const { allowed } = await supervisorProjects(controller, attention, caller);
-      const keys = new Set(allowed.map(project => project.key));
-      // Only open assignments: a project's settled history would soon outgrow one tool result.
-      const projects = (await statusInputs(controller, keys)).map(input => {
+      // Settled assignments are only counted: a project's history would soon outgrow one tool
+      // result. Settled means decided and closed, or decided without a Peer to close.
+      const settled = (view: AssignmentView): boolean => TERMINAL_STATES.includes(view.state) && (view.closure === 'closed' || view.peerAgentId === undefined);
+      const projects = (await statusInputs(controller, new Set(allowed.map(project => project.key)))).map(input => {
+        const hidden = new Set([...input.state.assignments.values()].filter(settled).map(view => view.id));
         const view = projectStatusView(input);
-        const open = view.assignments.filter(entry => !(TERMINAL_STATES as readonly string[]).includes(entry.state.value));
-        return { ...view, assignments: open, terminalAssignments: view.assignments.length - open.length };
+        return { ...view, assignments: view.assignments.filter(entry => !hidden.has(entry.id)), settledAssignments: hidden.size };
       });
-      const observed = attention.roomView([...keys]).projects;
+      // The observed map is the portfolio's alone: it carries each project's letters' incidents.
+      const observed = attention.roomView(attention.portfolioOf(caller.agentId)).projects;
       return success({ revision: revision({ projects, observed }), projects, observed });
     }),
     runtime_findings: supervisor('runtime_findings', async caller => {

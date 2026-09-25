@@ -7,7 +7,7 @@ import { AttentionEngine } from '../src/runtime-plugin/server/attention/engine.j
 import { createLeadHandlers, createSupervisorHandlers } from '../src/runtime-plugin/server/handlers/actions.js';
 import { CORRELATION_ENV, handleSessionOpen, transformAgentCreate } from '../src/runtime-plugin/server/hooks.js';
 import type { HandlerReply } from '../src/runtime-plugin/server/spool.js';
-import { harness, writableBrief, type Harness } from './runtime-harness.js';
+import { dispatchAndHandBack, harness, writableBrief, type Harness } from './runtime-harness.js';
 import { PARENT_AGENT_ID_LABEL } from './runtime-fake-paseo.js';
 
 const open: Harness[] = [];
@@ -83,6 +83,16 @@ describe('Lead action handlers', () => {
       const own = body(await lead[name]?.(request(leadCorrelation, name, payload), { kind: 'action', role: 'lead' }) ?? { ok: false, result: {} });
       expect((own.error as { code?: string } | undefined)?.code).not.toBe('unauthorized');
     }
+  });
+
+  it('checks a new assignment\'s base in Lead\'s own checkout, not the worktree its project was first opened from', async () => {
+    const { h } = await room();
+    const linked = join(h.root, 'linked');
+    await h.git('worktree', 'add', '-q', linked);
+    expect((await h.controller.createAssignment({ ...h.lead, cwd: linked }, writableBrief(h.base))).ok).toBe(true);
+    await h.git('worktree', 'remove', linked);
+    expect((await h.controller.createAssignment(h.lead, writableBrief(h.base))).ok).toBe(true);
+    expect(await h.controller.createAssignment(h.lead, writableBrief('f'.repeat(40)))).toMatchObject({ ok: false, code: 'base_unknown' });
   });
 
   it('shows Lead only its own assignments', async () => {
@@ -176,12 +186,27 @@ describe('Supervisor portfolio (attention delta §9.4)', () => {
     const kept = await h.controller.createAssignment(h.lead, writableBrief(h.base));
     const settled = await h.controller.createAssignment(h.lead, writableBrief(h.base));
     await h.controller.abandon(h.lead, { assignmentId: settled.ok ? settled.value.assignmentId : '', reason: 'Superseded.' });
+    // Decided, but its Peer is not archived yet: still something to close, so still listed.
+    const rejected = await dispatchAndHandBack(h, writableBrief(h.base));
+    expect((await h.controller.reject(h.lead, { assignmentId: rejected.id, reason: 'Wrong approach.' })).ok).toBe(true);
     const status = await call(supervisor, correlation, 'room_status', {});
-    expect(status.projects).toMatchObject([{ assignments: [{ id: kept.ok ? kept.value.assignmentId : '' }], terminalAssignments: 1 }]);
+    const [listed] = status.projects as { assignments: { id: string }[]; settledAssignments: number }[];
+    expect(listed?.assignments.map(entry => entry.id).sort()).toEqual([kept.ok ? kept.value.assignmentId : '', rejected.id].sort());
+    expect(listed?.settledAssignments).toBe(1);
     // Another Supervisor sees no runtime project it does not supervise or stand in.
     const theirs = await call(supervisor, stranger, 'room_status', {});
     expect(theirs.projects).toEqual([]);
     expect(await call(supervisor, stranger, 'runtime_findings', {})).toMatchObject({ findings: [], incidents: [] });
+  });
+
+  it('shows a Supervisor standing in another\'s project its runtime record, but not that Supervisor\'s observed map', async () => {
+    const { h, supervisor } = await portfolioRoom();
+    h.paseo.addAgent({ id: 'sup-r', provider: 'codex-supervisor', cwd: h.repo });
+    const bystander = await bind(h, 'sup-r', 'codex-supervisor');
+    await h.controller.createAssignment(h.lead, writableBrief(h.base));
+    const status = await call(supervisor, bystander, 'room_status', {});
+    expect(status.projects).toHaveLength(1);
+    expect(status.observed).toEqual([]);
   });
 
   it('rates only the caller\'s own attention items', async () => {

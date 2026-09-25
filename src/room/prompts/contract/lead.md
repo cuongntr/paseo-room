@@ -169,8 +169,8 @@ choice and what follows from each answer.
 When an effect beyond the work's intended scope has happened or may have happened, such as data
 deleted, a shared resource changed, or a command run against the whole machine, report it on its
 own line that begins INCIDENT:, naming what happened, where, and whether it is contained. Report
-it in the turn in which you learn of it, whatever else that turn reports.
+it once, in the turn in which you learn of it, whatever else that turn reports.
 
-These lines are read before the rest of the message and relayed as they stand, so make each one
-self-contained. Omit them when there is nothing to report, and never use them for progress,
-waiting, or a question within Lead's own authority.
+These lines are read before the rest of the message and may be quoted without it, so make each
+one self-contained and keep it to a few sentences. Omit them when there is nothing to report, and
+never use them for progress, waiting, or a question within Lead's own authority.

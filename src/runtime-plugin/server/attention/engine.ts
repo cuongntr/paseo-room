@@ -18,7 +18,7 @@ import { head, mask, tail } from './mask.js';
 import { Observer, type Seat, type TurnFacts } from './observer.js';
 import { Portfolio, type Resolution } from './portfolio.js';
 import { age, conditions, seatLabel, type Condition, type Level, type SignalKind } from './signals.js';
-import { BASELINE, assistLeadTurn, type Assessment, type LeadTurnFacts, type Triaged } from './triage.js';
+import { BASELINE, MAX_MARKER_TEXT, assistLeadTurn, type Assessment, type LeadTurnFacts, type Marker, type Triaged } from './triage.js';
 
 export const SWEEP_MS = 30_000;
 const STALE_SNAPSHOT_MS = 5 * 60_000;
@@ -26,8 +26,15 @@ const REOPEN_MS = 10 * 60_000;
 const LEDGER_CACHE_MS = 60_000;
 const ITEM_MEMORY = 500;
 const LETTER_EXCERPT = 240;
-/** Marker lines quoted in one letter item. */
+/** Marker lines quoted in one letter item, each whole up to the parser's bound. */
 const LETTER_MARKERS = 3;
+/** Relayed marker lines remembered per Lead. */
+const RELAYED_MARKERS = 100;
+
+/** A marker line as relayed: kind and words, whitespace aside. */
+function markerKey(marker: Marker): string {
+  return `${marker.kind}:${marker.text.replace(/\s+/g, ' ').trim()}`;
+}
 
 /** A path for display: the home directory shown as `~`. */
 export function homeRelative(path: string, home = homedir()): string {
@@ -100,8 +107,10 @@ export class AttentionEngine {
   private readonly incidents = new Map<string, Incident>();
   private readonly items = new Map<string, Item>();
   private readonly quiet = new Map<string, number>();
-  /** The queued Lead-turn item of each Lead: a newer turn supersedes it. */
+  /** The queued digest Lead-turn item of each Lead: a newer turn supersedes it. */
   private readonly queuedTurn = new Map<string, string>();
+  /** Marker lines already relayed per Lead, so a restated one does not page or wake again. */
+  private readonly relayedMarkers = new Map<string, Set<string>>();
   private pendingTurns: PendingLeadTurn[] = [];
   private lane: Promise<unknown> = Promise.resolve();
   private started = false;
@@ -329,10 +338,11 @@ export class AttentionEngine {
     };
     const supervisor = this.supervisorOf(project.key).supervisorAgentId;
     if (supervisor === undefined) { await record('record', 'no Supervisor for this project'); return; }
-    const markers = pending.turn.markers ?? [];
+    const relayed = this.relayedMarkers.get(lead.agentId) ?? new Set<string>();
+    const markers = (pending.turn.markers ?? []).filter(marker => !relayed.has(markerKey(marker)));
     const incident = markers.some(marker => marker.kind === 'INCIDENT');
-    // An incident pages even when Paseo reports the turn: it must not wait to be found in the text.
-    if (!incident && await this.supervisorPrompted(supervisor, pending)) { await record('record', 'Paseo reports this turn to the Supervisor that prompted it'); return; }
+    // Paseo's own report of a prompted turn carries only its last message, so a marker still goes.
+    if (markers.length === 0 && await this.supervisorPrompted(supervisor, pending)) { await record('record', 'Paseo reports this turn to the Supervisor that prompted it'); return; }
 
     // Only this turn's own message: an earlier one would be reported as news (a turn canceled at once has none).
     const message = pending.turn.lastMessage ?? '';
@@ -355,15 +365,19 @@ export class AttentionEngine {
     if (level === 'record' || !this.deps.settings().letters.enabled) return;
 
     this.remember(pending.id, { recipient: supervisor, projectKey: project.key, kind: 'lead-turn' });
-    // The Supervisor needs the Lead's latest state, not every intermediate turn; but a marked turn is
-    // never superseded, so a later progress turn cannot hide a Human question or an incident.
+    // The Supervisor needs the Lead's latest state, not every intermediate turn; but only a digest
+    // line is superseded, so a later progress turn cannot hide a Human question or an incident.
     const superseded = this.queuedTurn.get(lead.agentId);
     if (superseded !== undefined) this.delivery.withdraw(superseded);
-    if (markers.length > 0) this.queuedTurn.delete(lead.agentId);
-    else this.queuedTurn.set(lead.agentId, pending.id);
+    if (level === 'digest') this.queuedTurn.set(lead.agentId, pending.id);
+    else this.queuedTurn.delete(lead.agentId);
+    for (const marker of markers) relayed.add(markerKey(marker));
+    for (const oldest of [...relayed].slice(0, Math.max(0, relayed.size - RELAYED_MARKERS))) relayed.delete(oldest);
+    this.relayedMarkers.set(lead.agentId, relayed);
     const excerpt = message.trim() === '' ? '(no message in this turn)' : `"${tail(mask(message), LETTER_EXCERPT)}"`;
+    const more = markers.length > LETTER_MARKERS ? ` · and ${String(markers.length - LETTER_MARKERS)} more marker line(s)` : '';
     const said = markers.length > 0
-      ? ` — ${markers.slice(0, LETTER_MARKERS).map(marker => `${marker.kind}: "${head(mask(marker.text), LETTER_EXCERPT)}"`).join(' · ')}`
+      ? ` — ${markers.slice(0, LETTER_MARKERS).map(marker => `${marker.kind}: "${head(mask(marker.text), MAX_MARKER_TEXT)}"`).join(' · ')}${more}`
       : `${triaged === BASELINE ? '' : ` [${triaged.reason}]`}: ${excerpt}`;
     this.delivery.enqueue(supervisor, {
       id: pending.id, level,

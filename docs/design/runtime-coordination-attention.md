@@ -215,7 +215,7 @@ fire from absence.
 | `permission-waiting` | any seat in the project holds a permission `permissionMinutes` (5) | now | Supervisor |
 | `peer-result-unread` | a Peer turn ended and its Lead has not started a turn for `peerUnreadMinutes` (10) | now | Supervisor |
 | `turn-failing` | the same seat failed two turns with the same error code or prefix within 30 minutes (§8.10) | now | Supervisor |
-| `lead-turn-ended` | a project Lead's turn ended and the Supervisor did not already get Paseo's finish envelope for it (§7.3); a turn with an `INCIDENT` line always | candidate → triage; a marker line classes it (§6.1a) | Supervisor |
+| `lead-turn-ended` | a project Lead's turn ended and the Supervisor did not already get Paseo's finish envelope for it (§7.3); a turn with a new marker line always | candidate → triage; a marker line classes it (§6.1a) | Supervisor |
 | `peer-report` | a Peer's turn ended with outcome `completed` | candidate → triage (shadow only in v1) | Supervisor digest |
 | `peer-orphaned` | a Peer idles `orphanHours` (24) after its Lead was archived | digest | Supervisor |
 | `project-quiet` | the sensor recorded Lead's last turn as `continuing` (§6.4) and no seat of the project has run since, for `quietHours` (4) | now (backstop for a sensor `record`) | Supervisor |
@@ -241,13 +241,18 @@ Supervisor wake is either a mandatory signal or a batched digest.
 The Lead contract ("Human Questions and Incidents") has a turn put each question only Human can
 answer on its own line beginning `NEEDS-HUMAN:`, and each effect beyond the work's intended scope on
 one beginning `INCIDENT:`. Code reads these lines from every assistant message of the turn, not only
-the last, tolerating leading list, quote and emphasis characters and ignoring a filled-in template
-such as `INCIDENT: none`. A turn with an `INCIDENT` line is a page, even when Paseo already reports
-the turn to the Supervisor that prompted it (§7.3): an incident must not wait to be found in prose.
-A turn with only `NEEDS-HUMAN` lines is `now`. The letter item quotes the marker lines — masked, the
-first 240 characters of each, at most three — instead of the message's tail; the sensor is not
-asked; and a later turn of the same Lead never supersedes the item. Lead chooses what to mark; code
-alone chooses the class and the recipient.
+the last. It tolerates a leading list, number, quote, heading, emphasis or code mark, drops emphasis
+closing the line, and ignores a filled-in template such as `**INCIDENT: none**` or `INCIDENT: Nothing
+to report.`; a report that merely begins with "No" is still a report.
+
+A turn with an `INCIDENT` line is a page; one with only `NEEDS-HUMAN` lines is `now`. Either goes even
+when Paseo already reports the turn to the Supervisor that prompted it (§7.3), because Paseo's
+report carries only the turn's last message. The letter item quotes the marker lines, incidents
+first — masked, up to 500 characters each, at most three, then a count of the rest — instead of the
+message's tail; the sensor is not asked. A line already relayed for that Lead is not relayed again,
+so a status block that restates it leaves an ordinary turn. Only a digest item is superseded by the
+same Lead's later turn, so no later progress turn hides a Human question, an incident or a `now`
+the sensor raised. Lead chooses what to mark; code alone chooses the class and the recipient.
 
 This exists because a Supervisor missed an incident and three Human questions that sat in the
 middle of long Lead messages while its letters showed only their tails. It needs no model to read
@@ -470,9 +475,10 @@ Changing these assets changes what Supervisor is told. The commit must state the
 (several projects) and the unchanged limits.
 
 ### 9.4 Tools (`runtime/v1/tools/supervisor.json`)
-- `room_status` returns the portfolio's observed map. Its runtime projects are only those of the
-  portfolio and the project the Supervisor stands in, with open assignments listed and settled ones
-  only counted, so the result stays within one tool answer.
+- `room_status` returns the portfolio's observed map, and nothing of another Supervisor's. Its runtime
+  projects are those of the portfolio and the project the Supervisor stands in. They list every
+  assignment still open or still to close, and only count settled ones — decided and closed, or
+  decided without a Peer to close — so the result stays within one tool answer.
 - `runtime_findings` includes open attention incidents, and its findings keep to the same projects.
 - `message_lead` takes an optional `project` (project id or repository name). It is required when the
   portfolio has more than one project.
@@ -645,6 +651,7 @@ files under `runtime/v1/attention` stay until `remove --apply`.
 
 | Date | Author | Change |
 |---|---|---|
+| 2026-09-25 | Bytes | Code review of the field-report fixes: a marker line goes even for a turn the Supervisor prompted, since Paseo reports only the last message; incidents come first and are never cut to 240 characters or crowded out; formatted empty templates and numbered, heading and code prefixes are read correctly; a restated marker is relayed once; only digest items are superseded (§6.1a). `room_status` keeps listing decided assignments that still have a Peer to close, and its observed map is the portfolio's alone (§9.4). `writers-observed` states when each turn ended as a time, not an age that goes stale in a held letter; `assignment_create` checks the base in Lead's own checkout. |
 | 2026-09-24 | Repository owner / Bytes | Lead marker lines (§6.1a), chosen by the owner over sensor assist from the same field report: the Lead contract gains "Human Questions and Incidents", an `INCIDENT` line pages and a `NEEDS-HUMAN` line wakes the Supervisor, quoted instead of the message tail. This amends §1's exclusion of Lead contract changes for this one section; it adds a reporting duty to Lead and grants no authority. Supervisor and Peer contracts and every tool list are unchanged. |
 | 2026-09-24 | Bytes | Fixes from a Supervisor's field report: `room_status` and `runtime_findings` keep to the portfolio and the Supervisor's own project, and `room_status` lists only open assignments (§9.4); a turn without a message is no longer reported with an earlier turn's (§4); `writers-observed` counts only writes inside the working directory and names the files (§5); `attention_feedback` accepts a letter's id (§9.4). |
 | 2026-09-24 | Bytes | A-D6: the adapter accepts a dated snapshot of the pinned model (`<pinned>-YYYYMMDD`), so Jev works through OpenRouter's System One endpoint when TypeSafe's own sign-up is unavailable. Aliases and other versions are still no answer. |
