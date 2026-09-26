@@ -278,9 +278,9 @@ recreate an existing Claude session after setup or an update.
 have none. Only the contract is dropped, never your own memory, and an earlier generation of it
 is removed rather than left behind. The choice is recorded in `room.json`, so `verify` compares
 against it and rejects the flag itself; `setup` without the flag restores the fallback. Keep the
-fallback unless you have a reason not to: the plugin hook is verified, and on Paseo 0.9.1 a
-*resumed* session was observed to keep the room prompt, but that is not proven for every
-supported version or for what the model actually reads, and `CLAUDE.md` is what covers that case.
+fallback unless you have a reason not to: the plugin hook is verified, and a *resumed* session
+keeps the room prompt it was created with (on Paseo 0.9.2 a daemon restart does not refresh it),
+but what the model actually reads is not proven, and `CLAUDE.md` is what covers that case.
 
 Pi providers use a strict command tail:
 
@@ -406,8 +406,10 @@ npx paseo-room@<new-version> verify
 First inspect the dry run, then apply it. The apply regenerates managed prompt carriers,
 the Codex model catalogs and `AUTHENTICATION.md` from the newly resolved binaries, but
 preserves role credential paths and the operator agent homes. Stop and restart every affected
-seat after the apply; sending another turn to an already-running seat is not a restart.
-`setup` and `verify` prove the files and live Paseo configuration, not that an existing model
+seat after the apply; sending another turn to an already-running seat is not a restart. A
+Claude seat keeps the contract Paseo stored when it was created, and a daemon restart resumes it
+with that same prompt, so for Claude open a new seat instead. `setup` and `verify` prove the
+files and live Paseo configuration, not that an existing model
 context reloaded them. Only a newly launched seat context is expected to ingest the
 regenerated instructions.
 

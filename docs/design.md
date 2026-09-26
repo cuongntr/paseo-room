@@ -712,8 +712,8 @@ Claude plugin's `config.systemPrompt` value to the Claude Code SDK preset's appe
 with role `CLAUDE.md` retained as fallback; and Pi ingests the generated file named by
 `--append-system-prompt`. Tests prove the generated carriers, plugin hook composition and live
 registration/status. They do not prove that a process already running when setup changed the
-files reloaded them; a resumed Claude session's hook behaviour is observed only on Paseo `0.9.1`
-(see the carrier design's Q-001); and neither
+files reloaded them; a resumed Claude session keeps the prompt stored at its creation, and on
+Paseo `0.9.2` a daemon-restart resume does not re-enter the hook (see the carrier design's Q-001); and neither
 setup nor verify can prove that a model obeyed instructions in a particular turn. Generated/live
 configuration evidence, vendor-runtime ingestion contracts, and model behavior are three
 different claims.
@@ -780,9 +780,10 @@ lifecycle and trust rationale is in
 
 This stronger carrier is still bounded evidence: the room proves generated content, live
 plugin registration/status, and deterministic composition, not model obedience. Only newly
-created sessions pass through the hook. On Paseo `0.9.1` a resumed session keeps the stored
-prompt and a daemon-restart resume re-enters the hook idempotently, but that is configuration
-evidence on one version, which is why `CLAUDE.md` remains by default. Missing or failed plugin state makes Claude setup/verify fail rather than
+created sessions pass through the hook. A resumed session keeps the prompt stored when it was
+created: on Paseo `0.9.2` a daemon restart resumes seats without re-entering the hook, so a new
+contract generation reaches only a new seat. That is configuration evidence, not model ingestion,
+which is why `CLAUDE.md` remains by default. Missing or failed plugin state makes Claude setup/verify fail rather than
 silently claiming the stronger guarantee.
 
 ## 7. Deliberate non-goals
