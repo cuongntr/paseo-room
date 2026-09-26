@@ -284,7 +284,7 @@ schema version: the fields kept are unchanged. The tool description states the d
 | `attention/signals.ts` | `context-high`, as in K-D6. |
 | `attention/succession.ts` (new) | The K-D5 state machine, its log records and handoff files. It calls only `paseo-port.ts`. |
 | `hooks.ts` | `session_open` returns the compact-mark environment variable for a matching Claude seat, and nothing otherwise. |
-| `shared/context.ts` (new) | Settings schema and the percent-to-token conversion; pure. |
+| `shared/seat-context.ts` (new) | Settings schema and the percent-to-token conversion; pure. |
 | client | Project screen actions, the seat context line and a "Seat context" settings section (§8). |
 
 Only `server/paseo-port.ts` calls Paseo, as today. It already has `archive(agentId)`, and it gains
