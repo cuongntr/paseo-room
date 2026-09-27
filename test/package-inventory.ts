@@ -44,6 +44,7 @@ export function registeredPromptPaths(prefix = ''): string[] {
     PROMPT_ASSETS.documents,
     PROMPT_ASSETS.contract,
     PROMPT_ASSETS.pi,
+    PROMPT_ASSETS.runtime,
   ];
   return groups.flatMap(group => Object.values(group).map(asset => `${prefix}${asset.path}`)).sort();
 }

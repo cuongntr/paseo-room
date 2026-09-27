@@ -17,7 +17,13 @@ export type LogRecord =
   | { readonly type: 'letter.held' | 'letter.sent' | 'letter.failed'; readonly id: string; readonly supervisorAgentId?: string; readonly level: string; readonly items: readonly string[]; readonly reason?: string }
   | { readonly type: 'lead-turn'; readonly id: string; readonly projectKey: string; readonly leadAgentId: string; readonly decision: string; readonly reason: string }
   | { readonly type: 'feedback.recorded'; readonly id: string; readonly verdict: 'useful' | 'noise' | 'unknown'; readonly by: string }
-  | { readonly type: 'assessment.recorded'; readonly id: string; readonly questionSet: string; readonly model: string; readonly mode: string; readonly state: unknown; readonly answers: unknown; readonly decision: string; readonly baseline: string; readonly latencyMs: number; readonly inputTokens?: number };
+  | { readonly type: 'assessment.recorded'; readonly id: string; readonly questionSet: string; readonly model: string; readonly mode: string; readonly state: unknown; readonly answers: unknown; readonly decision: string; readonly baseline: string; readonly latencyMs: number; readonly inputTokens?: number }
+  /** A Lead succession's step (seat context delta §5.4); never its handoff text. */
+  | {
+    readonly type: `succession.${'started' | 'handoff-received' | 'archived' | 'created' | 'delivered' | 'completed' | 'cancelled' | 'failed'}`;
+    readonly successionId: string; readonly projectKey: string; readonly fromAgentId: string; readonly toAgentId?: string;
+    readonly reason: string; readonly step: string; readonly bytes?: number; readonly code?: string;
+  };
 
 export class AttentionLog {
   private ready: Promise<void> | undefined;

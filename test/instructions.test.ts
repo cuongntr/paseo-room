@@ -289,21 +289,24 @@ describe('prompt assets', () => {
     const documentAssets = Object.values(PROMPT_ASSETS.documents);
     const contractAssets = Object.values(PROMPT_ASSETS.contract);
     const piAssets = Object.values(PROMPT_ASSETS.pi);
+    const runtimeAssets = Object.values(PROMPT_ASSETS.runtime);
     const registered = [
       ...documentAssets,
       ...contractAssets,
       ...piAssets,
+      ...runtimeAssets,
     ].map(asset => asset.path).sort();
 
     expect(registered).toEqual(files);
     // The workspace group is gone: no prompt asset may reintroduce a default protocol.
-    expect(Object.keys(PROMPT_ASSETS)).toEqual(['documents', 'contract', 'pi']);
+    expect(Object.keys(PROMPT_ASSETS)).toEqual(['documents', 'contract', 'pi', 'runtime']);
     expect(files.some(path => path.startsWith('workspace/'))).toBe(false);
     expect(documentAssets.map(asset => asset.kind)).toEqual(Array(3).fill('head'));
     expect(contractAssets.map(asset => asset.kind)).toEqual([
       'body', 'section', 'section', 'body', 'body', 'body',
     ]);
     expect(piAssets.map(asset => asset.kind)).toEqual(Array(2).fill('capsule'));
+    expect(runtimeAssets.map(asset => asset.kind)).toEqual(Array(2).fill('section'));
   });
 
   it('normalizes bodies and sections while preserving head and capsule hard lines', () => {
@@ -316,6 +319,37 @@ describe('prompt assets', () => {
     expect(loadPromptAsset('pi', 'communicationStyle')).toContain(
       'Prefer plain language\nand minimal formatting.',
     );
+  });
+});
+
+describe('runtime succession messages', () => {
+  const request = loadPromptAsset('runtime', 'handoffRequest');
+  const kickoff = loadPromptAsset('runtime', 'successorKickoff');
+
+  it('asks for the delta §6.1 sections in order, verified, and for no new work', () => {
+    const sections = ['Goal and roadmap:', 'Work items:', 'Git and seats:', 'Human decisions:', 'Open questions:', 'Incidents and risks:', 'Next steps:', 'Read first:'];
+    const positions = sections.map(section => request.indexOf(`\n- ${section}`));
+    expect(positions.every(position => position > 0)).toBe(true);
+    expect([...positions].sort((a, b) => a - b)).toEqual(positions);
+    expect(request).toContain('Start no new work, open no Peer, and send no instruction to another seat.');
+    expect(request).toContain('Write only what you verified');
+    expect(request).toContain('mark anything uncertain as uncertain');
+    expect(request).toContain('Put all of it in your final message, in one piece');
+    // A marker line in the handoff turn is still relayed, so the request keeps them for news.
+    expect(leadMarkers(request)).toEqual([]);
+  });
+
+  it('tells the successor to verify and report before acting outside the repository', () => {
+    expect(kickoff).toContain('It is your predecessor\'s account, not verified fact.');
+    expect(kickoff).toContain('report to Human what you confirmed, where the handoff differs');
+    expect(kickoff).toContain('Until you have reported, act only inside the repository.');
+  });
+
+  it('grants nothing: no tool, no role body, and no part of any seat contract', () => {
+    for (const text of [request, kickoff]) {
+      expect(text).not.toMatch(/assignment_|create_agent|send_agent_prompt|mcp__|paseo_room|notifyOnFinish/);
+      for (const role of ROLES) expect(renderInstructions(role)).not.toContain(text.split('\n')[0] ?? '');
+    }
   });
 });
 

@@ -62,6 +62,7 @@ Room (surface root)                         Project (pushed)                  As
 ├─ header: summary · Add repository · ⚙      ├─ header: name · status · ~/path  ├─ header: id · state
 ├─ Needs attention (only when non-empty)     ├─ Supervisor (change, open)       ├─ Brief
 ├─ Projects (row per project → Project)      ├─ Seats (Lead → Peers, open;      ├─ Peer (open)
+│                                            │   Replace Lead in its header;    │
 │                                            │   Start Lead when none)          │
 ├─ Supervisors (row per Supervisor, open,    ├─ Attention (this project)        ├─ Evidence
 │   + New Supervisor)                        └─ Runtime record (health, writer, ├─ Worktree / lease
@@ -81,16 +82,19 @@ belongs to an observed project, and falls back to Room otherwise. Row order:
 - **Needs attention row.** Level icon (page: octagon, danger; now: triangle, warning; digest:
   info, muted), then `project — text` in two lines at most, then a meta line with kind, age and
   recipient (or *for you*). Actions: **Open** (the subject agent) and 👍/👎 feedback with a
-  selected state.
+  selected state; a `context-high` item also offers **Replace Lead…** for its Lead.
 - **Project row.** Status dot, then the name, then a meta line such as `Lead idle · 2 Peers
   working · 5 min ago`. On the right, a Supervisor pill (neutral) or an amber *No supervisor* pill,
-  and a chevron.
+  a *replacing Lead* pill while a Lead replacement is open (amber when it waits on you), and a
+  chevron.
 - **Supervisor row.** Name, `Watching N projects`, its folder and context line, a state pill and
   **Open**. A final row offers *New Supervisor*.
 - **Seat row** (a project's Lead → Peer tree). The seat's name, then `role · agent · model ·
   thinking <option>` as Paseo reports them, any waiting permissions, the last turn, a state pill and
   **Open**. A runtime-dispatched Peer is named `<Disposition> · <outcome gist> · <assignment id>`, so
-  the tree says what each Peer is doing without opening it.
+  the tree says what each Peer is doing without opening it. The Seats header offers **Replace
+  Lead…** for the project's Lead while no replacement is open; it sits beside the rows rather than in
+  one, because pressing a row opens its agent.
 - **Context line** (seat rows, the Project screen's Supervisor row, the role pill). `context 31% ·
   last compacted 3 h ago (auto, at 498k)`, from Paseo's figure for the seat's latest model call
   ([seat context delta](runtime-coordination-seat-context.md) K-D1). A seat past its role's
@@ -98,7 +102,24 @@ belongs to an observed project, and falls back to Room otherwise. Row order:
   Claude seat whose window the mark fits). The role pill names the last compaction's time rather
   than its age, so it is not redrawn every minute. No line while Paseo reports no figure.
 - **No Lead.** A project with Peers but no live Lead shows *No Lead runs this project* with **Start
-  Lead**; a project whose seats are all archived offers **Start Lead** in its empty Seats card.
+  Lead**; a project whose seats are all archived offers **Start Lead** in its empty Seats card. While
+  a replacement waits to be finished, both offer **Finish replacing Lead** instead.
+- **Lead replacement in progress.** Above the Seats card, a callout says where it stands (*writing
+  its handoff*, *ready for your review*, *archived; successor not started*) with **Show progress**,
+  **Review handoff** or **Finish replacing Lead**, and why it stopped when it did. A replacement that
+  failed stays for a day in red, with its reason, **Try again** and **Dismiss**.
+- **Replace Lead (modal, three steps;** [seat context delta](runtime-coordination-seat-context.md)
+  §8.3**).**
+  - *Why*: a reason (*Context is high*, *New contract*, *Other*), an optional note to the Lead, and
+    the preflight: its blockers, its notes, and each seat the Lead opened with what Paseo's archive
+    does to it (archived with the Lead, or detached and kept). **Ask the Lead for a handoff** is
+    disabled while anything blocks.
+  - *Handoff*: a spinner while the Lead writes, which may be closed; then the handoff in an editable
+    monospace field with its size against 64 KB. **Cancel replacement** and **Continue**.
+  - *Confirm*: what is archived, what is kept, the new Lead's agent and model, its Supervisor, and
+    that it verifies the handoff before acting outside the repository. **Replace Lead**, then **Open
+    new Lead**. Reopened on a replacement that stopped after the archive, the modal shows this step
+    with **Finish replacing Lead** and **Cancel replacement**.
 - **Empty room.** A setup card: *1 New Supervisor → 2 Add repository*, with both buttons.
 - **New Supervisor (modal).**
   - *Agent* is a segmented control over the room's Supervisor providers.
@@ -168,7 +189,13 @@ belongs to an observed project, and falls back to Room otherwise. Row order:
   ledger exists for the same Git common directory;
 - for seats, `context` — `{ used, max, percent, rotateAtPercent, compactAtPercent }` — and
   `compaction` — `{ lastAt, lastAgo, lastTrigger?, lastPreTokens?, seen }` — per the
-  [seat context delta](runtime-coordination-seat-context.md) §5.1.
+  [seat context delta](runtime-coordination-seat-context.md) §5.1;
+- for projects, `succession` — `{ id, step, fromAgentId, fromTitle, canFinish, canCancel, failure? }`
+  — while a Lead replacement is not finished. A project whose last seat that replacement archived
+  stays listed.
+
+Replace Lead uses `runtime.succession-preflight`, `-start`, `-status`, `-complete` and `-cancel`
+(seat context delta §5.2).
 
 `runtime.start-supervisor` and `runtime.start-project` accept `~/` paths. No RPC changes behaviour.
 
@@ -191,3 +218,4 @@ belongs to an observed project, and falls back to Room otherwise. Row order:
 | 2026-09-25 | Bytes | Room seats gains *Thinking Lead may choose*, the operator's per-Peer-provider thinking envelope. |
 | 2026-09-25 | Bytes | Seat rows and role pills show the model and thinking option each seat runs with; runtime Peers are named by disposition, outcome gist and assignment id instead of `Peer <id>`. |
 | 2026-09-26 | Bytes | Seat context K1: context line on seat rows, the Supervisor row and the role pill; *New project* renamed *Add repository*, offering observed projects without a Lead; *Start Lead* on a project with none; Supervisor pickers list running Supervisors first with state and folder; Room seats gains *Seat context*. |
+| 2026-09-27 | Bytes | Seat context K2: **Replace Lead…** in the Seats header and on a `context-high` item, a three-step modal (why and preflight, the handoff to review, confirm), a progress callout on the project and a *replacing Lead* pill on its row, and **Finish replacing Lead** in place of *Start Lead* while a replacement waits. |

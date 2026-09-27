@@ -11,7 +11,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  ASSIGNMENT_LABEL, CreationConflictError, PARENT_AGENT_ID_LABEL, type AgentSnapshot, type CreateAgentInput, type PaseoPort, type PeerLaunch, type ProviderCommand, type ThinkingOption,
+  ASSIGNMENT_LABEL, CreationConflictError, openInTab, PARENT_AGENT_ID_LABEL, type AgentSnapshot, type CreateAgentInput, type PaseoPort, type PeerLaunch, type ProviderCommand, type ThinkingOption,
   type SeatUsage, type SendBehavior, type TimelineEntry, type WorkspaceSnapshot, type WorktreeWorkspaceRequest,
 } from '../src/runtime-plugin/server/paseo-port.js';
 
@@ -58,6 +58,8 @@ export interface FakeAgent {
   /** Turns cancelled by an interrupting send, and permissions a send cleared (Paseo's behaviour). */
   interrupted: number;
   clearedPermissions: string[];
+  /** The id of the turn a send started or joined, stamped on that turn's timeline entries. */
+  turnId?: string;
 }
 
 export class FakePaseo implements PaseoPort {
@@ -70,6 +72,7 @@ export class FakePaseo implements PaseoPort {
   onCreate?: (input: CreateAgentInput, agentId: string) => Promise<void>;
   workspaceFor: (cwd: string) => string = () => 'ws-1';
   private counter = 0;
+  private turns = 0;
   readonly workspaces = new Map<string, FakeWorkspace>();
   /** Where worktree directories are created; set by the harness to a temporary directory. */
   worktreeRoot = '/tmp/paseo-room-fake-worktrees';
@@ -226,14 +229,15 @@ export class FakePaseo implements PaseoPort {
     });
   }
 
+  /** Paseo's `agents.list()` leaves archived agents out unless asked; the runtime never asks. */
   listAgents(): Promise<readonly AgentSnapshot[]> {
-    return this.step('listAgents', [], () => [...this.agents.values()].map(agent => this.snapshot(agent)));
+    return this.step('listAgents', [], () => [...this.agents.values()].filter(agent => agent.archivedAt === null).map(agent => this.snapshot(agent)));
   }
 
   run(agentId: string, text: string, messageId: string): Promise<void> {
     return this.step('run', [agentId, text, messageId], () => {
       const agent = this.agents.get(agentId);
-      if (agent === undefined || agent.status === 'closed') throw new Error(`agent ${agentId} cannot receive a turn`);
+      if (agent === undefined || agent.archivedAt !== null) throw new Error(`agent ${agentId} cannot receive a turn`);
       agent.prompts.push({ text, messageId });
       agent.lastUserMessageAt = '2026-09-22T10:00:00.000Z';
       agent.updatedAt = agent.lastUserMessageAt;
@@ -246,12 +250,15 @@ export class FakePaseo implements PaseoPort {
   send(agentId: string, text: string, messageId: string, behavior: SendBehavior): Promise<void> {
     return this.step('send', [agentId, text, messageId, behavior], () => {
       const agent = this.agents.get(agentId);
-      if (agent === undefined || agent.status === 'closed') throw new Error(`agent ${agentId} cannot receive a turn`);
+      // A closed but unarchived agent is resumed by the send, as Paseo loads it on demand.
+      if (agent === undefined || agent.archivedAt !== null) throw new Error(`agent ${agentId} cannot receive a turn`);
       if (agent.activeTurn && behavior === 'interrupt') agent.interrupted += 1;
+      // A steered send joins the running turn; any other starts one.
+      if (!agent.activeTurn || behavior === 'interrupt' || agent.turnId === undefined) agent.turnId = `turn-${String(++this.turns)}`;
       agent.clearedPermissions.push(...agent.pendingPermissions.map(permission => permission.id));
       agent.pendingPermissions = [];
       agent.prompts.push({ text, messageId, behavior });
-      agent.timeline.push({ kind: 'user', text, timestamp: '2026-09-22T10:00:00.000Z', messageId });
+      agent.timeline.push({ kind: 'user', text, timestamp: '2026-09-22T10:00:00.000Z', messageId, turnId: agent.turnId });
       agent.lastUserMessageAt = '2026-09-22T10:00:00.000Z';
       agent.updatedAt = agent.lastUserMessageAt;
       agent.status = 'running';
@@ -263,16 +270,32 @@ export class FakePaseo implements PaseoPort {
     return this.step('recentTimeline', [agentId, limit], () => (this.agents.get(agentId)?.timeline ?? []).slice(-limit));
   }
 
+  /**
+   * Paseo 0.9.2's archive: an archived agent answers its time again. A loaded one takes its children
+   * with it, recursively, except that a child in another workspace or open in a tab is detached.
+   */
   archive(agentId: string): Promise<{ archivedAt: string }> {
-    return this.step('archive', [agentId], () => {
-      const agent = this.agents.get(agentId);
-      if (agent === undefined) throw new Error(`agent ${agentId} not found`);
-      agent.archivedAt = '2026-09-22T11:00:00.000Z';
-      agent.status = 'closed';
-      agent.activeTurn = false;
-      agent.updatedAt = agent.archivedAt;
-      return { archivedAt: agent.archivedAt };
-    });
+    return this.step('archive', [agentId], () => this.archiveOne(agentId));
+  }
+
+  private archiveOne(agentId: string): { archivedAt: string } {
+    const agent = this.agents.get(agentId);
+    if (agent === undefined) throw new Error(`agent ${agentId} not found`);
+    if (agent.archivedAt !== null) return { archivedAt: agent.archivedAt };
+    const loaded = agent.status !== 'closed';
+    agent.archivedAt = '2026-09-22T11:00:00.000Z';
+    agent.status = 'closed';
+    agent.activeTurn = false;
+    agent.updatedAt = agent.archivedAt;
+    if (loaded) {
+      for (const child of this.agents.values()) {
+        if (child.archivedAt !== null || child.labels[PARENT_AGENT_ID_LABEL] !== agentId) continue;
+        const elsewhere = agent.workspaceId !== null && child.workspaceId !== null && agent.workspaceId !== child.workspaceId;
+        if (elsewhere || openInTab(child.labels)) child.labels = Object.fromEntries(Object.entries(child.labels).filter(([label]) => label !== PARENT_AGENT_ID_LABEL));
+        else this.archiveOne(child.id);
+      }
+    }
+    return { archivedAt: agent.archivedAt };
   }
 
   /** Operator-owned model per provider; `null` means the provider declares none. */
@@ -327,6 +350,17 @@ export class FakePaseo implements PaseoPort {
   endTurn(agentId: string): void {
     const agent = this.agents.get(agentId);
     if (agent) { agent.status = 'idle'; agent.activeTurn = false; agent.updatedAt = '2026-09-22T10:05:00.000Z'; }
+  }
+
+  /** Test helper: the agent answers in its current turn, as Paseo's projected timeline shows it, and the turn ends. */
+  reply(agentId: string, entries: readonly (string | { readonly kind: 'tool' | 'error' | 'other'; readonly text?: string })[]): void {
+    const agent = this.agents.get(agentId);
+    if (agent === undefined) return;
+    for (const entry of entries) {
+      const base = { timestamp: '2026-09-22T10:04:00.000Z', ...(agent.turnId === undefined ? {} : { turnId: agent.turnId }) };
+      agent.timeline.push(typeof entry === 'string' ? { kind: 'assistant', text: entry, ...base } : { kind: entry.kind, text: entry.text ?? '', ...base });
+    }
+    this.endTurn(agentId);
   }
 }
 

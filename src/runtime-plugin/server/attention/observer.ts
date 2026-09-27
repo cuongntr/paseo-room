@@ -16,8 +16,14 @@ import type { Recognition } from '../recognition.js';
 import { leadMarkers, type Marker } from './triage.js';
 
 export type SeatState = 'running' | 'idle' | 'permission' | 'closed' | 'archived';
-/** What started a turn: Paseo's child-finished envelope, a runtime notice or letter, or any other message. */
-export type TurnTrigger = 'envelope' | 'runtime' | 'message' | 'unknown';
+/**
+ * What started a turn: Paseo's child-finished envelope, a runtime notice or letter, a Lead succession's
+ * handoff request or kickoff, or any other message.
+ */
+export type TurnTrigger = 'envelope' | 'runtime' | 'succession' | 'message' | 'unknown';
+
+/** Opens a succession's handoff request and its successor's kickoff (seat context delta K-D5). */
+export const SUCCESSION_PREFIX = '[paseo-room succession ';
 
 type AgentTimelineItem = PluginLifecycleEvents['agent.turn_ended']['timeline'][number];
 type TurnOutcome = PluginLifecycleEvents['agent.turn_ended']['outcome'];
@@ -104,6 +110,7 @@ export function triggerOf(text: string | undefined): TurnTrigger {
   if (text === undefined) return 'unknown';
   if (text.startsWith('<paseo-system>')) return 'envelope';
   if (text.startsWith('[paseo-room notice ') || text.startsWith('[paseo-room attention ')) return 'runtime';
+  if (text.startsWith(SUCCESSION_PREFIX)) return 'succession';
   return 'message';
 }
 
@@ -280,7 +287,8 @@ export class Observer {
       endedAt: now,
       outcome: outcome.kind,
       ...(outcome.kind === 'failed' ? { errorKey: errorKey(outcome.error) } : {}),
-      trigger: triggerOf(firstUser?.text),
+      // A handoff request steered into a turn already running is not its first message.
+      trigger: entries.some(entry => entry.kind === 'user' && entry.text.startsWith(SUCCESSION_PREFIX)) ? 'succession' : triggerOf(firstUser?.text),
       writes,
       // Every message of the turn, not only the last: an incident may be reported anywhere in it.
       markers: seat.role === 'lead' ? leadMarkers(said.map(entry => entry.text).join('\n')) : [],

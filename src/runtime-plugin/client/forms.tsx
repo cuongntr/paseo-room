@@ -1,8 +1,9 @@
 /**
  * The Human's seat actions as guided modal forms (docs/design/runtime-panel-ux.md §5): New
  * Supervisor, Add repository in two steps, Start Lead for a project the room observes, and Assign
- * Supervisor. Each form validates what it can before sending, places a server refusal on the field
- * it concerns, shows its progress on the primary action, and confirms the outcome with a toast.
+ * Supervisor; Replace Lead lives in succession.tsx and shares this file's shell. Each form validates
+ * what it can before sending, places a server refusal on the field it concerns, shows its progress
+ * on the primary action, and confirms the outcome with a toast.
  */
 import { Icon, Modal, useToast } from '@getpaseo/plugin/client/react-native';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
@@ -11,10 +12,10 @@ import { idempotencyKey, unwrap, useRuntimeRpcs } from './data.js';
 import { Actions, Button, Callout, Card, Choice, Field, Glyph, Input, Pill, Row, SPACE, Segmented, type Theme, type Tone } from './kit.js';
 import { agentLabel, leadlessProjects, seatName, supervisorChoices, supervisorSummary, type RoomView, type SupervisorView } from './model.js';
 
-interface Failure { readonly code: string; readonly message: string; readonly recoveryAction: string }
+export interface Failure { readonly code: string; readonly message: string; readonly recoveryAction: string }
 
 /** Runs an RPC, returning its data or the refusal. */
-async function call(work: Promise<unknown>): Promise<{ readonly data?: unknown; readonly failure?: Failure }> {
+export async function call(work: Promise<unknown>): Promise<{ readonly data?: unknown; readonly failure?: Failure }> {
   try {
     const answer = unwrap(await work);
     return answer.error === undefined ? (answer.data === undefined ? {} : { data: answer.data }) : { failure: answer.error };
@@ -27,7 +28,7 @@ function providerOptions(room: RoomView, role: string): { value: string; label: 
   return room.providers.filter(entry => entry.role === role).map(entry => ({ value: entry.providerId, label: agentLabel(entry.agent), icon: 'Bot' }));
 }
 
-function ModalShell(props: { readonly theme: Theme; readonly title: string; readonly icon: string; readonly open: boolean; readonly onClose: () => void; readonly children: ReactNode }) {
+export function ModalShell(props: { readonly theme: Theme; readonly title: string; readonly icon: string; readonly open: boolean; readonly onClose: () => void; readonly children: ReactNode }) {
   return (
     <Modal title={props.title} icon={<Icon name={props.icon} size={16} color={props.theme.colors.foreground} />} open={props.open} onOpenChange={open => { if (!open) props.onClose(); }}>
       <Modal.Content>{props.children}</Modal.Content>
@@ -93,7 +94,7 @@ interface Preflight {
   readonly existingLead?: { readonly agentId: string; readonly title: string | null }; readonly findings: readonly string[];
 }
 
-function Check(props: { readonly theme: Theme; readonly tone: Tone; readonly icon: string; readonly title: string; readonly detail?: string }) {
+export function Check(props: { readonly theme: Theme; readonly tone: Tone; readonly icon: string; readonly title: string; readonly detail?: string }) {
   return (
     <View style={{ flexDirection: 'row', gap: SPACE.md, paddingVertical: 7, alignItems: 'flex-start' }}>
       <View style={{ paddingTop: 1 }}><Glyph theme={props.theme} name={props.icon} tone={props.tone} size={15} /></View>

@@ -85,6 +85,10 @@ export default function contribute(server: PluginServerContext): () => void {
       await runtime.turns.turnEnded(event);
       await retryHeld(event.agent.id);
       await attention.onTurnEnded(event.agent.id, event.outcome, event.timeline, event.turnId);
+      // Not awaited: turn-end recovery never waits for, or fails with, a Lead replacement.
+      runtime.succession.onTurnEnded(event.agent.id).catch((error: unknown) => {
+        console.error(`[paseo-room-runtime] Reading a handoff failed: ${error instanceof Error ? error.message : String(error)}`);
+      });
     },
     permissionRequested: async event => {
       await runtime.turns.permissionRequested(event);

@@ -9,6 +9,8 @@ export const MAX_ARRAY_ITEMS = 64;
 export const MAX_STRING_BYTES = 8 * 1024;
 export const MAX_COMMAND_BYTES = 16 * 1024;
 export const MAX_GATE_TIMEOUT_SECONDS = 3_600;
+/** A Lead's reviewed handoff (seat context delta K-D5 step 3), above the 8 KB string default. */
+export const MAX_HANDOFF_BYTES = 64 * 1024;
 
 const encoder = new TextEncoder();
 

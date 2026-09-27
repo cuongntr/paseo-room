@@ -89,6 +89,8 @@ export interface CompactMarkDependencies {
   readonly log?: (message: string) => void;
   /** How long the lookup may take before the seat starts without a mark; 5 s by default. */
   readonly lookupMs?: number;
+  /** Whether a seat is a Lead asked for its handoff, which resumes without a mark (seat context K2 plan §2). */
+  readonly exempt?: (agentId: string) => Promise<boolean>;
 }
 
 /**
@@ -140,10 +142,12 @@ export async function compactMarkOnCreate(request: AgentCreateRequest, deps: Com
 /**
  * A resumed session's request with Claude's compact window set from the agent's own model (K-D3),
  * or undefined to leave it as it is. A session opened for creation is the creation hook's: a seat
- * whose mark it could not set opens without one rather than wait on a second lookup.
+ * whose mark it could not set opens without one rather than wait on a second lookup. A Lead asked
+ * for its handoff opens without one too: past its mark, it would compact before writing it.
  */
 export async function compactMarkEnv(request: PluginSessionOpenRequest, deps: CompactMarkDependencies): Promise<PluginSessionOpenRequest | undefined> {
   if (request.purpose !== 'interactive' || request.reason === 'create') return undefined;
+  if (await deps.exempt?.(request.agentId).catch(() => false) === true) return undefined;
   const own = async (): Promise<string | undefined> => (await deps.paseo.getAgent(request.agentId))?.model ?? undefined;
   const env = await markedEnv(request.provider, request.env, own, `agent ${request.agentId}`, deps);
   return env === undefined ? undefined : { ...request, env };

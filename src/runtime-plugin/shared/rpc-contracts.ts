@@ -6,7 +6,7 @@
  */
 import { defineRpc } from '@getpaseo/plugin';
 import { z } from 'zod';
-import { boundedString } from './limits.js';
+import { boundedString, MAX_HANDOFF_BYTES } from './limits.js';
 import { RUNTIME_AGENTS, RUNTIME_ROLES } from './policy.js';
 import { runtimeRpcErrorSchema, runtimeRpcResponseSchema } from './rpc.js';
 
@@ -175,9 +175,47 @@ export const runtimeAttentionStatusRpc = defineRpc({
   output: answer(view),
 });
 
+const successionId = z.string().regex(/^suc_[A-Za-z0-9_-]{16}$/);
+
+/** What blocks replacing a Lead, what Paseo's archive does to its seats, and who follows it (seat context delta K-D5). */
+export const runtimeSuccessionPreflightRpc = defineRpc({
+  name: 'runtime.succession-preflight',
+  input: z.strictObject({ leadAgentId: agentId }),
+  output: answer(view),
+});
+
+/** Human starts replacing a Lead: the runtime asks it for a handoff (K-D5 steps 1–2). */
+export const runtimeSuccessionStartRpc = defineRpc({
+  name: 'runtime.succession-start',
+  input: z.strictObject({ leadAgentId: agentId, reason: z.enum(['context', 'contract', 'other']), note: boundedString(1_024).optional(), idempotencyKey }),
+  output: answer(z.strictObject({ successionId: z.string() })),
+});
+
+/** A replacement's step, and its handoff once received. */
+export const runtimeSuccessionStatusRpc = defineRpc({
+  name: 'runtime.succession-status',
+  input: z.strictObject({ successionId }),
+  output: answer(view),
+});
+
+/** Human confirms the reviewed handoff: archive, successor, kickoff (K-D5 steps 4–7); also finishes one that stopped. */
+export const runtimeSuccessionCompleteRpc = defineRpc({
+  name: 'runtime.succession-complete',
+  input: z.strictObject({ successionId, handoff: boundedString(MAX_HANDOFF_BYTES), idempotencyKey }),
+  output: answer(z.strictObject({ successorAgentId: z.string() })),
+});
+
+/** Human ends a replacement before its successor exists. */
+export const runtimeSuccessionCancelRpc = defineRpc({
+  name: 'runtime.succession-cancel',
+  input: z.strictObject({ successionId, idempotencyKey }),
+  output: answer(z.strictObject({ cancelled: z.literal(true) })),
+});
+
 export const RUNTIME_RPCS = [
   runtimeHealthRpc, runtimeProjectRpc, runtimeAssignmentRpc, runtimeRecoverRpc, runtimeAbandonRpc,
   runtimeResolveOwnershipRpc, runtimeQuarantineRpc, runtimeWorkspaceCloseRpc, runtimeLeaseReclaimRpc,
   runtimeSeatsRpc, runtimeRoomRpc, runtimeStartSupervisorRpc, runtimeProjectPreflightRpc, runtimeStartProjectRpc,
   runtimeAssignSupervisorRpc, runtimeIncidentFeedbackRpc, runtimeAttentionKeyRpc, runtimeAttentionStatusRpc, runtimePeerEffortRpc,
+  runtimeSuccessionPreflightRpc, runtimeSuccessionStartRpc, runtimeSuccessionStatusRpc, runtimeSuccessionCompleteRpc, runtimeSuccessionCancelRpc,
 ] as const;

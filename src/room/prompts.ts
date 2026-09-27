@@ -18,6 +18,11 @@ export const PROMPT_ASSETS = {
     communicationStyle: { path: 'pi/communication-style.md', kind: 'capsule' },
     runtime: { path: 'pi/runtime.md', kind: 'capsule' },
   },
+  /** Messages the runtime plugin sends a Lead on Human's instruction; setup renders them into the plugin. */
+  runtime: {
+    handoffRequest: { path: 'runtime/handoff-request.md', kind: 'section' },
+    successorKickoff: { path: 'runtime/successor-kickoff.md', kind: 'section' },
+  },
 } as const;
 
 export type PromptAssetGroup = keyof typeof PROMPT_ASSETS;

@@ -8,6 +8,7 @@ import {
   runtimeAbandonRpc, runtimeAssignmentRpc, runtimeAssignSupervisorRpc, runtimeHealthRpc, runtimeIncidentFeedbackRpc, runtimeLeaseReclaimRpc,
   runtimeProjectPreflightRpc, runtimeProjectRpc, runtimeQuarantineRpc, runtimeRecoverRpc, runtimeResolveOwnershipRpc, runtimeRoomRpc,
   runtimeAttentionKeyRpc, runtimeAttentionStatusRpc, runtimePeerEffortRpc, runtimeSeatsRpc, runtimeStartProjectRpc, runtimeStartSupervisorRpc, runtimeWorkspaceCloseRpc,
+  runtimeSuccessionCancelRpc, runtimeSuccessionCompleteRpc, runtimeSuccessionPreflightRpc, runtimeSuccessionStartRpc, runtimeSuccessionStatusRpc,
 } from '../shared/rpc-contracts.js';
 
 export const POLL_MS = 5_000;
@@ -72,6 +73,11 @@ export function useRuntimeRpcs() {
     attentionKey: useRpc(runtimeAttentionKeyRpc),
     attentionStatus: useRpc(runtimeAttentionStatusRpc),
     peerEffort: useRpc(runtimePeerEffortRpc),
+    successionPreflight: useRpc(runtimeSuccessionPreflightRpc),
+    successionStart: useRpc(runtimeSuccessionStartRpc),
+    successionStatus: useRpc(runtimeSuccessionStatusRpc),
+    successionComplete: useRpc(runtimeSuccessionCompleteRpc),
+    successionCancel: useRpc(runtimeSuccessionCancelRpc),
   };
 }
 

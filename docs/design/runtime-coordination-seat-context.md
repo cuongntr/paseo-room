@@ -150,6 +150,10 @@ Why the runtime and not setup:
 
 The exact trigger point inside that window is not documented, so it is measured (Q-C2).
 
+A Lead asked for its handoff (K-D5 step 2) is resumed without the variable: sending the request to a
+closed Lead reopens its session, and a Lead already past its mark would otherwise compact before it
+writes the handoff.
+
 ### K-D4 — Succession, not compaction, is the remedy for a Lead
 A successor starts from:
 - the latest contract;
@@ -189,10 +193,15 @@ preflight ─▶ request handoff ─▶ Human reviews/edits ─▶ archive old L
      one once the Lead is archived.
 
    Preflight also resolves the project's Supervisor (A-D3). The confirm step shows it and step 5
-   uses it, so the Human confirms the parent the successor gets.
-2. **Request the handoff.** The runtime sends the Lead a fixed request (§6.1) with `run`, and waits
-   for the turn to end. It reads the turn's assistant messages whole from the timeline; the Observer
-   keeps only a 4,000-character tail. It refuses an empty handoff or one from a failed turn.
+   uses it, so the Human confirms the parent the successor gets. It reads every seat afresh from
+   Paseo first, and a Lead that is idle or closed is accepted.
+2. **Request the handoff.** The runtime records the succession, then sends the Lead a fixed request
+   (§6.1) with `steer`, so a turn begun since the preflight is joined rather than cancelled. Once the
+   turn ends, it reads the turn's trailing assistant messages whole from the last 1,000 entries of
+   Paseo's timeline, where a message's streamed chunks are one entry; the Observer keeps only a
+   4,000-character tail. It refuses an empty handoff, one over 64 KB, one from a failed turn, and a
+   request Paseo says it never received a minute after it was sent; a timeline it could not read
+   only delays the reading.
 
    The handoff request and the successor's kickoff are the runtime's own prompts, so the turns they
    start are recorded and not relayed as `lead-turn` items. The Supervisor would otherwise receive the
@@ -200,16 +209,24 @@ preflight ─▶ request handoff ─▶ Human reviews/edits ─▶ archive old L
    still goes, as §6.1a of the attention delta requires.
 3. **Review.** The Human sees the handoff and may edit or shorten it (bounded at 64 KB). Cancel ends
    the flow and leaves the Lead untouched.
-4. **Archive** the Lead, and, when the Human leaves it checked (the default), its idle or closed
-   descendants. Otherwise each would raise `peer-orphaned` after `orphanHours`. The Lead is archived
-   first so that two live Leads never coexist; coexisting Leads would page `duplicate-lead`.
+4. **Archive** the Lead. Paseo 0.9.2 archives a live agent's children with it, recursively, and
+   detaches a child in another workspace or open in a client tab by clearing its parent label
+   (`S/agent/agent-manager.js` `cascadeArchiveChildren`). No descendant can therefore be kept in the
+   Lead's workspace, and a detached one has no parent to raise `peer-orphaned` about. An agent
+   archived while not loaded takes no child with it, so the runtime also archives each seat the
+   confirm step showed as archived with the Lead, and one Paseo would detach stays under its archived
+   parent when that parent is not running. The preflight and the confirm step show each descendant's
+   fate. The Lead is archived before its successor is created so that two live Leads never coexist;
+   coexisting Leads would page `duplicate-lead`. A Lead Human archived in Paseo after reading its
+   handoff counts as archived.
 5. **Create the successor** as Start project does (attention §8.2, change-003 D-3), except that it
    writes no portfolio record:
    - through the repository's workspace handle, with the predecessor's provider (choosing another
      room Lead provider is deferred, Q-K05);
    - parented to the Supervisor resolved at preflight, or to none, in which case the kickoff names no
      Supervisor;
-   - titled `<repository> — Lead`.
+   - titled `<repository> — Lead`, with the label `paseo-room.succession: <id>`, so a retry after a
+     lost answer recognises its own successor rather than refusing it as another Lead.
 
    The portfolio record, keyed by project, is unchanged.
 
@@ -220,7 +237,12 @@ preflight ─▶ request handoff ─▶ Human reviews/edits ─▶ archive old L
    instead of the 8 KB `boundedString` default. The `run` carries no RPC bound.
 7. **Record** `succession.completed` and show the successor. If step 5 or 6 fails after step 4, the
    project shows *Finish replacing Lead* with the stored handoff. Retrying uses the same idempotency
-   key and creates no second successor.
+   key and creates no second successor. Until it completes, the Human may instead cancel. After the
+   archive, that leaves the project without a Lead, or with a successor that never got its kickoff,
+   and keeps the handoff; *Start Lead* is offered again where no Lead runs, so a successor that
+   cannot be created or reached never blocks the project. A successor archived before its kickoff is
+   refused as `successor_gone`, and a kickoff whose delivery Paseo cannot confirm is not sent again
+   until it can.
 
 Each step's idempotency key derives from the succession id, so a retried RPC or a reload repeats no
 effect. A plugin reload mid-flow resumes from the last recorded step.
@@ -244,7 +266,9 @@ because the Human talks to the Supervisor more than to the panel.
 
 ### K-D7 — Handoffs are local records, not letters
 A handoff routinely carries hosts, addresses and procedures; the one of 2026-09-26 did. So a handoff:
-- is stored at `runtime/v1/attention/handoffs/<project id>/<succession id>.md` with mode `0600`;
+- is stored at `runtime/v1/attention/successions/<succession id>.handoff.md` with mode `0600`, beside
+  the succession's record, which names its project (a project without a runtime ledger has no
+  project id);
 - is never sent to the sensor;
 - is not exported: `paseo-room export` copies only project ledgers (`src/export.ts`), and adding
   handoffs would take an explicit flag (Q-K03);
@@ -284,13 +308,13 @@ schema version: the fields kept are unchanged. The tool description states the d
 |---|---|
 | `attention/observer.ts` | Adds `context` (`used`, `max`) and `compaction` (`lastAt`, `lastTrigger`, `lastPreTokens`, `seen`) per seat, read on refresh and from turn timelines; derived and not persisted, so `seen` counts only compactions since the runtime started. |
 | `attention/signals.ts` | `context-high`, as in K-D6. |
-| `attention/succession.ts` (new) | The K-D5 state machine, its log records and handoff files. It calls only `paseo-port.ts`. |
+| `attention/succession.ts`, `attention/succession-store.ts` (new) | The K-D5 state machine and its log records; the records and handoff files. It calls Paseo only through `paseo-port.ts`, on its own lane. |
 | `hooks.ts` | `session_open` returns the compact-mark environment variable for a matching Claude seat, and nothing otherwise. |
 | `shared/seat-context.ts` (new) | Settings schema and the percent-to-token conversion; pure. |
 | client | Project screen actions, the seat context line and a "Seat context" settings section (§8). |
 
-Only `server/paseo-port.ts` calls Paseo, as today. It already has `archive(agentId)`, and it gains
-`readTurnMessages(agentId, turnId)` and the seat's `lastUsage`.
+Only `server/paseo-port.ts` calls Paseo, as today. It already has `archive(agentId)` and a timeline
+read that carries whole assistant messages, and it gains the seat's `lastUsage`.
 
 ## 4. Enforcement per agent
 
@@ -338,13 +362,20 @@ decided).
   - `context?: { used: number; max: number; percent: number }`;
   - `compaction?: { lastAt: string; lastTrigger: 'auto' | 'manual'; lastPreTokens?: number; seen: number }`,
     where `seen` counts compactions since the runtime started.
-- For each project, `succession?`: the in-flight succession's id, step and whether it can be finished.
+- For each project, `succession?`: `{ id, step, fromAgentId, fromTitle, canFinish, canCancel,
+  failure? }` while a succession is not finished, and for a day after one failed unless Human
+  dismissed it or started another. A project whose last seat it archived stays listed. The runtime
+  answers it from its records without waiting on a succession in progress, and reads a handoff whose
+  turn has ended behind the answer.
 
 ### 5.2 New RPCs
 Every mutating RPC takes an `idempotencyKey`. All answer the existing `answer()` envelope, and refuse
 with codes:
-`lead_busy`, `assignments_open`, `descendants_running`, `handoff_empty`, `handoff_failed`,
-`succession_unknown`, `step_conflict`.
+`lead_unknown`, `lead_busy`, `assignments_open`, `notices_pending`, `descendants_running`,
+`model_unavailable`, `handoff_empty`, `handoff_failed`, `handoff_too_large`, `succession_unknown`,
+`succession_unavailable`, `step_conflict`, `step_failed`, `lead_exists`, `workspace_mismatch`,
+`successor_gone`, `paseo_unavailable` (the room could not be read afresh); and
+`runtime.start-project` refuses `succession_pending` while a succession of the project waits.
 
 *Start Lead* on the Project screen needs no new RPC. It calls the existing `runtime.start-project`
 with the project's root and the preselected Supervisor.
@@ -354,8 +385,8 @@ with the project's root and the preselected Supervisor.
 | `runtime.succession-preflight` | `{ leadAgentId }` | What blocks, the idle descendants, and the successor's Supervisor. |
 | `runtime.succession-start` | `{ leadAgentId, reason: 'context' \| 'contract' \| 'other', note? }` | Steps 1–2. Returns a succession id; the handoff arrives asynchronously and is polled. |
 | `runtime.succession-status` | `{ successionId }` | Step, handoff text when received, failure. |
-| `runtime.succession-complete` | `{ successionId, handoff, archiveDescendants }` | Steps 4–7. |
-| `runtime.succession-cancel` | `{ successionId }` | Before step 4 only. |
+| `runtime.succession-complete` | `{ successionId, handoff }` | Steps 4–7, or the rest of them after a stop. |
+| `runtime.succession-cancel` | `{ successionId }` | Until it completes; dismisses a failed one. |
 
 ### 5.3 Settings `context`, version 1
 In the host settings store, beside `attention` and `peer-effort`:
@@ -452,10 +483,9 @@ The workspace panel opens on the Project screen, which has no lifecycle action, 
 Lead is archived offers no way to start one.
 
 ### 8.2 Project screen
-The Lead row carries:
-- a context line, for example `context 31% · last compacted 3 h ago (auto, at 498k)`, coloured at the
-  rotate mark (warning) and at the compact mark (danger);
-- **Replace Lead…**.
+The Lead row carries a context line, for example `context 31% · last compacted 3 h ago (auto, at
+498k)`, coloured at the rotate mark (warning) and at the compact mark (danger). **Replace Lead…** sits
+in the Seats header beside it, since pressing a row opens its agent.
 
 A project with no live Lead shows **Start Lead**, with its Supervisor preselected. It shows **Finish
 replacing Lead** instead when a succession is waiting.
@@ -463,8 +493,8 @@ replacing Lead** instead when a succession is waiting.
 ### 8.3 Replace Lead modal
 Three steps.
 
-1. **Why and preflight.** Reason (context, contract, other), the preflight checklist, and the
-   descendants to archive, checked by default.
+1. **Why and preflight.** Reason (context, contract, other), an optional note added to the request,
+   the preflight checklist, and each descendant with what Paseo's archive does to it.
 2. **Handoff.** *Ask the Lead for a handoff* shows the request running and then the text in an
    editable field, with its size.
 3. **Confirm.** A summary names:
@@ -658,6 +688,9 @@ cure.
 
 | Date | Author | Change |
 |---|---|---|
+| 2026-09-27 | Bytes | Code review of K2:<br>• a successor that cannot take its kickoff no longer strands the project: cancel is accepted until completion, and a successor archived first is refused as `successor_gone`;<br>• a timeline that could not be read no longer fails a handoff, since only Paseo's answer that the request is absent does; the read covers 1,000 entries;<br>• a handoff request steered into a running turn is also kept out of letters and the sensor;<br>• a failed replacement stays on its project for a day;<br>• the runtime archives the seats it showed as archived with the Lead, since Paseo cascades nothing from a Lead that is not loaded;<br>• a room that could not be read afresh refuses as `paseo_unavailable`;<br>• turn ends no longer wait on the succession lane, nor does the room view;<br>• a kickoff whose delivery Paseo cannot confirm is not resent. |
+| 2026-09-27 | Bytes | Fresh-eyes review of K2. §8.2: *Replace Lead…* sits in the Seats header, since pressing a row opens its agent. At confirmation, a Lead that Human archived in Paseo after reading its handoff counts as archived. An unreadable succession record is skipped instead of failing the room view. |
+| 2026-09-27 | Bytes | K2 implemented per the [K2 plan](../plans/runtime-coordination-seat-context-k2-implementation-plan.md) (WP-S1–WP-S7), with the three refinements the owner approved: K-D3's exemption for a Lead asked for its handoff, K-D5 step 4 following Paseo's archive cascade instead of an `archiveDescendants` option, and step 7's cancel while no successor exists. Details the plan left open: the request is recorded before it is sent, so the exemption holds when it resumes the Lead; the preflight and each step after the archive read every seat afresh; the successor carries a `paseo-room.succession` label; handoffs live beside their records under `attention/successions/`; §5.2 lists every refusal code. |
 | 2026-09-27 | Bytes | K1 installed and first observed live; §11.2 records `context-high` delivered and rated useful, the usage reset at a compaction (Q-C3), and the negative case of Q-C1. [K2 plan](../plans/runtime-coordination-seat-context-k2-implementation-plan.md) created. It refines three points, to be applied here with its WP-S7:<br>• K-D5 step 4: Paseo 0.9.2 archives a Lead's same-workspace descendants with it and detaches the others, so `archiveDescendants` is dropped and the flow shows each seat's fate;<br>• step 7: cancel is also allowed after the archive while no successor exists;<br>• K-D3: a Lead asked for its handoff is resumed without a compact mark. |
 | 2026-09-27 | Bytes | Simplification pass on K1, no change to what a seat receives: a session opened for creation is left to the creation hook, so a failed lookup is not retried at the open; the 5 s bound also covers the first settings read; one per-provider model list, cached 10 minutes with concurrent readers sharing its fetch, now also serves `thinkingOptions` and the profile's default model; one predicate (`compactMarkFor`) decides for the hooks and the panel whether a compact mark reaches a seat. |
 | 2026-09-26 | Bytes | Code review of K1. §4.1: the creation hook sets the mark from the model the agent is created with, and both hooks bound the model lookup at 5 s, since Paseo fails a before hook at 30 s. K-D6 notes that a runtime restart re-reports a Lead past its mark. `assignment_status` keeps an assignment whole while its worktree is open or unresolved, and its one-line form carries `state` as the same claim as the detail. `runtime.room` shows a compact mark only on a seat it reaches: a Claude seat whose window it fits. |

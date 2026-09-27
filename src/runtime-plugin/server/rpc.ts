@@ -15,12 +15,14 @@ import {
   runtimeAbandonRpc, runtimeAssignmentRpc, runtimeAssignSupervisorRpc, runtimeHealthRpc, runtimeIncidentFeedbackRpc, runtimeLeaseReclaimRpc,
   runtimeProjectPreflightRpc, runtimeProjectRpc, runtimeQuarantineRpc, runtimeRecoverRpc, runtimeResolveOwnershipRpc, runtimeRoomRpc,
   runtimeAttentionKeyRpc, runtimeAttentionStatusRpc, runtimePeerEffortRpc, runtimeSeatsRpc, runtimeStartProjectRpc, runtimeStartSupervisorRpc, runtimeWorkspaceCloseRpc,
+  runtimeSuccessionCancelRpc, runtimeSuccessionCompleteRpc, runtimeSuccessionPreflightRpc, runtimeSuccessionStartRpc, runtimeSuccessionStatusRpc,
 } from '../shared/rpc-contracts.js';
 import { egressRefusal, type AttentionSettings } from '../shared/attention.js';
 import type { AttentionKey } from './attention/key.js';
 import type { SystemOneSensor } from './attention/sensor.js';
 import { homeRelative, type AttentionEngine } from './attention/engine.js';
 import { SeatStarter, type StartResult } from './attention/seat-starter.js';
+import type { Succession } from './attention/succession.js';
 import type { RuntimeWarningV1 } from '../shared/rpc.js';
 import { RUNTIME_PLUGIN_ID } from '../shared/identity.js';
 import type { Controller } from './controller.js';
@@ -46,6 +48,8 @@ export interface RpcRuntime {
   readonly attentionSettings?: { readonly current: AttentionSettings; readonly available: boolean };
   /** Whether Paseo gave the plugin a store for the Peer thinking envelope. */
   readonly peerEffort?: { readonly available: boolean };
+  /** Lead succession (seat context delta K-D5); the succession RPCs answer `attention_unavailable` without it. */
+  readonly succession?: Succession;
 }
 
 type Answer = { schema: 1; revision: string; data: unknown; warnings: RuntimeWarningV1[] } | {
@@ -90,6 +94,7 @@ export function createRpcHandlers(runtime: RpcRuntime) {
   const started = <T>(result: StartResult<T>, recoveryAction: string): Answer => (result.ok ? answer(runtime, result.value) : error(result.code, result.message, recoveryAction));
   const starter = (attention: AttentionEngine): SeatStarter => new SeatStarter({
     paseo: runtime.controller.deps.paseo, git: runtime.controller.deps.git, recognition: runtime.controller.deps.recognition, attention,
+    ...(runtime.succession === undefined ? {} : { successionPending: runtime.succession.pending.bind(runtime.succession) }),
   });
   const once = async (key: string, work: () => Promise<Answer>): Promise<Answer> => {
     const known = idempotent.get(key);
@@ -260,16 +265,29 @@ export function createRpcHandlers(runtime: RpcRuntime) {
         return found === undefined ? undefined
           : { projectId: found.projectId, health: found.health, assignments: found.assignments, active: found.active, findings: found.findings };
       };
-      const projects = room.projects.map(project => {
+      // A replacement that cannot be read never costs the room view.
+      const successions = new Map((await runtime.succession?.summaries().catch(() => undefined) ?? []).map(summary => [summary.projectKey, summary]));
+      const projects: Record<string, unknown>[] = room.projects.map(project => {
         const runtimeRecord = record(project.key);
-        return runtimeRecord === undefined ? project : { ...project, runtime: runtimeRecord };
+        const succession = successions.get(project.key);
+        return { ...project, ...(runtimeRecord === undefined ? {} : { runtime: runtimeRecord }), ...(succession === undefined ? {} : { succession }) };
       });
-      // A runtime record whose seats are all archived stays reachable.
+      // A runtime record whose seats are all archived stays reachable, and so does a Lead replacement
+      // that archived its project's last seat.
       for (const [key, found] of records) {
         if (projects.some(project => project.key === key)) continue;
+        const succession = successions.get(key);
         projects.push({
           key, name: basename(found.root), root: found.root, displayRoot: homeRelative(found.root), git: true, decidedBy: 'none',
           seats: [], incidents: [], runtime: { projectId: found.projectId, health: found.health, assignments: found.assignments, active: found.active, findings: found.findings },
+          ...(succession === undefined ? {} : { succession }),
+        });
+      }
+      for (const [key, succession] of successions) {
+        if (projects.some(project => project.key === key)) continue;
+        projects.push({
+          key, name: succession.name, root: succession.root, displayRoot: homeRelative(succession.root), git: !key.startsWith('dir:'), decidedBy: 'none',
+          seats: [], incidents: [], succession,
         });
       }
       return answer(runtime, { ...room, projects, providers });
@@ -293,6 +311,31 @@ export function createRpcHandlers(runtime: RpcRuntime) {
     assignSupervisor: (input: z.infer<typeof runtimeAssignSupervisorRpc.input>): Promise<Answer> => once(input.idempotencyKey, async () => {
       if (runtime.attention === undefined) return unavailable();
       return started(await starter(runtime.attention).assignSupervisor(input.projectKey, input.supervisorAgentId), 'Refresh the room view and pick a live Supervisor.');
+    }),
+
+    async successionPreflight(input: z.infer<typeof runtimeSuccessionPreflightRpc.input>): Promise<Answer> {
+      if (runtime.succession === undefined) return unavailable();
+      return started(await runtime.succession.preflight(input.leadAgentId), 'Refresh the project and pick a live Lead.');
+    },
+
+    successionStart: (input: z.infer<typeof runtimeSuccessionStartRpc.input>): Promise<Answer> => once(input.idempotencyKey, async () => {
+      if (runtime.succession === undefined) return unavailable();
+      return started(await runtime.succession.start(input), 'Resolve what the preflight names, then ask again.');
+    }),
+
+    async successionStatus(input: z.infer<typeof runtimeSuccessionStatusRpc.input>): Promise<Answer> {
+      if (runtime.succession === undefined) return unavailable();
+      return started(await runtime.succession.status(input.successionId), 'Refresh the project screen.');
+    },
+
+    successionComplete: (input: z.infer<typeof runtimeSuccessionCompleteRpc.input>): Promise<Answer> => once(input.idempotencyKey, async () => {
+      if (runtime.succession === undefined) return unavailable();
+      return started(await runtime.succession.complete(input.successionId, input.handoff), 'Fix what the message names, then use Finish replacing Lead on the project screen.');
+    }),
+
+    successionCancel: (input: z.infer<typeof runtimeSuccessionCancelRpc.input>): Promise<Answer> => once(input.idempotencyKey, async () => {
+      if (runtime.succession === undefined) return unavailable();
+      return started(await runtime.succession.cancel(input.successionId), 'Refresh the project screen.');
     }),
 
     incidentFeedback: (input: z.infer<typeof runtimeIncidentFeedbackRpc.input>): Promise<Answer> => once(input.idempotencyKey, async () => {
@@ -369,4 +412,9 @@ export function registerRpcs(server: Pick<PluginServerContext, 'handle'>, runtim
   server.handle(runtimeAttentionKeyRpc, async (input, { paseo }) => { supply(paseo); return runtimeAttentionKeyRpc.output.parse(await handlers.attentionKey(input)); });
   server.handle(runtimeAttentionStatusRpc, async (_input, { paseo }) => { supply(paseo); return runtimeAttentionStatusRpc.output.parse(await handlers.attentionStatus()); });
   server.handle(runtimePeerEffortRpc, async (_input, { paseo }) => { supply(paseo); return runtimePeerEffortRpc.output.parse(await handlers.peerEffort()); });
+  server.handle(runtimeSuccessionPreflightRpc, async (input, { paseo }) => { supply(paseo); return runtimeSuccessionPreflightRpc.output.parse(await handlers.successionPreflight(input)); });
+  server.handle(runtimeSuccessionStartRpc, async (input, { paseo }) => { supply(paseo); return runtimeSuccessionStartRpc.output.parse(await handlers.successionStart(input)); });
+  server.handle(runtimeSuccessionStatusRpc, async (input, { paseo }) => { supply(paseo); return runtimeSuccessionStatusRpc.output.parse(await handlers.successionStatus(input)); });
+  server.handle(runtimeSuccessionCompleteRpc, async (input, { paseo }) => { supply(paseo); return runtimeSuccessionCompleteRpc.output.parse(await handlers.successionComplete(input)); });
+  server.handle(runtimeSuccessionCancelRpc, async (input, { paseo }) => { supply(paseo); return runtimeSuccessionCancelRpc.output.parse(await handlers.successionCancel(input)); });
 }

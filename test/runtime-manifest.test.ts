@@ -2,10 +2,12 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { resolveLayout } from '../src/layout.js';
+import { typescriptTemplateLiteral } from '../src/plugin.js';
 import { contractDigest } from '../src/room/instructions.js';
+import { loadPromptAsset } from '../src/room/prompts.js';
 import { ROLES } from '../src/roles.js';
 import {
-  renderRuntimeManifest, renderRuntimeManifestFile, reportingPolicyGeneration, RUNTIME_PASEO_RANGE, RUNTIME_PLUGIN_ID,
+  renderRuntimeManifest, renderRuntimeManifestFile, renderSuccessionText, reportingPolicyGeneration, RUNTIME_PASEO_RANGE, RUNTIME_PLUGIN_ID,
   runtimePluginDir, runtimePluginEntries,
 } from '../src/runtime.js';
 import { runtimeRoomManifestSchema } from '../src/runtime-plugin/shared/manifest.js';
@@ -62,6 +64,13 @@ describe('runtime plugin managed entries', () => {
     const location = entries.find(entry => entry.path === join(root, 'server', 'generated', 'location.ts'));
     expect(location?.kind === 'file' ? location.content : '').toContain('"pluginDirectory":"/home/op/.paseo-room/runtime-plugin","runtimeRoot":"/home/op/.paseo-room/runtime/v1"');
     expect(await readFile(join(source, 'server', 'generated', 'location.ts'), 'utf8')).toContain('ROOM_LOCATION: RoomLocation | undefined = undefined');
+    // So do the succession messages, rendered from their Markdown assets.
+    const succession = entries.find(entry => entry.path === join(root, 'server', 'generated', 'succession.ts'));
+    const text = succession?.kind === 'file' ? succession.content : '';
+    expect(text).toBe(renderSuccessionText());
+    expect(text).toContain(`request: ${typescriptTemplateLiteral(loadPromptAsset('runtime', 'handoffRequest'))},`);
+    expect(text).toContain(`kickoff: ${typescriptTemplateLiteral(loadPromptAsset('runtime', 'successorKickoff'))},`);
+    expect(await readFile(join(source, 'server', 'generated', 'succession.ts'), 'utf8')).toContain('SUCCESSION_TEXT: SuccessionText | undefined = undefined');
     // Plugin-owned runtime state is never a managed entry.
     expect(entries.some(entry => entry.path.startsWith('/home/op/.paseo-room/runtime/'))).toBe(false);
   });

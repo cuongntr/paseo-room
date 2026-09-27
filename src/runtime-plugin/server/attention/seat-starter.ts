@@ -36,6 +36,8 @@ export interface SeatStarterDependencies {
   readonly git: Pick<GitEvidence, 'identity' | 'head'>;
   readonly recognition: Pick<Recognition, 'recognize'>;
   readonly attention: AttentionEngine;
+  /** Whether a Lead succession of the project waits to be finished (seat context delta K-D5). */
+  readonly successionPending?: (projectKey: string) => Promise<boolean>;
 }
 
 const refuse = (code: string, message: string): StartResult<never> => ({ ok: false, code, message });
@@ -125,6 +127,10 @@ export class SeatStarter {
     if (found.existingLead !== undefined) {
       return refuse('lead_exists', `Lead ${found.existingLead.title ?? found.existingLead.agentId} (${found.existingLead.agentId}) already owns ${found.name}; assign its Supervisor instead.`);
     }
+    const project = await this.deps.attention.observer.projectOf(found.root);
+    if (await this.deps.successionPending?.(project.key) === true) {
+      return refuse('succession_pending', `A replacement of ${found.name}'s Lead waits to be finished; finish or cancel it from the project screen.`);
+    }
     // Through the project's own workspace: a parented agent created by cwd alone lands in its
     // parent's workspace, which for a Supervisor is outside every project.
     const workspace = await this.deps.paseo.openWorkspace(found.root);
@@ -135,10 +141,9 @@ export class SeatStarter {
       provider: input.provider, parentAgentId: supervisor.agentId, title: `${found.name} — Lead`, labels: {},
       ...launch.value, idempotencyKey: `lead-${input.idempotencyKey}`,
     });
-    await this.deps.paseo.run(created.agentId, kickoff(found, supervisor.title ?? 'Room Supervisor', supervisor.agentId, input.directive), `kickoff-${input.idempotencyKey}`);
+    await this.deps.paseo.run(created.agentId, kickoff(found, { title: supervisor.title ?? 'Room Supervisor', agentId: supervisor.agentId }, input.directive), `kickoff-${input.idempotencyKey}`);
     const attention = this.deps.attention;
     await attention.onCreated(created.agentId);
-    const project = await attention.observer.projectOf(found.root);
     await attention.portfolio.assign(project.key, supervisor.agentId);
     return { ok: true, value: created };
   }
@@ -157,10 +162,16 @@ export class SeatStarter {
   }
 }
 
-/** The fixed kickoff a Human-started Lead receives (delta §8.2). */
-export function kickoff(found: Preflight, supervisorTitle: string, supervisorAgentId: string, directive: string | undefined): string {
+/** What a new Lead is told about its project and Supervisor, first in its kickoff; without the room prefix. */
+export function kickoffFacts(found: Preflight, supervisor: { readonly title: string; readonly agentId: string } | undefined): string {
   const protocol = found.protocol ? `present at ${PROTOCOL_FILE}` : 'absent';
   const findings = found.findings.length === 0 ? 'no findings' : found.findings.join('; ');
+  const supervised = supervisor === undefined ? 'You have no Supervisor.' : `Your Supervisor is ${supervisor.title} (${supervisor.agentId}).`;
+  return `You are the Lead of ${found.name} (${found.root}). ${supervised} Repository protocol: ${protocol}. Preflight: ${findings}.`;
+}
+
+/** The fixed kickoff a Human-started Lead receives (delta §8.2). */
+export function kickoff(found: Preflight, supervisor: { readonly title: string; readonly agentId: string }, directive: string | undefined): string {
   const next = directive === undefined || directive.trim() === '' ? 'Wait for a directive.' : directive;
-  return `[paseo-room] You are the Lead of ${found.name} (${found.root}). Your Supervisor is ${supervisorTitle} (${supervisorAgentId}). Repository protocol: ${protocol}. Preflight: ${findings}.\n\n${next}`;
+  return `[paseo-room] ${kickoffFacts(found, supervisor)}\n\n${next}`;
 }

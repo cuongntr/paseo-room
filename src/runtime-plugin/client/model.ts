@@ -2,6 +2,7 @@
  * What the panel reads from `runtime.room` (docs/design/runtime-panel-ux.md §6), and the few
  * derivations every screen shares: a project's status, its headline, and the order of things.
  */
+import { MAX_HANDOFF_BYTES, utf8Bytes } from '../shared/limits.js';
 import { formatTokens } from '../shared/seat-context.js';
 import { ago, clockTime } from './time.js';
 import type { Tone } from './tone.js';
@@ -22,9 +23,16 @@ export interface IncidentView {
 
 export interface RuntimeRecord { readonly projectId: string; readonly health: string; readonly assignments: number; readonly active: number; readonly findings: number }
 
+/** A Lead replacement not yet finished (seat context delta §5.1). */
+export interface SuccessionSummary {
+  readonly id: string; readonly step: string; readonly fromAgentId: string; readonly fromTitle: string | null;
+  readonly canFinish: boolean; readonly canCancel: boolean; readonly failure?: { readonly code: string; readonly message: string };
+}
+
 export interface ProjectView {
   readonly key: string; readonly name: string; readonly root: string; readonly displayRoot: string; readonly git: boolean; readonly decidedBy: string;
   readonly supervisor?: SeatView; readonly seats: readonly SeatView[]; readonly incidents: readonly IncidentView[]; readonly runtime?: RuntimeRecord;
+  readonly succession?: SuccessionSummary;
 }
 
 export interface SupervisorView extends SeatView { readonly portfolio: number }
@@ -102,7 +110,7 @@ const AGENT_LABELS: Readonly<Record<string, string>> = { claude: 'Claude', codex
 export const agentLabel = (agent: string): string => AGENT_LABELS[agent] ?? agent;
 
 export function projectStatus(project: ProjectView): ProjectStatus {
-  if (project.incidents.length > 0 || (project.runtime?.health ?? 'healthy') !== 'healthy') return 'attention';
+  if (project.incidents.length > 0 || (project.runtime?.health ?? 'healthy') !== 'healthy' || waitsOnHuman(project.succession)) return 'attention';
   return project.seats.some(seat => seat.state === 'running' || seat.state === 'permission') ? 'working' : 'idle';
 }
 
@@ -169,3 +177,52 @@ export const KIND_LABEL: Readonly<Record<string, string>> = {
 };
 
 export const ROLE_ICON: Readonly<Record<string, string>> = { supervisor: 'Eye', lead: 'Compass', peer: 'Wrench' };
+
+// ── Lead replacement (seat context delta K-D5, §8.3) ─────────────────────────────────────────────
+
+/** Whether a replacement waits on Human: a handoff to review, a successor to finish, or a failure to see. */
+export const waitsOnHuman = (succession: SuccessionSummary | undefined): boolean =>
+  succession !== undefined && (succession.step === 'received' || succession.step === 'failed' || succession.canFinish);
+
+/** Where a replacement stands, as the project screen says it. */
+export function successionHeadline(succession: SuccessionSummary): string {
+  const from = succession.fromTitle ?? 'the Lead';
+  switch (succession.step) {
+    case 'requested': return `Replacing ${from}: it is writing its handoff`;
+    case 'received': return `Replacing ${from}: its handoff is ready for your review`;
+    case 'archived': return `${sentence(from)} is archived; its successor is not started yet`;
+    case 'created': return `${sentence(from)} is archived; its successor has not received the handoff yet`;
+    case 'failed': return `Replacing ${from} failed`;
+    default: return `Replacing ${from}`;
+  }
+}
+
+/** What Paseo's archive of a Lead does to a seat it opened, as the preflight reports it. */
+export interface DescendantView {
+  readonly agentId: string; readonly title: string | null; readonly role: string; readonly state: string;
+  readonly fate: 'archived-with-lead' | 'detached' | 'kept'; readonly why?: string;
+}
+
+export interface SuccessionPreflightView {
+  readonly lead: { readonly agentId: string; readonly title: string | null; readonly provider: string; readonly state: string; readonly contextPercent: number | null };
+  readonly project: { readonly key: string; readonly name: string; readonly root: string };
+  readonly blockers: readonly { readonly code: string; readonly message: string }[];
+  readonly notes: readonly string[];
+  readonly descendants: readonly DescendantView[];
+  readonly supervisor: { readonly agentId: string; readonly title: string | null } | null;
+  readonly successor: { readonly provider: string; readonly model: string | null };
+}
+
+const FATE_WORDS: Readonly<Record<DescendantView['fate'], string>> = {
+  'archived-with-lead': 'archived with the Lead', detached: 'detached, and keeps running', kept: 'keeps running',
+};
+
+/** One seat the Lead opened and what happens to it: `Reviewer — detached, and keeps running (open in a tab)`. */
+export const fateLine = (seat: DescendantView): string =>
+  `${seat.title ?? `${seat.role} ${seat.agentId.slice(0, 8)}`} — ${FATE_WORDS[seat.fate]}${seat.why === undefined ? '' : ` (${seat.why})`}`;
+
+/** A handoff's size against its bound, in UTF-8 bytes as the server counts it: `11.2 KB of 64 KB`. */
+export function handoffSize(text: string): { readonly label: string; readonly over: boolean } {
+  const bytes = utf8Bytes(text);
+  return { label: `${(bytes / 1024).toFixed(1)} KB of ${String(MAX_HANDOFF_BYTES / 1024)} KB`, over: bytes > MAX_HANDOFF_BYTES };
+}

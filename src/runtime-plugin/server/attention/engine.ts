@@ -214,6 +214,25 @@ export class AttentionEngine {
     return this.run(async () => { await this.ensureStarted(); await this.observer.onPermissionResolved(agentId, requestId); await this.settle(); });
   }
 
+  /**
+   * Re-reads from Paseo every seat it lists, and `also` by id, then settles, so a Human decision about
+   * the room rests on fresh facts; false when Paseo could not be read. Unlike a rebuild it forgets no
+   * seat: Paseo lists no archived agent, and an archived Lead must stay known for the signals about
+   * the seats it left behind.
+   */
+  async resync(also: readonly string[] = []): Promise<boolean> {
+    const done = await this.run(async () => {
+      await this.ensureStarted();
+      const listed = await this.deps.paseo.listAgents();
+      for (const snapshot of listed) await this.observer.upsert(snapshot);
+      const seen = new Set(listed.map(snapshot => snapshot.id));
+      for (const agentId of also) if (!seen.has(agentId)) await this.observer.onCreated(agentId);
+      await this.settle();
+      return true;
+    });
+    return done === true;
+  }
+
   onArchived(agentId: string, archivedAt: string): Promise<unknown> {
     return this.run(async () => { await this.ensureStarted(); this.observer.onArchived(agentId, archivedAt); await this.settle(); });
   }
@@ -349,6 +368,9 @@ export class AttentionEngine {
     if (supervisor === undefined) { await record('record', 'no Supervisor for this project'); return; }
     const relayed = this.relayedMarkers.get(lead.agentId) ?? new Set<string>();
     const markers = pending.turn.markers.filter(marker => !relayed.has(markerKey(marker)));
+    // A handoff request or a successor's kickoff: the runtime reads that turn itself, and its text
+    // never reaches a letter or the sensor. A marker line in it still goes, quoted alone.
+    if (markers.length === 0 && pending.turn.trigger === 'succession') { await record('record', 'the runtime reads a succession turn itself'); return; }
     // Paseo's own report of a prompted turn carries only its last message, so a marker still goes.
     if (markers.length === 0 && await this.supervisorPrompted(supervisor, pending)) { await record('record', 'Paseo reports this turn to the Supervisor that prompted it'); return; }
 
@@ -393,6 +415,22 @@ export class AttentionEngine {
       id: pending.id, level,
       line: `${project.name} · ${seatLabel(lead)} ended a turn (${pending.turn.outcome})${said}`,
       createdAt: pending.turn.endedAt,
+    });
+  }
+
+  /**
+   * Tells a project's Supervisor one fact at digest level, such as a Lead replaced (seat context
+   * delta K-D5): a one-off item, not a condition, so it opens no incident.
+   */
+  told(projectKey: string, line: string): Promise<unknown> {
+    return this.run(async () => {
+      await this.ensureStarted();
+      const recipient = this.supervisorOf(projectKey).supervisorAgentId;
+      if (recipient === undefined || !this.deps.settings().letters.enabled) return;
+      const id = letterId();
+      this.remember(id, { recipient, projectKey, kind: 'fact' });
+      this.delivery.enqueue(recipient, { id, level: 'digest', line: `${this.projectName(projectKey)} · ${mask(line)}`, createdAt: this.time });
+      await this.delivery.pump();
     });
   }
 

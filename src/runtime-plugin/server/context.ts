@@ -20,6 +20,10 @@ import { AttentionEngine } from './attention/engine.js';
 import { AttentionKey } from './attention/key.js';
 import { AttentionLog } from './attention/log.js';
 import { SystemOneSensor } from './attention/sensor.js';
+import { SeatStarter } from './attention/seat-starter.js';
+import { controllerLedger, Succession } from './attention/succession.js';
+import { SuccessionStore } from './attention/succession-store.js';
+import { SUCCESSION_TEXT } from './generated/succession.js';
 import { DEFAULT_ATTENTION_SETTINGS, type AttentionSettings } from '../shared/attention.js';
 import { DEFAULT_PEER_EFFORT_SETTINGS, type PeerEffortSettings } from '../shared/effort.js';
 import { DEFAULT_SEAT_CONTEXT_SETTINGS, type SeatContextSettings } from '../shared/seat-context.js';
@@ -53,6 +57,8 @@ export interface RuntimeContext {
    */
   readonly seatContext: { current: SeatContextSettings; read: Promise<void> };
   readonly sensor: SystemOneSensor;
+  /** Human-initiated Lead replacement (seat context delta K-D5). */
+  readonly succession: Succession;
   /** Writes the advertised tool lists and starts draining the spool. */
   start(): Promise<void>;
   /** Resolves once the manifest has been read; a failure leaves the runtime paused, not crashed. */
@@ -84,6 +90,10 @@ export function createRuntimeContext(location: RoomLocation, nodePath = process.
     now, settings: () => attentionSettings.current, contextSettings: () => seatContext.current, sensor, ready: () => handle.available,
   });
   controller.supervisorFor = gitCommonDir => attention.supervisorOf(gitCommonDir).supervisorAgentId;
+  const succession = new Succession({
+    paseo: controller.deps.paseo, attention, ledger: controllerLedger(controller), store: SuccessionStore.at(location.runtimeRoot, now), text: SUCCESSION_TEXT,
+    starter: new SeatStarter({ paseo: controller.deps.paseo, git: controller.deps.git, recognition, attention }), contextSettings: () => seatContext.current, now,
+  });
   const registries = {
     supervisor: createSupervisorHandlers(controller, attention),
     lead: createLeadHandlers(controller),
@@ -113,7 +123,7 @@ export function createRuntimeContext(location: RoomLocation, nodePath = process.
     },
     compactMark: {
       recognition, paseo: controller.deps.paseo, settings: () => seatContext.current, settingsRead: () => seatContext.read,
-      log: message => { console.error(`[paseo-room-runtime] ${message}`); },
+      log: message => { console.error(`[paseo-room-runtime] ${message}`); }, exempt: agentId => succession.handingOver(agentId),
     },
     registries,
     spool,
@@ -123,6 +133,7 @@ export function createRuntimeContext(location: RoomLocation, nodePath = process.
     attentionKey,
     peerEffort,
     seatContext,
+    succession,
     async adoptPeerEffort(settings) {
       peerEffort.current = settings;
       await writeTools();

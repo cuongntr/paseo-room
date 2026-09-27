@@ -18,6 +18,7 @@ import { Button, Callout, Card, Loading, Page, Pill, SPACE, Title, type Theme } 
 import { agentLabel, sentence, type RoomView } from './model.js';
 import { AssignmentDetailView } from './record.js';
 import { ProjectScreen, RoomScreen, type RoomActions } from './room.js';
+import { ReplaceLeadModal } from './succession.js';
 
 type Route =
   | { readonly screen: 'room' }
@@ -25,7 +26,8 @@ type Route =
   | { readonly screen: 'assignment'; readonly key: string; readonly projectId: string; readonly assignmentId: string };
 
 type ModalState =
-  | { readonly kind: 'supervisor' } | { readonly kind: 'project' } | { readonly kind: 'start-lead'; readonly key: string } | { readonly kind: 'assign'; readonly key: string } | undefined;
+  | { readonly kind: 'supervisor' } | { readonly kind: 'project' } | { readonly kind: 'start-lead'; readonly key: string } | { readonly kind: 'assign'; readonly key: string }
+  | { readonly kind: 'replace-lead'; readonly key: string; readonly leadAgentId?: string } | undefined;
 
 type Navigation = PluginSurfaceProps['navigation'];
 
@@ -54,6 +56,7 @@ function Runtime(props: { readonly theme: Theme; readonly compact: boolean; read
     newSupervisor: () => { setModal({ kind: 'supervisor' }); },
     newProject: () => { setModal({ kind: 'project' }); },
     startLead: key => { setModal({ kind: 'start-lead', key }); },
+    replaceLead: (key, leadAgentId) => { setModal({ kind: 'replace-lead', key, ...(leadAgentId === undefined ? {} : { leadAgentId }) }); },
     assign: key => { setModal({ kind: 'assign', key }); },
     reload: polled.reload,
     ...(openAgent === undefined ? {} : { openAgent: (agentId: string) => { openAgent({ agentId }); } }),
@@ -108,6 +111,9 @@ function Runtime(props: { readonly theme: Theme; readonly compact: boolean; read
             onClose={() => { setModal(undefined); }} onDone={polled.reload} onNewSupervisor={() => { setModal({ kind: 'supervisor' }); }} />
           <AssignSupervisorModal theme={theme} room={room} projectKey={modal?.kind === 'assign' ? modal.key : undefined} open={modal?.kind === 'assign'}
             onClose={() => { setModal(undefined); }} onDone={polled.reload} onNewSupervisor={() => { setModal({ kind: 'supervisor' }); }} />
+          <ReplaceLeadModal theme={theme} room={room} projectKey={modal?.kind === 'replace-lead' ? modal.key : undefined} leadAgentId={modal?.kind === 'replace-lead' ? modal.leadAgentId : undefined}
+            open={modal?.kind === 'replace-lead'} onClose={() => { setModal(undefined); }} onDone={polled.reload}
+            {...(actions.openAgent === undefined ? {} : { openAgent: actions.openAgent })} />
         </>
       )}
     </ScrollView>

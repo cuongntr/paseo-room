@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  contextLine, hasLead, leadlessProjects, sentence, supervisorChoices, supervisorSummary, watchingLabel, type ProjectView, type RoomView, type SeatView,
+  contextLine, fateLine, handoffSize, hasLead, leadlessProjects, projectStatus, sentence, successionHeadline, supervisorChoices, supervisorSummary, waitsOnHuman,
+  watchingLabel, type ProjectView, type RoomView, type SeatView, type SuccessionSummary,
 } from '../src/runtime-plugin/client/model.js';
 import { clockTime } from '../src/runtime-plugin/client/time.js';
 import { pillKey, rolePills } from '../src/runtime-plugin/client/pills.js';
@@ -97,5 +98,34 @@ describe('seat context on the panel', () => {
       project({ key: 'c', name: 'shop', seats: [seat('lead-1', 'lead')] }),
     ]));
     expect(listed.map(entry => entry.name)).toEqual(['alpha', 'zeta']);
+  });
+});
+
+describe('Lead replacement on the panel', () => {
+  const succession = (step: string, change: Partial<SuccessionSummary> = {}): SuccessionSummary => ({
+    id: 'suc_AAAAAAAAAAAAAAAA', step, fromAgentId: 'lead-1', fromTitle: 'shop — Lead', canFinish: step === 'archived' || step === 'created', canCancel: step !== 'created', ...change,
+  });
+
+  it('says where a replacement stands, and asks for a look only when it waits on Human', () => {
+    expect(successionHeadline(succession('requested'))).toBe('Replacing shop — Lead: it is writing its handoff');
+    expect(successionHeadline(succession('received'))).toBe('Replacing shop — Lead: its handoff is ready for your review');
+    expect(successionHeadline(succession('archived'))).toBe('Shop — Lead is archived; its successor is not started yet');
+    expect(successionHeadline(succession('failed'))).toBe('Replacing shop — Lead failed');
+    expect(['requested', 'received', 'archived', 'created', 'failed'].map(step => waitsOnHuman(succession(step)))).toEqual([false, true, true, true, true]);
+    expect(projectStatus(project({ succession: succession('requested') }))).toBe('idle');
+    expect(projectStatus(project({ succession: succession('received') }))).toBe('attention');
+  });
+
+  it('names what Paseo\'s archive does to each seat the Lead opened', () => {
+    expect(fateLine({ agentId: 'peer-1', title: 'Reviewer', role: 'peer', state: 'idle', fate: 'archived-with-lead' })).toBe('Reviewer — archived with the Lead');
+    expect(fateLine({ agentId: 'peer-2abcdef99', title: null, role: 'peer', state: 'idle', fate: 'detached', why: 'open in a tab' }))
+      .toBe('peer peer-2ab — detached, and keeps running (open in a tab)');
+    expect(fateLine({ agentId: 'peer-3', title: 'Scout', role: 'peer', state: 'idle', fate: 'kept', why: 'its parent stays' })).toBe('Scout — keeps running (its parent stays)');
+  });
+
+  it('measures a handoff in UTF-8 bytes against its 64 KB bound', () => {
+    expect(handoffSize('aé€😀').label).toBe(`${(Buffer.byteLength('aé€😀') / 1024).toFixed(1)} KB of 64 KB`);
+    expect(handoffSize('x'.repeat(11_469))).toEqual({ label: '11.2 KB of 64 KB', over: false });
+    expect(handoffSize('é'.repeat(32 * 1024 + 1)).over).toBe(true);
   });
 });

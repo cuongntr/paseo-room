@@ -1,7 +1,8 @@
 /**
  * The Room and Project screens (docs/design/runtime-panel-ux.md §4–§5): attention first, then
  * projects by status, then Supervisors; a project holds its Supervisor, its seats and its runtime
- * record. Every seat opens its agent in Paseo when the host offers navigation.
+ * record. Every seat opens its agent in Paseo when the host offers navigation, and a project's Lead
+ * can be replaced from its Seats header.
  */
 import { useToast } from '@getpaseo/plugin/client/react-native';
 import { useState } from 'react';
@@ -11,7 +12,7 @@ import { ATTENTION_SETTINGS_SCREEN, openSettings } from './host.js';
 import { Button, Callout, Card, Dot, Empty, Glyph, IconButton, Pill, Row, SPACE, SectionLabel, Title, ago, type Theme } from './kit.js';
 import {
   KIND_LABEL, LEVEL_STYLE, ROLE_ICON, STATE_LABEL, STATUS_TONE, contextLine, contextTone, hasLead, lastActivity, launchLabel, projectHeadline, projectStatus, providerLabel, seatName,
-  sentence, sortIncidents, sortProjects, stateTone, watchingLabel, type IncidentView, type ProjectView, type RoomView, type SeatView,
+  sentence, sortIncidents, sortProjects, stateTone, successionHeadline, waitsOnHuman, watchingLabel, type IncidentView, type ProjectView, type RoomView, type SeatView,
 } from './model.js';
 import { RuntimeRecord } from './record.js';
 
@@ -21,6 +22,8 @@ export interface RoomActions {
   readonly newSupervisor: () => void;
   readonly newProject: () => void;
   readonly startLead: (projectKey: string) => void;
+  /** Opens Replace Lead on a project: for `leadAgentId`, or to resume its replacement in progress. */
+  readonly replaceLead: (projectKey: string, leadAgentId?: string) => void;
   readonly assign: (projectKey: string) => void;
   readonly openAgent?: (agentId: string) => void;
   readonly reload: () => void;
@@ -54,6 +57,19 @@ function useFeedback(reload: () => void) {
   };
 }
 
+/** Dismisses a failed Lead replacement from its project's screen. */
+function useDismissReplacement(reload: () => void) {
+  const rpc = useRuntimeRpcs();
+  const toast = useToast();
+  return (successionId: string): void => {
+    rpc.successionCancel({ successionId, idempotencyKey: idempotencyKey() }).then(answer => {
+      const error = unwrap(answer).error;
+      if (error !== undefined) { toast.error(error.message); return; }
+      reload();
+    }, (failure: unknown) => { toast.error(String(failure)); });
+  };
+}
+
 function IncidentRow(props: { readonly theme: Theme; readonly incident: IncidentView; readonly first: boolean; readonly project?: ProjectView; readonly room: RoomView; readonly actions: RoomActions; readonly rate: (incident: IncidentView, verdict: 'useful' | 'noise') => void }) {
   const { theme, incident } = props;
   const style = LEVEL_STYLE[incident.level] ?? { icon: 'Info', tone: 'muted' as const, label: incident.level };
@@ -69,6 +85,8 @@ function IncidentRow(props: { readonly theme: Theme; readonly incident: Incident
         <View style={{ flexDirection: 'row' }}>
           {subject !== undefined && props.actions.openAgent !== undefined
             ? <IconButton theme={theme} icon="ExternalLink" label="Open the agent" onPress={() => { props.actions.openAgent?.(subject); }} /> : null}
+          {incident.kind === 'context-high' && subject !== undefined && props.project !== undefined
+            ? <IconButton theme={theme} icon="RefreshCcw" label="Replace Lead…" onPress={() => { if (props.project !== undefined) props.actions.replaceLead(props.project.key, subject); }} /> : null}
           <IconButton theme={theme} icon="ThumbsUp" label="Useful" active={incident.feedback === 'useful'} tone="success" onPress={() => { props.rate(incident, 'useful'); }} />
           <IconButton theme={theme} icon="ThumbsDown" label="Noise" active={incident.feedback === 'noise'} tone="warning" onPress={() => { props.rate(incident, 'noise'); }} />
         </View>
@@ -89,6 +107,7 @@ function ProjectRow(props: { readonly theme: Theme; readonly project: ProjectVie
       trailing={(
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: SPACE.sm }}>
           {project.incidents.length > 0 ? <Pill theme={theme} tone="warning" icon="TriangleAlert">{String(project.incidents.length)}</Pill> : null}
+          {project.succession === undefined ? null : <Pill theme={theme} tone={waitsOnHuman(project.succession) ? 'warning' : 'accent'} icon="RefreshCcw">replacing Lead</Pill>}
           {project.seats.length === 0
             ? <Pill theme={theme} tone="muted" icon="Archive">archived</Pill>
             : project.supervisor === undefined
@@ -249,9 +268,15 @@ function SeatTree(props: { readonly theme: Theme; readonly seats: readonly SeatV
 export function ProjectScreen(props: { readonly theme: Theme; readonly room: RoomView; readonly project: ProjectView; readonly actions: RoomActions; readonly back?: () => void }) {
   const { theme, room, project, actions } = props;
   const rate = useFeedback(actions.reload);
+  const dismiss = useDismissReplacement(actions.reload);
   const status = projectStatus(project);
   const decided = project.decidedBy === 'human' ? 'Assigned by you' : project.decidedBy === 'parentage' ? 'Opened its Lead' : 'Attention for this project comes to this panel only';
-  const startLead = <Button theme={theme} small label="Start Lead" icon="Play" variant="primary" onPress={() => { actions.startLead(project.key); }} />;
+  const { succession } = project;
+  const lead = project.seats.find(seat => seat.role === 'lead');
+  // A replacement that archived the Lead is finished, not replaced by a second Lead.
+  const startLead = succession?.canFinish === true
+    ? <Button theme={theme} small label="Finish replacing Lead" icon="RefreshCcw" variant="primary" onPress={() => { actions.replaceLead(project.key); }} />
+    : <Button theme={theme} small label="Start Lead" icon="Play" variant="primary" onPress={() => { actions.startLead(project.key); }} />;
   return (
     <View>
       {props.back === undefined ? null : <View style={{ alignSelf: 'flex-start', marginBottom: SPACE.md }}><Button theme={theme} small variant="ghost" label="Room" icon="ArrowLeft" onPress={props.back} /></View>}
@@ -288,8 +313,28 @@ export function ProjectScreen(props: { readonly theme: Theme; readonly room: Roo
         </Card>
       )}
 
-      <SectionLabel theme={theme}>Seats</SectionLabel>
-      {project.seats.length === 0 || hasLead(project) ? null : (
+      {/* Beside the rows, not inside them: a row opens its agent when pressed. */}
+      <SectionLabel theme={theme} trailing={lead === undefined || succession !== undefined ? undefined
+        : <Button theme={theme} small variant="ghost" label="Replace Lead…" icon="RefreshCcw" onPress={() => { actions.replaceLead(project.key, lead.agentId); }} />}>Seats</SectionLabel>
+      {succession === undefined ? null : succession.step === 'failed' ? (
+        <Callout theme={theme} tone="danger" icon="CircleX" title={successionHeadline(succession)}
+          action={(
+            <>
+              <Button theme={theme} small variant="primary" label="Try again" icon="RefreshCcw" onPress={() => { actions.replaceLead(project.key); }} />
+              <Button theme={theme} small variant="ghost" label="Dismiss" onPress={() => { dismiss(succession.id); }} />
+            </>
+          )}>
+          {`${succession.failure?.message ?? 'No usable handoff arrived.'} The Lead was asked to start no new work; tell it to continue, or try again.`}
+        </Callout>
+      ) : (
+        <Callout theme={theme} tone={waitsOnHuman(succession) ? 'warning' : 'accent'} icon="RefreshCcw" title={successionHeadline(succession)}
+          action={<Button theme={theme} small variant={waitsOnHuman(succession) ? 'primary' : 'secondary'}
+            label={succession.canFinish ? 'Finish replacing Lead' : succession.step === 'received' ? 'Review handoff' : 'Show progress'}
+            icon="RefreshCcw" onPress={() => { actions.replaceLead(project.key); }} />}>
+          {succession.failure === undefined ? undefined : `It stopped: ${succession.failure.message}`}
+        </Callout>
+      )}
+      {project.seats.length === 0 || hasLead(project) || succession?.canFinish === true ? null : (
         <Callout theme={theme} tone="warning" icon="Compass" title="No Lead runs this project" action={startLead}>
           Its Peers have no Lead to report to. Start one here; it is told which Supervisor watches it.
         </Callout>

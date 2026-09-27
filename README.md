@@ -645,7 +645,7 @@ npx paseo-room verify
   Paseo reports it for the latest model call, and when the runtime last saw it compact. **Settings ›
   Room seats › Seat context** sets marks per role, as a share of each seat's own model window:
   - *Lead · report at* (30%): past it, the Lead's Supervisor gets one fact line and the panel shows
-    it, so you can start a fresh Lead from a handoff rather than let this one compact.
+    it with **Replace Lead…**, so you can hand over to a fresh Lead rather than let this one compact.
   - *compact at* (Lead 50%, Supervisor and Peer off): a room Claude seat gets
     `CLAUDE_CODE_AUTO_COMPACT_WINDOW` when its session opens, at creation or on a resume after a
     daemon restart, so Claude compacts at that share instead of near the end of a 1M window. An open
@@ -712,6 +712,26 @@ learn only when you ask it to check.
   the projects the room observes without a Lead. A project with no live Lead offers **Start Lead**
   on its own screen, with its Supervisor preselected. **Assign Supervisor** moves an existing
   project under a Supervisor.
+- **Replacing a Lead.** **Replace Lead…** above a project's seats, or on a *context past rotation
+  mark* item, hands the project to a fresh Lead:
+  - It checks for a quiet point first: the Lead idle, every runtime assignment it leads settled, no
+    runtime notice waiting for it, no seat it opened still working. It also shows what Paseo's
+    archive does to each seat the Lead opened: those in its workspace are archived with it, and one
+    in another workspace or open in a tab is detached and kept.
+  - It asks the Lead for a handoff in fixed sections, and you review and edit it. Nothing is
+    archived until you confirm, and you may cancel until then.
+  - On **Replace Lead**, the runtime archives the Lead and starts `<repository> — Lead` with the same
+    agent under the same Supervisor. The new Lead's first message is the kickoff and your reviewed
+    handoff, verbatim, and it verifies the handoff and reports to you before it acts outside the
+    repository. The Supervisor gets one line naming the new Lead.
+  - The handoff stays on this machine, under `~/.paseo-room/runtime/v1/attention/successions/`,
+    owner-only and never sent to the sensor or in a letter. Finished replacements are pruned after 30
+    days.
+  - If the replacement stops after the archive, the project offers **Finish replacing Lead**, which
+    creates no second Lead, or cancel, which leaves the project as it is. A replacement that fails
+    before the archive stays on the project's screen for a day, with the reason.
+  - Paseo archives the seats in the Lead's workspace with it; the runtime archives them too when the
+    Lead is not running, when Paseo would take none.
 - **Settings › Room attention.** Here you turn letters on or off, change their thresholds, and
   configure the optional **attention sensor**.
   - The sensor speaks the System One HTTP shape, with [TypeSafe Jev](https://docs.typesafe.ai/)

@@ -16,6 +16,15 @@ export type PaseoApi = PluginHookContext['paseo'];
 export const PARENT_AGENT_ID_LABEL = 'paseo.parent-agent-id';
 /** The room's own label binding a created Peer to the assignment that reserved it. */
 export const ASSIGNMENT_LABEL = 'paseo-room.assignment';
+/** The room's own label naming the Lead succession that created a successor Lead. */
+export const SUCCESSION_LABEL = 'paseo-room.succession';
+/** Paseo's labels marking an agent open in a client's tab (`@getpaseo/protocol` agent-labels). */
+const OPEN_TAB_LABEL_PREFIX = 'paseo.open-agent-tab.';
+
+/** Whether a client has the agent open in a tab; Paseo then detaches it from an archived parent instead of archiving it. */
+export function openInTab(labels: Readonly<Record<string, string>>): boolean {
+  return Object.entries(labels).some(([label, value]) => label.startsWith(OPEN_TAB_LABEL_PREFIX) && value === 'true');
+}
 
 export interface PermissionSnapshot {
   readonly id: string;
