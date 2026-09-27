@@ -10,8 +10,8 @@ import { idempotencyKey, unwrap, useRuntimeRpcs } from './data.js';
 import { ATTENTION_SETTINGS_SCREEN, openSettings } from './host.js';
 import { Button, Callout, Card, Dot, Empty, Glyph, IconButton, Pill, Row, SPACE, SectionLabel, Title, ago, type Theme } from './kit.js';
 import {
-  KIND_LABEL, LEVEL_STYLE, ROLE_ICON, STATE_LABEL, STATUS_TONE, lastActivity, launchLabel, projectHeadline, projectStatus, providerLabel, seatName, sortIncidents, sortProjects, stateTone,
-  type IncidentView, type ProjectView, type RoomView, type SeatView,
+  KIND_LABEL, LEVEL_STYLE, ROLE_ICON, STATE_LABEL, STATUS_TONE, contextLine, contextTone, hasLead, lastActivity, launchLabel, projectHeadline, projectStatus, providerLabel, seatName,
+  sentence, sortIncidents, sortProjects, stateTone, watchingLabel, type IncidentView, type ProjectView, type RoomView, type SeatView,
 } from './model.js';
 import { RuntimeRecord } from './record.js';
 
@@ -20,9 +20,25 @@ export interface RoomActions {
   readonly openAssignment: (projectKey: string, projectId: string, assignmentId: string) => void;
   readonly newSupervisor: () => void;
   readonly newProject: () => void;
+  readonly startLead: (projectKey: string) => void;
   readonly assign: (projectKey: string) => void;
   readonly openAgent?: (agentId: string) => void;
   readonly reload: () => void;
+}
+
+/** A seat's meta line: its last turn and its context, whichever are known. */
+function seatMeta(seat: SeatView): string | undefined {
+  const parts = [seat.lastTurn === undefined ? undefined : `Last turn ${seat.lastTurn.outcome} ${ago(seat.lastTurn.endedAt)}`, contextLine(seat)?.text];
+  const shown = parts.filter(part => part !== undefined);
+  return shown.length === 0 ? undefined : shown.join(' · ');
+}
+
+/** A context figure past its role's rotation or compact mark, as a pill; nothing below them. */
+function ContextPill(props: { readonly theme: Theme; readonly seat: SeatView }) {
+  const { context } = props.seat;
+  const tone = context === undefined ? 'neutral' : contextTone(context);
+  if (context === undefined || tone === 'neutral') return null;
+  return <Pill theme={props.theme} tone={tone} icon="Gauge">{`context ${String(context.percent)}%`}</Pill>;
 }
 
 function useFeedback(reload: () => void) {
@@ -130,7 +146,7 @@ export function RoomScreen(props: { readonly theme: Theme; readonly room: RoomVi
         trailing={(
           <>
             {settings === undefined ? null : <IconButton theme={theme} icon="SlidersHorizontal" label="Room attention settings" onPress={settings} />}
-            <Button theme={theme} label="New project" icon="Plus" variant="primary" onPress={actions.newProject} />
+            <Button theme={theme} label="Add repository" icon="Plus" variant="primary" onPress={actions.newProject} />
           </>
         )}>Room</Title>
 
@@ -140,7 +156,7 @@ export function RoomScreen(props: { readonly theme: Theme; readonly room: RoomVi
             action={(
               <>
                 <Button theme={theme} label="1  New Supervisor" icon="Eye" onPress={actions.newSupervisor} />
-                <Button theme={theme} label="2  New project" icon="FolderPlus" variant="primary" onPress={actions.newProject} />
+                <Button theme={theme} label="2  Add repository" icon="FolderPlus" variant="primary" onPress={actions.newProject} />
               </>
             )}>
             Start a Supervisor in a folder outside your repositories, then start a Lead for each repository under it. The Supervisor is told when work stalls, so you don't have to ask.
@@ -168,7 +184,7 @@ export function RoomScreen(props: { readonly theme: Theme; readonly room: RoomVi
           <SectionLabel theme={theme}>Projects</SectionLabel>
           <Card theme={theme}>
             {projects.length === 0
-              ? <Empty theme={theme} icon="FolderGit2" title="No projects yet" action={<Button theme={theme} small label="New project" icon="Plus" onPress={actions.newProject} />}>Start a Lead in a repository and it appears here.</Empty>
+              ? <Empty theme={theme} icon="FolderGit2" title="No projects yet" action={<Button theme={theme} small label="Add repository" icon="Plus" onPress={actions.newProject} />}>Start a Lead in a repository and it appears here.</Empty>
               : projects.map((project, index) => <ProjectRow key={project.key} theme={theme} project={project} first={index === 0} onPress={() => { actions.openProject(project.key); }} />)}
           </Card>
 
@@ -181,8 +197,8 @@ export function RoomScreen(props: { readonly theme: Theme; readonly room: RoomVi
                   {...(actions.openAgent === undefined ? {} : { onPress: () => { actions.openAgent?.(supervisor.agentId); } })}
                   leading={<Glyph theme={theme} name="Eye" boxed />}
                   title={seatName(supervisor)}
-                  subtitle={supervisor.portfolio === 0 ? 'Not watching any project yet' : `Watching ${String(supervisor.portfolio)} project${supervisor.portfolio === 1 ? '' : 's'}`}
-                  meta={supervisor.displayCwd}
+                  subtitle={sentence(watchingLabel(supervisor.portfolio))}
+                  meta={[supervisor.displayCwd, contextLine(supervisor)?.text].filter(part => part !== undefined).join(' · ')}
                   trailing={<Pill theme={theme} tone={stateTone(supervisor.state)}>{STATE_LABEL[supervisor.state] ?? supervisor.state}</Pill>} />
               ))}
           </Card>
@@ -217,9 +233,10 @@ function SeatTree(props: { readonly theme: Theme; readonly seats: readonly SeatV
           leading={<Glyph theme={theme} name={ROLE_ICON[seat.role] ?? 'Bot'} boxed tone={seat.role === 'lead' ? 'accent' : 'muted'} />}
           title={seatName(seat)}
           subtitle={`${seat.role === 'lead' ? 'Lead' : seat.role === 'peer' ? 'Peer' : 'Supervisor'} · ${providerLabel(seat.provider)}${launchLabel(seat) === '' ? '' : ` · ${launchLabel(seat)}`}${seat.pendingPermissions > 0 ? ` · ${String(seat.pendingPermissions)} permission${seat.pendingPermissions === 1 ? '' : 's'} waiting` : ''}`}
-          {...(seat.lastTurn === undefined ? {} : { meta: `Last turn ${seat.lastTurn.outcome} ${ago(seat.lastTurn.endedAt)}` })}
+          meta={seatMeta(seat)}
           trailing={(
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: SPACE.sm }}>
+              <ContextPill theme={theme} seat={seat} />
               <Pill theme={theme} tone={stateTone(seat.state)}>{STATE_LABEL[seat.state] ?? seat.state}</Pill>
               {props.openAgent === undefined ? null : <Glyph theme={theme} name="ExternalLink" size={14} />}
             </View>
@@ -234,6 +251,7 @@ export function ProjectScreen(props: { readonly theme: Theme; readonly room: Roo
   const rate = useFeedback(actions.reload);
   const status = projectStatus(project);
   const decided = project.decidedBy === 'human' ? 'Assigned by you' : project.decidedBy === 'parentage' ? 'Opened its Lead' : 'Attention for this project comes to this panel only';
+  const startLead = <Button theme={theme} small label="Start Lead" icon="Play" variant="primary" onPress={() => { actions.startLead(project.key); }} />;
   return (
     <View>
       {props.back === undefined ? null : <View style={{ alignSelf: 'flex-start', marginBottom: SPACE.md }}><Button theme={theme} small variant="ghost" label="Room" icon="ArrowLeft" onPress={props.back} /></View>}
@@ -260,6 +278,7 @@ export function ProjectScreen(props: { readonly theme: Theme; readonly room: Roo
       ) : (
         <Card theme={theme}>
           <Row theme={theme} first leading={<Glyph theme={theme} name="Eye" boxed />} title={seatName(project.supervisor)} subtitle={decided}
+            meta={contextLine(project.supervisor)?.text}
             trailing={(
               <View style={{ flexDirection: 'row', gap: SPACE.sm }}>
                 {actions.openAgent === undefined ? null : <Button theme={theme} small label="Open" icon="ExternalLink" onPress={() => { if (project.supervisor !== undefined) actions.openAgent?.(project.supervisor.agentId); }} />}
@@ -270,9 +289,18 @@ export function ProjectScreen(props: { readonly theme: Theme; readonly room: Roo
       )}
 
       <SectionLabel theme={theme}>Seats</SectionLabel>
+      {project.seats.length === 0 || hasLead(project) ? null : (
+        <Callout theme={theme} tone="warning" icon="Compass" title="No Lead runs this project" action={startLead}>
+          Its Peers have no Lead to report to. Start one here; it is told which Supervisor watches it.
+        </Callout>
+      )}
       <Card theme={theme}>
         {project.seats.length === 0
-          ? <Empty theme={theme} icon="Archive" title="No live seats">Every agent of this project is archived. Its runtime record is kept below.</Empty>
+          ? (
+            <Empty theme={theme} icon="Archive" title="No live seats" action={startLead}>
+              Every agent of this project is archived. Its runtime record is kept below.
+            </Empty>
+          )
           : <SeatTree theme={theme} seats={project.seats} {...(actions.openAgent === undefined ? {} : { openAgent: actions.openAgent })} />}
       </Card>
 

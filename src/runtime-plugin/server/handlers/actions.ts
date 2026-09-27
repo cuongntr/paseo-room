@@ -15,7 +15,9 @@ import { LEAD_ACTION_SCHEMAS, SUPERVISOR_ACTION_SCHEMAS } from '../contracts/act
 import type { BridgeRequestV1 } from '../contracts/envelope.js';
 import type { Caller, Controller, ControllerResult } from '../controller.js';
 import { project } from '../domain/state.js';
-import { assignmentDetailView, findings, projectStatusView, revision, type StatusInput } from '../domain/views.js';
+import {
+  assignmentDetailView, findings, leanAssignmentView, projectStatusView, quietlySettled, revision, settledAssignmentLine, type StatusInput,
+} from '../domain/views.js';
 import { projectLeads } from '../ownership.js';
 import type { HandlerReply, OperationHandler } from '../spool.js';
 import { ProjectStore } from '../store/project.js';
@@ -91,13 +93,20 @@ export function createLeadHandlers(controller: Controller): Record<string, Opera
       const loaded = await controller.load(store);
       if (!loaded.ok) return failure(loaded.code, loaded.message);
       const mine = [...loaded.value.state.assignments.values()].filter(view => view.leadAgentId === caller.agentId);
+      // Lean unless Lead asks for everything (seat context delta K-D8): a long-lived Lead would
+      // otherwise read every brief it wrote and every settled assignment whole, at each call.
+      const full = input.full === true;
+      const detail = (id: string) => {
+        const found = assignmentDetailView(loaded.value.state, id, 'lead', existsSync);
+        return full || found === undefined ? found : leanAssignmentView(found);
+      };
       if (input.assignmentId !== undefined) {
         if (!mine.some(view => view.id === input.assignmentId)) return failure('assignment_unknown', `No assignment ${input.assignmentId} of yours in this project.`);
-        const detail = assignmentDetailView(loaded.value.state, input.assignmentId, 'lead', existsSync);
-        return success({ revision: revision(detail), assignment: detail });
+        const assignment = detail(input.assignmentId);
+        return success({ revision: revision(assignment), assignment });
       }
-      const details = mine.map(view => assignmentDetailView(loaded.value.state, view.id, 'lead', existsSync));
-      return success({ revision: revision(details), assignments: details });
+      const assignments = mine.map(view => (!full && quietlySettled(loaded.value.state, view, existsSync) ? settledAssignmentLine(view) : detail(view.id)));
+      return success({ revision: revision(assignments), assignments });
     }),
   };
 }

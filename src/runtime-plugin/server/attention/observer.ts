@@ -9,9 +9,9 @@
 import { realpath } from 'node:fs/promises';
 import { basename, dirname, relative, resolve } from 'node:path';
 import type { PluginLifecycleEvents } from '@getpaseo/plugin/server';
-import type { RuntimeRole } from '../../shared/policy.js';
+import type { RuntimeAgent, RuntimeRole } from '../../shared/policy.js';
 import type { GitEvidence } from '../git.js';
-import { toTimelineEntry, type AgentSnapshot, type PaseoPort, type TimelineEntry } from '../paseo-port.js';
+import { toTimelineEntry, type AgentSnapshot, type PaseoPort, type SeatUsage, type TimelineEntry } from '../paseo-port.js';
 import type { Recognition } from '../recognition.js';
 import { leadMarkers, type Marker } from './triage.js';
 
@@ -50,9 +50,20 @@ export interface TurnFacts {
   readonly markers: readonly Marker[];
 }
 
+/** The compactions this runtime saw in a seat's turns (seat context delta K-D1). */
+export interface SeatCompaction {
+  readonly lastAt: number;
+  readonly lastTrigger?: 'auto' | 'manual';
+  readonly lastPreTokens?: number;
+  /** Counted since the runtime started: the Observer persists nothing. */
+  readonly seen: number;
+}
+
 export interface Seat {
   readonly agentId: string;
   readonly role: RuntimeRole;
+  /** The agent the room manifest names for the seat's provider. */
+  readonly agent: RuntimeAgent;
   readonly provider: string;
   title: string | null;
   /** The model and thinking option Paseo reports the seat runs with, for display. */
@@ -72,6 +83,12 @@ export interface Seat {
   readonly pending: Map<string, number>;
   /** Recent turns that edited or wrote files in the seat's working tree, with those files relative to it. */
   writeTurns: { readonly start: number; readonly end: number; readonly paths: readonly string[] }[];
+  /**
+   * The context of the seat's latest model call. A snapshot without one keeps the last figure: a
+   * session resumed after a daemon restart reports none until its next call, on the same context.
+   */
+  usage: SeatUsage | null;
+  compaction: SeatCompaction | undefined;
   refreshedAt: number;
 }
 
@@ -152,9 +169,9 @@ export class Observer {
     const known = this.seatsById.get(snapshot.id);
     const project = known !== undefined && known.cwd === snapshot.cwd ? known.project : await this.projectOf(snapshot.cwd);
     const seat: Seat = known ?? {
-      agentId: snapshot.id, role: recognized.role, provider: snapshot.provider, title: snapshot.title, model: snapshot.model, thinking: snapshot.thinking, cwd: snapshot.cwd, workspaceId: snapshot.workspaceId, project,
+      agentId: snapshot.id, role: recognized.role, agent: recognized.agent, provider: snapshot.provider, title: snapshot.title, model: snapshot.model, thinking: snapshot.thinking, cwd: snapshot.cwd, workspaceId: snapshot.workspaceId, project,
       parentAgentId: snapshot.parentAgentId, state: stateOf(snapshot), archivedAt: snapshot.archivedAt,
-      turnStartedAt: undefined, lastTurn: undefined, failures: [], pending: new Map(), writeTurns: [], refreshedAt: this.time,
+      turnStartedAt: undefined, lastTurn: undefined, failures: [], pending: new Map(), writeTurns: [], usage: snapshot.usage, compaction: undefined, refreshedAt: this.time,
     };
     seat.title = snapshot.title;
     seat.model = snapshot.model;
@@ -165,6 +182,7 @@ export class Observer {
     seat.parentAgentId = snapshot.parentAgentId;
     seat.state = stateOf(snapshot);
     seat.archivedAt = snapshot.archivedAt;
+    if (snapshot.usage !== null) seat.usage = snapshot.usage;
     seat.refreshedAt = this.time;
     const live = new Set(snapshot.pendingPermissions.map(permission => permission.id));
     for (const id of [...seat.pending.keys()]) if (!live.has(id)) seat.pending.delete(id);
@@ -204,23 +222,34 @@ export class Observer {
    * Records a finished turn. Paseo's `turn_ended` carries the agent's whole timeline, not the turn's
    * (`S/agent/agent-manager.js` passes `timelineStore.getItems`), so the turn's own items are read
    * back by its id; without an id or an answer, only what follows the timeline's last user message
-   * counts, and write evidence is taken only when that boundary exists.
+   * counts. Evidence scoped to the turn, its writes and compactions, is taken only when the turn is
+   * bounded one of those ways; without a boundary only its messages count.
    */
   async onTurnEnded(agentId: string, outcome: TurnOutcome, timeline: readonly AgentTimelineItem[], turnId?: string | null): Promise<{ readonly seat: Seat; readonly turn: TurnFacts } | undefined> {
+    const fresh = !this.seatsById.has(agentId);
     const seat = await this.seatFor(agentId);
     if (seat === undefined) return undefined;
     const now = this.time;
     const stamp = new Date(now).toISOString();
+    // A Lead's or Supervisor's context is read at the turn that changed it, so a crossing is seen
+    // then; a Peer's waits for the stale sweep. Only the figure is taken: the turn's own facts stand.
+    // A seat first seen at this event was just read whole.
+    const usage = seat.role !== 'peer' && !fresh ? this.deps.paseo.getAgent(agentId).then(snapshot => snapshot?.usage ?? null, () => null) : Promise.resolve(null);
     let entries: readonly TimelineEntry[] = [];
     if (turnId !== undefined && turnId !== null && turnId !== '') {
       entries = (await this.deps.paseo.recentTimeline(agentId, TURN_READ).catch(() => [])).filter(entry => entry.turnId === turnId);
     }
-    if (entries.length === 0) {
+    let bounded = entries.length > 0;
+    if (!bounded) {
       const all = timeline.map(item => toTimelineEntry(item as Parameters<typeof toTimelineEntry>[0], stamp));
       const start = all.map(entry => entry.kind).lastIndexOf('user');
-      entries = start === -1 ? all.filter(entry => entry.kind !== 'tool') : all.slice(start);
+      bounded = start !== -1;
+      entries = bounded ? all.slice(start) : all;
     }
-    const turn = this.turnFrom(seat, entries, outcome, now);
+    const turn = this.turnFrom(seat, entries, outcome, now, bounded);
+    if (bounded) for (const entry of entries) if (entry.kind === 'compaction') this.compacted(seat, entry, now);
+    const read = await usage;
+    if (read !== null) seat.usage = read;
     seat.lastTurn = turn;
     seat.turnStartedAt = undefined;
     if (seat.state !== 'archived' && seat.state !== 'closed') seat.state = seat.pending.size > 0 ? 'permission' : 'idle';
@@ -232,11 +261,20 @@ export class Observer {
     return { seat, turn };
   }
 
-  private turnFrom(seat: Seat, entries: readonly TimelineEntry[], outcome: TurnOutcome, now: number): TurnFacts {
+  private compacted(seat: Seat, entry: TimelineEntry, now: number): void {
+    const at = Date.parse(entry.timestamp);
+    const { trigger, preTokens } = entry.compaction ?? {};
+    seat.compaction = {
+      lastAt: Number.isNaN(at) ? now : at, ...(trigger === undefined ? {} : { lastTrigger: trigger }),
+      ...(preTokens === undefined ? {} : { lastPreTokens: preTokens }), seen: (seat.compaction?.seen ?? 0) + 1,
+    };
+  }
+
+  private turnFrom(seat: Seat, entries: readonly TimelineEntry[], outcome: TurnOutcome, now: number, bounded: boolean): TurnFacts {
     const said = entries.filter(entry => entry.kind === 'assistant' && entry.text.trim() !== '');
     const assistant = said.at(-1);
     const firstUser = entries.find(entry => entry.kind === 'user');
-    const writes = [...new Set(entries.flatMap(entry => (entry.writes === undefined ? [] : [entry.writes])))];
+    const writes = bounded ? [...new Set(entries.flatMap(entry => (entry.writes === undefined ? [] : [entry.writes])))] : [];
     return {
       startedAt: seat.turnStartedAt ?? now,
       endedAt: now,

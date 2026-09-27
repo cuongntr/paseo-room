@@ -12,7 +12,7 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   ASSIGNMENT_LABEL, CreationConflictError, PARENT_AGENT_ID_LABEL, type AgentSnapshot, type CreateAgentInput, type PaseoPort, type PeerLaunch, type ProviderCommand, type ThinkingOption,
-  type SendBehavior, type TimelineEntry, type WorkspaceSnapshot, type WorktreeWorkspaceRequest,
+  type SeatUsage, type SendBehavior, type TimelineEntry, type WorkspaceSnapshot, type WorktreeWorkspaceRequest,
 } from '../src/runtime-plugin/server/paseo-port.js';
 
 type Operation =
@@ -51,6 +51,8 @@ export interface FakeAgent {
   prompts: { text: string; messageId: string; behavior?: SendBehavior }[];
   title: string | null;
   thinking: string | null;
+  /** Paseo's `lastUsage` context figures; null until a test sets them. */
+  usage: SeatUsage | null;
   /** Timeline entries, oldest first, for `recentTimeline`. */
   timeline: TimelineEntry[];
   /** Turns cancelled by an interrupting send, and permissions a send cleared (Paseo's behaviour). */
@@ -99,7 +101,7 @@ export class FakePaseo implements PaseoPort {
     const full: FakeAgent = {
       model: this.models[agent.provider] ?? 'model-x', cwd: '/repo', workspaceId: 'ws-1', status: 'idle', activeTurn: false,
       lastUserMessageAt: null, updatedAt: '2026-09-22T09:00:00.000Z', labels: {}, archivedAt: null, pendingPermissions: [], prompts: [],
-      title: null, thinking: null, timeline: [], interrupted: 0, clearedPermissions: [], ...agent,
+      title: null, thinking: null, usage: null, timeline: [], interrupted: 0, clearedPermissions: [], ...agent,
     };
     this.agents.set(full.id, full);
     return full;
@@ -120,6 +122,7 @@ export class FakePaseo implements PaseoPort {
       activeTurn: agent.activeTurn, lastUserMessageAt: agent.lastUserMessageAt, updatedAt: agent.updatedAt, labels: { ...agent.labels },
       archivedAt: agent.archivedAt, pendingPermissions: agent.pendingPermissions.map(permission => ({ ...permission })),
       title: agent.title, parentAgentId: agent.labels[PARENT_AGENT_ID_LABEL] ?? null, thinking: agent.thinking,
+      usage: agent.usage === null ? null : { ...agent.usage },
     };
   }
 
@@ -292,6 +295,13 @@ export class FakePaseo implements PaseoPort {
 
   thinkingOptions(provider: string, model: string): Promise<readonly ThinkingOption[]> {
     return Promise.resolve(this.thinkingCatalog[`${provider}/${model}`] ?? []);
+  }
+
+  /** The context window Paseo lists per provider's model, keyed `provider/model`; none unless a test sets it. */
+  readonly windowCatalog: Record<string, number> = {};
+
+  modelWindow(provider: string, model: string): Promise<number | undefined> {
+    return Promise.resolve(this.windowCatalog[`${provider}/${model}`]);
   }
 
   /** Operator-owned launch entries per provider, as Paseo's config would carry them. */

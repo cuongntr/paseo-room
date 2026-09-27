@@ -626,6 +626,9 @@ npx paseo-room verify
 - **Lead** gains room tools such as `assignment_create`, `assignment_dispatch`, `assignment_answer`,
   `assignment_accept`, `gate_run`, and for isolated writers `workspace_close` and `lease_reclaim`.
   `assignment_create` refuses a base that is not a commit of the repository (`base_unknown`).
+  `assignment_status` leaves out the brief Lead wrote (its outcome stays), keeps the last 10 history
+  entries, and gives a decided assignment with nothing left to close one line, unless Lead passes
+  `full: true`.
   **Supervisor** gains `room_status`, `runtime_findings`, `message_lead` (with a `project` for a
   Supervisor of several projects) and `attention_feedback`, and cannot change an assignment. Its
   status and findings cover only its portfolio and the project it stands in; `room_status` lists
@@ -638,6 +641,16 @@ npx paseo-room verify
   `ultracode`, which start agents on their own. It records the choice, shows it with the reason to
   Supervisor and in the panel, and keeps it for a reclaimed Peer while you still allow it. The model
   itself is never Lead's to change.
+- **Seat context.** The panel and each seat's role pill show how full the seat's context is, as
+  Paseo reports it for the latest model call, and when the runtime last saw it compact. **Settings ›
+  Room seats › Seat context** sets marks per role, as a share of each seat's own model window:
+  - *Lead · report at* (30%): past it, the Lead's Supervisor gets one fact line and the panel shows
+    it, so you can start a fresh Lead from a handoff rather than let this one compact.
+  - *compact at* (Lead 50%, Supervisor and Peer off): a room Claude seat gets
+    `CLAUDE_CODE_AUTO_COMPACT_WINDOW` when its session opens, at creation or on a resume after a
+    daemon restart, so Claude compacts at that share instead of near the end of a 1M window. An open
+    session keeps what it opened with. Codex and Pi seats show their context and keep their own
+    compaction.
 - **A runtime-dispatched Peer** is titled `<Disposition> · <outcome gist> · <assignment id>` (for
   example `Reviewer · Review the Docker Compose dev env… · asg_…`), and the runtime's notices to Lead
   name the assignment the same way. It gets exactly two tools, `ask` and `handoff`, for its own
@@ -657,7 +670,8 @@ npx paseo-room verify
   - A project shows its Supervisor, its Lead and Peer seats (each opens its agent in Paseo, and
     shows the model and thinking option it runs with) and its runtime record: assignments, isolated
     writers, findings and recovery.
-  - Starting a Supervisor, starting a project and assigning a Supervisor are guided forms.
+  - Starting a Supervisor, adding a repository, starting a Lead for a project that has none, and
+    assigning a Supervisor are guided forms.
   - The design notes are in [docs/design/runtime-panel-ux.md](docs/design/runtime-panel-ux.md).
 - **Settings › Room seats** shows which account each seat is signed in to (email, plan and
   organization for Claude; login method for Codex; for Pi, only whether a credential file exists).
@@ -681,6 +695,7 @@ learn only when you ask it to check.
     count.
   - They report a Lead archived while its seats still work, and a Lead's finished turn that the
     Supervisor did not prompt itself.
+  - They report, in a digest, a Lead whose context passes the rotation mark, once per crossing.
   - The Lead contract has Lead put a question for you on a line beginning `NEEDS-HUMAN:` and an
     incident on one beginning `INCIDENT:`. The first wakes the Supervisor and the second pages it,
     even for a turn it prompted, once per line, and the letter quotes those lines rather than the
@@ -691,10 +706,12 @@ learn only when you ask it to check.
   - Each item has an id for `attention_feedback`, and a letter's own id rates every item in it. A
     letter is evidence, not an instruction: the Supervisor contract has it ask or nudge the Lead, or
     relay a question to you, and never direct a Peer.
-- **Starting seats.** From the **Room** view, **Start Supervisor** opens one in an existing directory
-  outside every repository. **Start project** checks a repository, opens its Lead under the
-  Supervisor you pick, and sends a fixed kickoff with your first directive verbatim. **Assign
-  Supervisor** moves an existing project under a Supervisor.
+- **Starting seats.** From the **Room** view, **New Supervisor** opens one in an existing directory
+  outside every repository. **Add repository** checks a repository, opens its Lead under the
+  Supervisor you pick, and sends a fixed kickoff with your first directive verbatim; it also offers
+  the projects the room observes without a Lead. A project with no live Lead offers **Start Lead**
+  on its own screen, with its Supervisor preselected. **Assign Supervisor** moves an existing
+  project under a Supervisor.
 - **Settings › Room attention.** Here you turn letters on or off, change their thresholds, and
   configure the optional **attention sensor**.
   - The sensor speaks the System One HTTP shape, with [TypeSafe Jev](https://docs.typesafe.ai/)

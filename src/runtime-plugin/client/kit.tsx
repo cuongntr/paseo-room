@@ -36,16 +36,7 @@ export function toneColor(theme: Theme, tone: Tone): string {
   }
 }
 
-/** "just now", "5 min ago", "2 h ago", "3 d ago". */
-export function ago(iso: string | undefined, now = Date.now()): string {
-  if (iso === undefined) return '';
-  const minutes = Math.round((now - Date.parse(iso)) / 60_000);
-  if (Number.isNaN(minutes)) return '';
-  if (minutes < 1) return 'just now';
-  if (minutes < 60) return `${String(minutes)} min ago`;
-  const hours = Math.round(minutes / 60);
-  return hours < 48 ? `${String(hours)} h ago` : `${String(Math.round(hours / 24))} d ago`;
-}
+export { ago } from './time.js';
 
 const hovered = (state: PressableStateCallbackType): boolean => (state as { hovered?: boolean }).hovered === true;
 

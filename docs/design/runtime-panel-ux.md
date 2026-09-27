@@ -59,9 +59,10 @@ frequency:
 
 ```text
 Room (surface root)                         Project (pushed)                  Assignment (pushed)
-├─ header: summary · New project · ⚙         ├─ header: name · status · ~/path  ├─ header: id · state
+├─ header: summary · Add repository · ⚙      ├─ header: name · status · ~/path  ├─ header: id · state
 ├─ Needs attention (only when non-empty)     ├─ Supervisor (change, open)       ├─ Brief
-├─ Projects (row per project → Project)      ├─ Seats (Lead → Peers, open)      ├─ Peer (open)
+├─ Projects (row per project → Project)      ├─ Seats (Lead → Peers, open;      ├─ Peer (open)
+│                                            │   Start Lead when none)          │
 ├─ Supervisors (row per Supervisor, open,    ├─ Attention (this project)        ├─ Evidence
 │   + New Supervisor)                        └─ Runtime record (health, writer, ├─ Worktree / lease
 └─ About the runtime (collapsed)                assignments → Assignment,       └─ Operator recovery
@@ -84,30 +85,45 @@ belongs to an observed project, and falls back to Room otherwise. Row order:
 - **Project row.** Status dot, then the name, then a meta line such as `Lead idle · 2 Peers
   working · 5 min ago`. On the right, a Supervisor pill (neutral) or an amber *No supervisor* pill,
   and a chevron.
-- **Supervisor row.** Name, `Watching N projects`, a state pill and **Open**. A final row offers
-  *New Supervisor*.
+- **Supervisor row.** Name, `Watching N projects`, its folder and context line, a state pill and
+  **Open**. A final row offers *New Supervisor*.
 - **Seat row** (a project's Lead → Peer tree). The seat's name, then `role · agent · model ·
   thinking <option>` as Paseo reports them, any waiting permissions, the last turn, a state pill and
   **Open**. A runtime-dispatched Peer is named `<Disposition> · <outcome gist> · <assignment id>`, so
   the tree says what each Peer is doing without opening it.
-- **Empty room.** A setup card: *1 Start a Supervisor → 2 Start a project*, with both buttons.
+- **Context line** (seat rows, the Project screen's Supervisor row, the role pill). `context 31% ·
+  last compacted 3 h ago (auto, at 498k)`, from Paseo's figure for the seat's latest model call
+  ([seat context delta](runtime-coordination-seat-context.md) K-D1). A seat past its role's
+  rotation mark also shows a *context N%* pill, amber, and red past a compact mark that reaches it (a
+  Claude seat whose window the mark fits). The role pill names the last compaction's time rather
+  than its age, so it is not redrawn every minute. No line while Paseo reports no figure.
+- **No Lead.** A project with Peers but no live Lead shows *No Lead runs this project* with **Start
+  Lead**; a project whose seats are all archived offers **Start Lead** in its empty Seats card.
+- **Empty room.** A setup card: *1 New Supervisor → 2 Add repository*, with both buttons.
 - **New Supervisor (modal).**
   - *Agent* is a segmented control over the room's Supervisor providers.
   - *Folder* has the placeholder `~/room-desk` and the hint *An existing folder outside every
     repository — the runtime creates none*; `~` is accepted.
   - *Name* is optional, with the placeholder *Room Supervisor*.
   - **Start Supervisor** is the primary action.
-- **New project (modal, two steps).**
-  - *Repository*: a folder field and **Check**, which shows a checklist:
+- **Add repository (modal, two steps).**
+  - *Repository*: a folder field and **Check folder**, which shows a checklist:
     - Git repository;
     - has a commit (a warning, not a blocker);
     - workspace protocol (informational);
     - no Lead yet (a blocker, with *Open Lead* and *Assign a Supervisor instead*).
+
+    Below the field, up to six observed projects with no live Lead, each checked with one tap.
   - *Lead*: a Supervisor radio list (or a callout with *New Supervisor* when there is none), an
     *Agent* segmented control, and *First directive* (multiline, optional, sent verbatim).
   - **Start Lead** is the primary action.
-- **Assign Supervisor (modal).** A radio list of live Supervisors, plus *No assignment (use the
-  Lead's parent)* when one was assigned. **Assign** is the primary action.
+- **Start Lead (modal).** The *Lead* step alone, for a project the room already observes: its folder
+  is fixed and its Supervisor preselected. It calls `runtime.start-project` like *Add repository*.
+- **Supervisor pickers** (Add repository, Start Lead, Assign Supervisor). Running Supervisors first,
+  then those whose session is closed, each with its agent, state, folder and portfolio. The default
+  is the project's current Supervisor, else the first running one.
+- **Assign Supervisor (modal).** The picker, plus *No assignment (use the Lead's parent)* when one
+  was assigned. **Assign** is the primary action.
 - **Settings › Room attention.** Built from host Settings controls:
   - *Letters*: a switch, plus selects with sensible steps for each threshold.
   - *Attention sensor*: a mode select, endpoint and model inputs with an **Apply** action, the
@@ -118,7 +134,11 @@ belongs to an observed project, and falls back to Room otherwise. Row order:
 - **Settings › Room seats.** Host Settings rows, one per seat, with an account line and a state
   pill, and **Refresh** in the section header. A second section, *Thinking Lead may choose*, has one
   switch per thinking option Paseo lists for each Peer provider's profile model; the profile's own
-  option is on and fixed ([peer-effort delta](runtime-coordination-peer-effort.md)).
+  option is on and fixed ([peer-effort delta](runtime-coordination-peer-effort.md)). A third,
+  *Seat context*, has one select per mark: Lead *report at* and *compact at*, Supervisor and Peer
+  *compact at*, each *Off* or 10–95% in 5-point steps. Each compact hint gives the mark in tokens
+  on a 1M and a 200k model, and a notice row says a compact mark reaches a Claude seat when its
+  session next opens, while Codex and Pi keep their own compaction.
 - **Role pill (every seat's composer).** Paseo 0.9 draws a tab icon only for a built-in or
   plugin-registered provider, so a room seat's tab shows the generic agent icon, and a plugin cannot
   decorate tabs. Instead, each live seat gets a composer pill that names its role: *Supervisor*
@@ -128,6 +148,7 @@ belongs to an observed project, and falls back to Room otherwise. Row order:
   - for a Peer: the project, its Lead and its Supervisor;
   - for a Supervisor: the projects it watches and its folder;
   - *Runs*: the model and thinking option the seat runs with, when Paseo reports them;
+  - *Context*: the context line, when Paseo reports a figure;
   - **Open Room runtime** in every case.
 
   The client re-reads `runtime.room` every 20 s, and adds, redraws or removes a pill only when that
@@ -144,7 +165,10 @@ belongs to an observed project, and falls back to Room otherwise. Row order:
 - for seats, `workspaceId` (the Paseo workspace, which the role pill targets);
 - for seats, `model` and `thinking`, read from Paseo's agent record for display only;
 - for projects, `runtime` — `{ projectId, health, assignments, active, findings }` when a runtime
-  ledger exists for the same Git common directory.
+  ledger exists for the same Git common directory;
+- for seats, `context` — `{ used, max, percent, rotateAtPercent, compactAtPercent }` — and
+  `compaction` — `{ lastAt, lastAgo, lastTrigger?, lastPreTokens?, seen }` — per the
+  [seat context delta](runtime-coordination-seat-context.md) §5.1.
 
 `runtime.start-supervisor` and `runtime.start-project` accept `~/` paths. No RPC changes behaviour.
 
@@ -166,3 +190,4 @@ belongs to an observed project, and falls back to Room otherwise. Row order:
 | 2026-09-24 | Bytes | Role pill: each seat's composer shows its room role without renaming the agent, because Paseo 0.9 gives custom providers no tab icon. |
 | 2026-09-25 | Bytes | Room seats gains *Thinking Lead may choose*, the operator's per-Peer-provider thinking envelope. |
 | 2026-09-25 | Bytes | Seat rows and role pills show the model and thinking option each seat runs with; runtime Peers are named by disposition, outcome gist and assignment id instead of `Peer <id>`. |
+| 2026-09-26 | Bytes | Seat context K1: context line on seat rows, the Supervisor row and the role pill; *New project* renamed *Add repository*, offering observed projects without a Lead; *Start Lead* on a project with none; Supervisor pickers list running Supervisors first with state and folder; Room seats gains *Seat context*. |

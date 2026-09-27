@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { Controller } from './controller.js';
 import { CorrelationRegistry } from './correlations.js';
 import type { RoomLocation } from './generated/location.js';
-import type { HookDependencies } from './hooks.js';
+import type { CompactMarkDependencies, HookDependencies } from './hooks.js';
 import { GitEvidence } from './git.js';
 import { createLeadHandlers, createSupervisorHandlers } from './handlers/actions.js';
 import { createPeerHandlers } from './handlers/peer.js';
@@ -22,6 +22,7 @@ import { AttentionLog } from './attention/log.js';
 import { SystemOneSensor } from './attention/sensor.js';
 import { DEFAULT_ATTENTION_SETTINGS, type AttentionSettings } from '../shared/attention.js';
 import { DEFAULT_PEER_EFFORT_SETTINGS, type PeerEffortSettings } from '../shared/effort.js';
+import { DEFAULT_SEAT_CONTEXT_SETTINGS, type SeatContextSettings } from '../shared/seat-context.js';
 
 export interface RuntimeContext {
   readonly location: RoomLocation;
@@ -29,6 +30,8 @@ export interface RuntimeContext {
   readonly correlations: CorrelationRegistry;
   readonly handle: PaseoHandle;
   readonly hooks: HookDependencies;
+  /** What the session-open hook reads to set a Claude seat's compact mark (seat context delta K-D3). */
+  readonly compactMark: CompactMarkDependencies;
   readonly controller: Controller;
   readonly recovery: Recovery;
   /** Operation handlers by seat; filled by the handler modules before the spool starts. */
@@ -44,6 +47,11 @@ export interface RuntimeContext {
   readonly peerEffort: { current: PeerEffortSettings; available: boolean };
   /** Adopts a saved envelope and rewrites the tool lists that describe it. */
   adoptPeerEffort(settings: PeerEffortSettings): Promise<void>;
+  /**
+   * The operator's context budgets per role (seat context delta K-D2); replaced when they are saved.
+   * `read` settles once the settings store was first read.
+   */
+  readonly seatContext: { current: SeatContextSettings; read: Promise<void> };
   readonly sensor: SystemOneSensor;
   /** Writes the advertised tool lists and starts draining the spool. */
   start(): Promise<void>;
@@ -67,12 +75,13 @@ export function createRuntimeContext(location: RoomLocation, nodePath = process.
     runtimeRoot: location.runtimeRoot, paseo: sdkPaseoPort(handle), git: new GitEvidence(), recognition, correlations, peerEffort: () => peerEffort.current,
   });
   const attentionSettings = { current: DEFAULT_ATTENTION_SETTINGS, available: false };
+  const seatContext = { current: DEFAULT_SEAT_CONTEXT_SETTINGS, read: Promise.resolve() };
   const attentionKey = AttentionKey.at(location.runtimeRoot);
   const now = (): Date => new Date();
   const sensor = new SystemOneSensor({ settings: () => attentionSettings.current, key: attentionKey, log: AttentionLog.at(location.runtimeRoot, now), now });
   const attention = new AttentionEngine({
     paseo: controller.deps.paseo, recognition, git: controller.deps.git, runtimeRoot: location.runtimeRoot,
-    now, settings: () => attentionSettings.current, sensor, ready: () => handle.available,
+    now, settings: () => attentionSettings.current, contextSettings: () => seatContext.current, sensor, ready: () => handle.available,
   });
   controller.supervisorFor = gitCommonDir => attention.supervisorOf(gitCommonDir).supervisorAgentId;
   const registries = {
@@ -102,6 +111,10 @@ export function createRuntimeContext(location: RoomLocation, nodePath = process.
       recognition, correlations, nodePath, runtimeRoot: location.runtimeRoot,
       bridgeScript: join(location.pluginDirectory, 'server', 'bridge', 'bridge.mjs'),
     },
+    compactMark: {
+      recognition, paseo: controller.deps.paseo, settings: () => seatContext.current, settingsRead: () => seatContext.read,
+      log: message => { console.error(`[paseo-room-runtime] ${message}`); },
+    },
     registries,
     spool,
     turns: createTurnHandlers(controller, spool),
@@ -109,6 +122,7 @@ export function createRuntimeContext(location: RoomLocation, nodePath = process.
     attentionSettings,
     attentionKey,
     peerEffort,
+    seatContext,
     async adoptPeerEffort(settings) {
       peerEffort.current = settings;
       await writeTools();

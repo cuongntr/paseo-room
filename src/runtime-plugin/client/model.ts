@@ -2,6 +2,8 @@
  * What the panel reads from `runtime.room` (docs/design/runtime-panel-ux.md §6), and the few
  * derivations every screen shares: a project's status, its headline, and the order of things.
  */
+import { formatTokens } from '../shared/seat-context.js';
+import { ago, clockTime } from './time.js';
 import type { Tone } from './tone.js';
 
 export interface SeatView {
@@ -9,6 +11,8 @@ export interface SeatView {
   readonly model?: string | null; readonly thinking?: string | null;
   readonly cwd: string; readonly displayCwd: string; readonly workspaceId?: string | null; readonly parentAgentId: string | null; readonly pendingPermissions: number;
   readonly lastTurn?: { readonly outcome: string; readonly endedAgo: string; readonly endedAt: string };
+  readonly context?: { readonly used: number; readonly max: number; readonly percent: number; readonly rotateAtPercent: number | null; readonly compactAtPercent: number | null };
+  readonly compaction?: { readonly lastAt: string; readonly lastTrigger?: string; readonly lastPreTokens?: number; readonly seen: number };
 }
 
 export interface IncidentView {
@@ -40,6 +44,59 @@ export const seatName = (seat: SeatView): string => seat.title ?? `${seat.role} 
 /** What a seat runs on, as Paseo reports it — `claude-opus-5-5 · thinking medium` — or '' when unknown. */
 export const launchLabel = (seat: Pick<SeatView, 'model' | 'thinking'>): string =>
   [seat.model ?? '', seat.thinking === undefined || seat.thinking === null ? '' : `thinking ${seat.thinking}`].filter(part => part !== '').join(' · ');
+
+type SeatContext = NonNullable<SeatView['context']>;
+
+/** A seat's context toned at its role's rotation mark (warning) and at a compact mark that reaches it (danger). */
+export function contextTone(context: SeatContext): Tone {
+  const past = (mark: number | null): boolean => mark !== null && context.percent >= mark;
+  return past(context.compactAtPercent) ? 'danger' : past(context.rotateAtPercent) ? 'warning' : 'neutral';
+}
+
+/**
+ * A seat's context as one line — `context 31% · last compacted 3 h ago (auto, at 498k)` — with its
+ * tone; undefined while Paseo reports no figure. `clock` names the compaction's time instead of its
+ * age, for a view redrawn only when its content changes.
+ */
+export function contextLine(seat: Pick<SeatView, 'context' | 'compaction'>, when: 'ago' | 'clock' = 'ago'): { readonly text: string; readonly tone: Tone } | undefined {
+  const { context, compaction } = seat;
+  if (context === undefined) return undefined;
+  const parts = [`context ${String(context.percent)}%`];
+  if (compaction !== undefined) {
+    const how = [compaction.lastTrigger, compaction.lastPreTokens === undefined ? undefined : `at ${formatTokens(compaction.lastPreTokens)}`].filter(part => part !== undefined);
+    const moment = when === 'clock' ? clockTime(compaction.lastAt) : ago(compaction.lastAt);
+    parts.push(`last compacted ${moment}${how.length === 0 ? '' : ` (${how.join(', ')})`}`);
+  }
+  return { text: parts.join(' · '), tone: contextTone(context) };
+}
+
+/**
+ * Supervisors as a picker lists them: running ones before those whose session is closed, then by
+ * name; the default is `preferred` when it is listed, else the first that runs.
+ */
+export function supervisorChoices(supervisors: readonly SupervisorView[], preferred?: string): { readonly choices: readonly SupervisorView[]; readonly initial: string | undefined } {
+  const choices = [...supervisors].sort((a, b) => Number(a.state === 'closed') - Number(b.state === 'closed') || seatName(a).localeCompare(seatName(b)));
+  const initial = choices.find(entry => entry.agentId === preferred)?.agentId ?? choices[0]?.agentId;
+  return { choices, initial };
+}
+
+/** What a Supervisor watches: `watching 2 projects`, or that it watches none yet. */
+export const watchingLabel = (portfolio: number): string =>
+  (portfolio === 0 ? 'not watching any project yet' : `watching ${String(portfolio)} project${portfolio === 1 ? '' : 's'}`);
+
+/** A Supervisor as a picker describes it: whether it runs, where it stands, what it watches. */
+export const supervisorSummary = (entry: SupervisorView): string =>
+  [providerLabel(entry.provider), STATE_LABEL[entry.state] ?? entry.state, entry.displayCwd, watchingLabel(entry.portfolio)].join(' · ');
+
+/** Whether a live Lead runs the project. */
+export const hasLead = (project: ProjectView): boolean => project.seats.some(seat => seat.role === 'lead');
+
+/** Observed projects with no live Lead: each can take one without retyping its folder. */
+export const leadlessProjects = (room: Pick<RoomView, 'projects'>): readonly ProjectView[] =>
+  room.projects.filter(project => !hasLead(project)).sort((a, b) => a.name.localeCompare(b.name));
+
+/** `text` with its first letter capitalised, to start a sentence. */
+export const sentence = (text: string): string => `${text.charAt(0).toUpperCase()}${text.slice(1)}`;
 
 const AGENT_LABELS: Readonly<Record<string, string>> = { claude: 'Claude', codex: 'Codex', pi: 'Pi' };
 export const agentLabel = (agent: string): string => AGENT_LABELS[agent] ?? agent;
@@ -108,6 +165,7 @@ export const KIND_LABEL: Readonly<Record<string, string>> = {
   'turn-failing': 'Repeated failure',
   'peer-orphaned': 'Orphaned Peer',
   'project-quiet': 'Stalled project',
+  'context-high': 'Context past rotation mark',
 };
 
 export const ROLE_ICON: Readonly<Record<string, string>> = { supervisor: 'Eye', lead: 'Compass', peer: 'Wrench' };

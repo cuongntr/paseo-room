@@ -30,6 +30,7 @@ import { peerStopped, type PaseoApi, type PaseoHandle } from './paseo-port.js';
 import type { Recovery } from './recovery.js';
 import { lstatOrUndefined, readSeatAccounts, runStatus, type SeatDependencies } from './seats.js';
 import { ProjectStore } from './store/project.js';
+import { bounded } from './timeout.js';
 
 export interface RpcRuntime {
   readonly controller: Controller;
@@ -80,17 +81,6 @@ async function statusInput(runtime: RpcRuntime, store: ProjectStore): Promise<St
 }
 
 const LIVENESS_MS = 2_000;
-
-/** The value, or null when it failed or did not arrive in time. */
-async function bounded<T>(work: Promise<T>, ms: number): Promise<T | null> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<null>(resolve => { timer = setTimeout(() => { resolve(null); }, ms); });
-  try {
-    return await Promise.race([work.catch(() => null), timeout]);
-  } finally {
-    clearTimeout(timer);
-  }
-}
 
 const missing = (projectId: string): Answer => error('project_unknown', `No runtime project ${projectId}.`, 'Refresh the project list.');
 

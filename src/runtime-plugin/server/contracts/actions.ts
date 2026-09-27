@@ -49,7 +49,7 @@ export const LEAD_ACTION_SCHEMAS = {
   assignment_reject: z.strictObject({ ...assignment, reason }),
   assignment_abandon: z.strictObject({ ...assignment, reason }),
   assignment_close: z.strictObject(assignment),
-  assignment_status: z.strictObject({ assignmentId: assignmentIdSchema.optional() }),
+  assignment_status: z.strictObject({ assignmentId: assignmentIdSchema.optional(), full: z.boolean().optional() }),
   gate_run: z.strictObject(assignment),
   // Discarding a retained worktree's uncommitted work is Lead's explicit decision, with a reason.
   workspace_close: z.strictObject({ ...assignment, discardUncommitted: z.literal(true).optional(), reason: reason.optional() })

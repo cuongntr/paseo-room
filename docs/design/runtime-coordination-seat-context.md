@@ -234,6 +234,8 @@ Lead, at level `digest`:
 - no advice, per attention §7.4.
 
 It closes when the context falls below the mark (after a compaction) or the Lead is archived.
+Incidents live in memory, as for every attention signal, so a runtime restart reports a Lead still
+past its mark once more.
 `rotateAtPercent: null` turns the signal off; *Replace Lead* stays available either way, since it is
 the Human's action, not a response to the signal. A
 Supervisor may relay the line to Human; its contract gives it no authority to act on it. Supervisors
@@ -293,11 +295,17 @@ Only `server/paseo-port.ts` calls Paseo, as today. It already has `archive(agent
 ## 4. Enforcement per agent
 
 ### 4.1 Claude
-Enforced as described in K-D3. It needs the seat's model window. On a resume the model is the
-agent's own; at creation, where no agent record exists yet, it is the provider profile's model. The
-runtime then reads that model's `contextWindowMaxTokens` from Paseo's model catalog (1,000,000 or
-200,000 per `S/agent/providers/claude/model-manifest.js`), which it already lists for Peer effort. A
-model switched mid-session keeps the window it opened with until the next open.
+Enforced as described in K-D3. It needs the seat's model window. At creation the runtime's
+`agent.create` hook sets the variable from the model the agent is created with (`config.model`,
+the room profile's when it is absent), and the session Paseo opens next keeps it. On a resume the
+`session_open` hook uses the agent's own model. The runtime then reads that model's
+`contextWindowMaxTokens` from Paseo's model catalog (1,000,000 or 200,000 per
+`S/agent/providers/claude/model-manifest.js`), which it already lists for Peer effort. A model
+switched mid-session keeps the window it opened with until the next open.
+
+Paseo fails a creation or a session open when a plugin's before hook takes 30 s, and a model list
+can wait for a provider's warm-up at daemon start. The lookup is therefore bounded at 5 s; past it
+the seat opens without a mark, and the late answer still fills the 10-minute catalog cache.
 
 When the window is unknown, the runtime sets nothing and the settings screen says so.
 `autoCompactEnabled: false` in an operator's settings is not inherited: the room's role
@@ -647,17 +655,9 @@ cure.
 
 | Date | Author | Change |
 |---|---|---|
-| 2026-09-26 | Repository owner / Bytes | Approved after a fresh-eyes review. The review changed:
-- *Start Lead* reuses `runtime.start-project`; the planned `runtime.start-lead` is dropped.
-- `succession.mode` is dropped, and `rotateAtPercent: null` turns the suggestion off.
-- The handoff and kickoff turns are recorded, not relayed.
-- The Supervisor gets one line when a Lead is replaced.
-- Preflight also requires no pending notice and no descendant on a permission, and resolves the Supervisor before the archive.
-- The successor acts only inside the repository until it has reported.
-- Compaction counts are labelled as since runtime start.
-- `assignment_status` takes `full` rather than `includeBrief`.
-- The model window is resolved at create and at resume.
-- Qualification became each phase's release gate.
-- The PRD amendment (§12) is applied. |
+| 2026-09-27 | Bytes | Simplification pass on K1, no change to what a seat receives: a session opened for creation is left to the creation hook, so a failed lookup is not retried at the open; the 5 s bound also covers the first settings read; one per-provider model list, cached 10 minutes with concurrent readers sharing its fetch, now also serves `thinkingOptions` and the profile's default model; one predicate (`compactMarkFor`) decides for the hooks and the panel whether a compact mark reaches a seat. |
+| 2026-09-26 | Bytes | Code review of K1. §4.1: the creation hook sets the mark from the model the agent is created with, and both hooks bound the model lookup at 5 s, since Paseo fails a before hook at 30 s. K-D6 notes that a runtime restart re-reports a Lead past its mark. `assignment_status` keeps an assignment whole while its worktree is open or unresolved, and its one-line form carries `state` as the same claim as the detail. `runtime.room` shows a compact mark only on a seat it reaches: a Claude seat whose window it fits. |
+| 2026-09-26 | Bytes | K1 implemented per the [K1 plan](../plans/runtime-coordination-seat-context-k1-implementation-plan.md) (WP-K1–WP-K7); `npm run verify` passes. Details the plan left open: an Observer keeps a seat's last context figure when a snapshot reports none (a resumed session has none until its next call); compactions count only within a turn's own items; `runtime.room` also carries each seat's role marks and the compaction's age; an open incident whose evidence is unchanged takes the condition's current text, so `context-high` shows the current figure without a second line; a lean assignment says how many history entries it left out (`historyOmitted`); the session-open hook waits for the first settings read, keeps a value another hook set, and skips history sessions. §11.2 qualification waits for the install. |
+| 2026-09-26 | Repository owner / Bytes | Approved after a fresh-eyes review, which changed: *Start Lead* reuses `runtime.start-project`, and the planned `runtime.start-lead` is dropped; `succession.mode` is dropped, and `rotateAtPercent: null` turns the suggestion off; the handoff and kickoff turns are recorded, not relayed; the Supervisor gets one line when a Lead is replaced; preflight also requires no pending notice and no descendant on a permission, and resolves the Supervisor before the archive; the successor acts only inside the repository until it has reported; compaction counts are labelled as since runtime start; `assignment_status` takes `full` rather than `includeBrief`; the model window is resolved at create and at resume; qualification became each phase's release gate; the PRD amendment (§12) is applied. |
 | 2026-09-26 | Repository owner / Bytes | Owner decisions on Q-K01–Q-K06: Lead compacts at 50% (rotate stays at 30%); the Supervisor receives `context-high`; handoffs are not exported; Codex and Pi enforcement is a later delta; choosing another successor provider is deferred beyond K2; Supervisor stays out. Next: live qualification Q-C1–Q-C6, then the K1 plan. |
 | 2026-09-26 | Bytes | Created Draft from the operator's report of Lead hallucination near a full 1M context and after compaction, the 2026-09-26 cmdb Lead replacement, and measurements of 57 role-home sessions. It proposes context visibility, per-role budgets enforced for Claude at session open, Human-initiated Lead succession with a reviewed handoff, a leaner `assignment_status`, and an evaluated set of compaction-resilience options. |

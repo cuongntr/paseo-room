@@ -74,7 +74,10 @@ first.
 
 ## 4. Qualification after install
 
-1. `setup --agent claude --runtime --apply` on this machine, then `verify`.
+1. `setup --agent claude --runtime --no-claude-memory-contract --apply` on this machine, then
+   `verify`. The flag keeps this room's recorded choice; without it setup would add the memory
+   contract to each role's `CLAUDE.md`. The dry run changes only runtime plugin files, so the
+   manifest generation stays and nothing pauses; the new code runs once Paseo reloads the plugin.
 2. **Q-C1.** A room Claude seat whose session opens after the install carries the variable. For the
    next Lead that opens, read `/proc/<pid>/environ` of its `claude` process, found through
    `PASEO_AGENT_ID`. It should show `CLAUDE_CODE_AUTO_COMPACT_WINDOW=500000`, and the Supervisor's
@@ -103,3 +106,5 @@ first.
 | Date | Author | Change |
 |---|---|---|
 | 2026-09-26 | Bytes | Created Active for K1 of the approved seat context delta, on the owner's instruction to proceed. |
+| 2026-09-26 | Bytes | WP-K1–WP-K7 implemented on the owner's instruction; `npm run verify` passes (59 files, 669 tests, packed package). Exit criteria 1, 2 and 4 hold; criterion 3 (install and §4 qualification) waits for the owner, since the new code runs only after Paseo reloads the plugin. §4 step 1 corrected to keep this room's `--no-claude-memory-contract`, found by a dry run. |
+| 2026-09-26 | Bytes | Code review changes to §2, recorded in the delta: the creation hook sets the mark from the created agent's `config.model` (the profile's when absent) instead of the profile's at session open; both hooks bound the lookup at 5 s; the lean list keeps an assignment whole while its worktree is open or unresolved, and its one-line `state` is a claim; the compact mark shows only where it reaches the seat. `npm run verify` passes. |

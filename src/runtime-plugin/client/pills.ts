@@ -3,7 +3,7 @@
  * (Paseo gives a custom provider no tab icon, and plugins cannot decorate tabs). Pure: derives
  * the pills from the room view, so the registrar only adds, updates and removes.
  */
-import { launchLabel, type RoomView } from './model.js';
+import { contextLine, launchLabel, type RoomView } from './model.js';
 
 export type SeatRole = 'supervisor' | 'lead' | 'peer';
 
@@ -38,6 +38,8 @@ export function rolePills(room: RoomView): readonly RolePill[] {
       lines.push(['Supervisor', project.supervisor === undefined ? 'none — assign one in Room runtime' : titleOf(project.supervisor)]);
       const runs = launchLabel(seat);
       if (runs !== '') lines.push(['Runs', runs]);
+      const context = contextLine(seat, 'clock');
+      if (context !== undefined) lines.push(['Context', context.text]);
       pills.set(seat.agentId, {
         agentId: seat.agentId, workspaceId: seat.workspaceId, role: seat.role, label: ROLE_PILL[seat.role].label,
         title: `Room ${ROLE_PILL[seat.role].label} of ${project.name}`, lines,
@@ -48,12 +50,14 @@ export function rolePills(room: RoomView): readonly RolePill[] {
     if (supervisor.workspaceId === undefined || supervisor.workspaceId === null) continue;
     const watched = room.projects.filter(project => project.supervisor?.agentId === supervisor.agentId).map(project => project.name);
     const runs = launchLabel(supervisor);
+    const context = contextLine(supervisor, 'clock');
     pills.set(supervisor.agentId, {
       agentId: supervisor.agentId, workspaceId: supervisor.workspaceId, role: 'supervisor', label: ROLE_PILL.supervisor.label,
       title: 'Room Supervisor',
       lines: [
         ['Watching', watched.length === 0 ? 'no project yet — assign projects in Room runtime' : watched.join(', ')], ['Folder', supervisor.displayCwd],
         ...(runs === '' ? [] : [['Runs', runs] as const]),
+        ...(context === undefined ? [] : [['Context', context.text] as const]),
       ],
     });
   }

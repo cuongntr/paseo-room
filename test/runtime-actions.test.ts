@@ -5,6 +5,10 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { DEFAULT_ATTENTION_SETTINGS } from '../src/runtime-plugin/shared/attention.js';
 import { AttentionEngine } from '../src/runtime-plugin/server/attention/engine.js';
 import { createLeadHandlers, createSupervisorHandlers } from '../src/runtime-plugin/server/handlers/actions.js';
+import type { AssignmentView, ProjectState, WorkspaceRecord } from '../src/runtime-plugin/server/domain/state.js';
+import {
+  LEAN_HISTORY, assignmentDetailView, leanAssignmentView, quietlySettled, revision, settledAssignmentLine, type AssignmentDetailView,
+} from '../src/runtime-plugin/server/domain/views.js';
 import { CORRELATION_ENV, handleSessionOpen, transformAgentCreate } from '../src/runtime-plugin/server/hooks.js';
 import type { HandlerReply } from '../src/runtime-plugin/server/spool.js';
 import { dispatchAndHandBack, harness, writableBrief, type Harness } from './runtime-harness.js';
@@ -104,6 +108,75 @@ describe('Lead action handlers', () => {
     const theirs = body(await lead.assignment_status?.(request(otherCorrelation, 'assignment_status', {}), { kind: 'action', role: 'lead' }) ?? { ok: false, result: {} });
     expect((mine.assignments as unknown[])).toHaveLength(1);
     expect((theirs.assignments as unknown[])).toHaveLength(0);
+  });
+});
+
+describe('assignment_status', () => {
+  /** Lead's `assignment_status` answer for `payload`. */
+  const statusOf = (lead: Awaited<ReturnType<typeof room>>['lead'], correlation: string) => async (payload: Record<string, unknown>) =>
+    body(await lead.assignment_status?.(request(correlation, 'assignment_status', payload), { kind: 'action', role: 'lead' }) ?? { ok: false, result: {} });
+
+  it('leaves out the brief Lead wrote, keeping its outcome, unless Lead asks for everything', async () => {
+    const { h, lead, leadCorrelation } = await room();
+    const created = await h.controller.createAssignment(h.lead, writableBrief(h.base));
+    const assignmentId = created.ok ? created.value.assignmentId : '';
+    const status = statusOf(lead, leadCorrelation);
+
+    const lean = (await status({ assignmentId })).assignment as Record<string, unknown>;
+    expect(lean).not.toHaveProperty('brief');
+    expect(lean).toMatchObject({ id: assignmentId, outcome: 'Add the feature', leadAgentId: 'lead-1', state: { value: 'draft' } });
+
+    const loaded = await h.controller.load(await h.controller.projectFor(h.repo));
+    const today = loaded.ok ? assignmentDetailView(loaded.value.state, assignmentId, 'lead') : undefined;
+    const full = await status({ assignmentId, full: true });
+    expect(JSON.stringify(full.assignment)).toBe(JSON.stringify(today));
+    expect(full.revision).toBe(revision(today));
+  });
+
+  it('lists open assignments lean and settled ones in one line each', async () => {
+    const { h, lead, leadCorrelation } = await room();
+    const open = await h.controller.createAssignment(h.lead, writableBrief(h.base));
+    const done = await h.controller.createAssignment(h.lead, writableBrief(h.base, { outcome: 'Docs name the flag' }));
+    const openId = open.ok ? open.value.assignmentId : '';
+    const doneId = done.ok ? done.value.assignmentId : '';
+    await h.controller.abandon(h.lead, { assignmentId: doneId, reason: 'Superseded' });
+    const status = statusOf(lead, leadCorrelation);
+
+    const listed = (await status({})).assignments as Record<string, unknown>[];
+    expect(listed).toHaveLength(2);
+    expect(listed.find(entry => entry.id === openId)).not.toHaveProperty('brief');
+    expect(listed.find(entry => entry.id === openId)).toHaveProperty('history');
+    expect(listed.find(entry => entry.id === doneId)).toEqual({ id: doneId, state: { value: 'abandoned', evidence: 'enforced' }, outcome: 'Docs name the flag' });
+
+    const everything = (await status({ full: true })).assignments as Record<string, unknown>[];
+    expect(everything.every(entry => 'brief' in entry)).toBe(true);
+  });
+
+  it('keeps a decided assignment whole while its worktree is still open or unresolved', () => {
+    const view = { id: 'asg_isolated1', state: 'accepted', closure: 'closed', peerAgentId: 'peer-1', input: { outcome: 'x' } } as unknown as AssignmentView;
+    const record = (change: Partial<WorkspaceRecord>) => ({ assignmentId: view.id, create: 'succeeded', close: 'open', ...change }) as unknown as WorkspaceRecord;
+    const state = (workspace?: WorkspaceRecord) => ({
+      workspaces: new Map(workspace === undefined ? [] : [[view.id, workspace]]),
+      ownership: new Map([[view.id, { state: 'released' }]]),
+    }) as unknown as ProjectState;
+    expect(quietlySettled(state(), view)).toBe(true);
+    // Retained after its writer was released: Lead still has to close it.
+    expect(quietlySettled(state(record({})), view)).toBe(false);
+    expect(quietlySettled(state(record({ close: 'uncertain' })), view)).toBe(false);
+    expect(quietlySettled(state(record({ close: 'succeeded', directoryRemoved: true })), view)).toBe(true);
+    // Paseo archived it but left the directory.
+    expect(quietlySettled(state(record({ close: 'succeeded', directoryRemoved: false })), view, () => true)).toBe(false);
+    expect(settledAssignmentLine(view)).toEqual({ id: view.id, state: { value: 'accepted', evidence: 'enforced' }, outcome: 'x' });
+  });
+
+  it('keeps the latest history entries and says how many it left out', () => {
+    const detail = { id: 'asg_x', brief: { outcome: 'x' }, outcome: 'x', history: Array.from({ length: 13 }, (_, index) => `evt_${String(index)}`) } as unknown as AssignmentDetailView;
+    const lean = leanAssignmentView(detail);
+    expect(lean.history).toHaveLength(LEAN_HISTORY);
+    expect(lean.history[0]).toBe('evt_3');
+    expect(lean).toMatchObject({ historyOmitted: 3, outcome: 'x' });
+    expect(lean).not.toHaveProperty('brief');
+    expect(Object.keys(leanAssignmentView({ ...detail, history: ['evt_0'] }))).toEqual(['id', 'outcome', 'history']);
   });
 });
 

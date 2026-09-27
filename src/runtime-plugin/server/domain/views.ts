@@ -330,6 +330,46 @@ export function assignmentDetailView(state: ProjectState, assignmentId: string, 
   };
 }
 
+/** The latest history entries a lean assignment view keeps. */
+export const LEAN_HISTORY = 10;
+
+/** An assignment detail without its brief, with its latest history only (seat context delta K-D8). */
+export type LeanAssignmentView = Omit<AssignmentDetailView, 'brief'> & { readonly historyOmitted?: number };
+
+/** A decided assignment with nothing left to close, in one line. */
+export interface SettledAssignmentLine {
+  readonly id: string;
+  readonly state: Claim<string>;
+  readonly outcome: string;
+}
+
+/** `value` without one key, every other in its order. */
+function without<T extends object, K extends keyof T>(value: T, key: K): Omit<T, K> {
+  return Object.fromEntries(Object.entries(value).filter(([name]) => name !== key)) as Omit<T, K>;
+}
+
+/**
+ * What Lead reads by default: Lead wrote the brief and still holds it, so only its `outcome` stays,
+ * as the summary carries it, and the history keeps its latest entries and says how many it left out.
+ */
+export function leanAssignmentView(detail: AssignmentDetailView): LeanAssignmentView {
+  const omitted = detail.history.length - LEAN_HISTORY;
+  return { ...without(detail, 'brief'), history: detail.history.slice(-LEAN_HISTORY), ...(omitted > 0 ? { historyOmitted: omitted } : {}) };
+}
+
+/**
+ * Whether Lead's default list may answer an assignment in one line: decided, with its Peer archived,
+ * and no worktree still open or unresolved, which Lead may still have to close.
+ */
+export function quietlySettled(state: ProjectState, view: AssignmentView, present?: (path: string) => boolean): boolean {
+  const record = state.workspaces.get(view.id);
+  return settled(view) && (record === undefined || worktreeDisposition(state, record, present) === 'gone');
+}
+
+export function settledAssignmentLine(view: AssignmentView): SettledAssignmentLine {
+  return { id: view.id, state: stateClaim(view), outcome: view.input.outcome };
+}
+
 /** A stable content revision: unchanged views keep the same revision. */
 export function revision(view: unknown): string {
   return sha256(canonicalJson(view)).slice('sha256:'.length, 'sha256:'.length + 24);

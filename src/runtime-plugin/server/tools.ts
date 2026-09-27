@@ -13,6 +13,7 @@ import { boundedArray, boundedString } from '../shared/limits.js';
 import { LEAD_OPERATIONS, SUPERVISOR_OPERATIONS, type RuntimeRole } from '../shared/policy.js';
 import { LEAD_ACTION_SCHEMAS, SUPERVISOR_ACTION_SCHEMAS } from './contracts/actions.js';
 import { ASSIGNMENT_KINDS, type AssignmentKind } from './contracts/assignment.js';
+import { LEAN_HISTORY } from './domain/views.js';
 import { askInputSchema, HANDOFF_DETAILS, verificationReportSchema } from './contracts/peer.js';
 import { ensurePrivateDirectory } from './store/publish.js';
 import { writeFile, rename } from 'node:fs/promises';
@@ -36,7 +37,7 @@ const DESCRIPTIONS: Readonly<Record<string, string>> = {
   assignment_reject: 'Reject a handed-back assignment.',
   assignment_abandon: 'Abandon an assignment.',
   assignment_close: 'Close a decided assignment by archiving its Peer. Your workspace is not closed.',
-  assignment_status: 'Read one assignment in detail, or all of yours.',
+  assignment_status: `Read one assignment, or all of yours. By default the brief you wrote is left out (its outcome stays), history keeps its latest ${String(LEAN_HISTORY)} entries, and a decided assignment with nothing left to close, its worktree included, is one line. full: true returns every assignment whole.`,
   gate_run: 'Run the assignment\'s exact gate command independently against the handed-back candidate.',
   workspace_close: 'Close the worktree of a closed isolated assignment that the runtime retained. discardUncommitted with a reason destroys its uncommitted work; the branch is kept.',
   lease_reclaim: 'Reclaim an isolated assignment\'s worktree after its Peer is proven archived, and dispatch a new Peer into it at the next lease epoch.',

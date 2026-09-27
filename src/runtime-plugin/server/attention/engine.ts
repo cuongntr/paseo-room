@@ -8,6 +8,7 @@
  */
 import { homedir } from 'node:os';
 import type { AttentionSettings, SensorMode } from '../../shared/attention.js';
+import { DEFAULT_SEAT_CONTEXT_SETTINGS, compactMarkFor, compactWindow, contextPercent, rotateMark, type SeatContextSettings } from '../../shared/seat-context.js';
 import type { GitEvidence } from '../git.js';
 import type { PaseoPort } from '../paseo-port.js';
 import type { Recognition } from '../recognition.js';
@@ -81,6 +82,8 @@ export interface EngineDependencies {
   readonly runtimeRoot: string;
   readonly now: () => Date;
   readonly settings: () => AttentionSettings;
+  /** The operator's context budgets; the defaults when omitted. */
+  readonly contextSettings?: () => SeatContextSettings;
   readonly sensor?: SensorHook;
   readonly log?: (message: string) => void;
   /** Whether Paseo's handle has arrived; the sweep waits for it rather than failing every pass. */
@@ -126,6 +129,10 @@ export class AttentionEngine {
 
   private get time(): number {
     return this.deps.now().getTime();
+  }
+
+  private contextSettings(): SeatContextSettings {
+    return this.deps.contextSettings?.() ?? DEFAULT_SEAT_CONTEXT_SETTINGS;
   }
 
   private report(message: string): void {
@@ -261,14 +268,19 @@ export class AttentionEngine {
     const settings = this.deps.settings();
     const now = this.time;
     const current = conditions({
-      observer: this.observer, delivery: settings.delivery, now, ledgerProjects: await this.ledgerProjects(), quiet: this.quiet,
+      observer: this.observer, delivery: settings.delivery, now, ledgerProjects: await this.ledgerProjects(), quiet: this.quiet, budgets: this.contextSettings().budgets,
     });
     const seen = new Set<string>();
     for (const condition of current) {
       seen.add(condition.key);
       const known = this.incidents.get(condition.key);
       if (known !== undefined && (known.closedAt === undefined || now - known.closedAt < REOPEN_MS)) {
-        if (known.closedAt === undefined && known.evidence === condition.evidence) continue;
+        if (known.closedAt === undefined && known.evidence === condition.evidence) {
+          // The same incident restated: its text may carry a figure that moved, such as a wait or a context size.
+          known.text = condition.text;
+          known.summary = condition.summary;
+          continue;
+        }
         known.closedAt = undefined;
         known.count += 1;
         known.evidence = condition.evidence;
@@ -417,11 +429,30 @@ export class AttentionEngine {
   /** The room as the panel and Supervisor tools read it; `only` limits it to some projects. */
   roomView(only?: readonly string[]): RoomView {
     const now = this.time;
+    const budgets = this.contextSettings();
+    // A compact mark is shown only where it reaches the seat and fits its window, as the hooks apply it.
+    const applied = (seat: Seat, max: number): number | null => {
+      const mark = compactMarkFor(budgets, seat);
+      return mark !== null && compactWindow(mark, max) !== undefined ? mark : null;
+    };
     const seatView = (seat: Seat): SeatView => ({
       agentId: seat.agentId, role: seat.role, provider: seat.provider, title: seat.title, model: seat.model, thinking: seat.thinking, state: seat.state, cwd: seat.cwd,
       displayCwd: homeRelative(seat.cwd), workspaceId: seat.workspaceId, parentAgentId: seat.parentAgentId, pendingPermissions: seat.pending.size,
       ...(seat.lastTurn === undefined ? {} : {
         lastTurn: { outcome: seat.lastTurn.outcome, endedAgo: age(now - seat.lastTurn.endedAt), endedAt: new Date(seat.lastTurn.endedAt).toISOString() },
+      }),
+      ...(seat.usage === null ? {} : {
+        context: {
+          used: seat.usage.used, max: seat.usage.max, percent: contextPercent(seat.usage.used, seat.usage.max),
+          rotateAtPercent: rotateMark(budgets, seat.role), compactAtPercent: applied(seat, seat.usage.max),
+        },
+      }),
+      ...(seat.compaction === undefined ? {} : {
+        compaction: {
+          lastAt: new Date(seat.compaction.lastAt).toISOString(), lastAgo: age(now - seat.compaction.lastAt), seen: seat.compaction.seen,
+          ...(seat.compaction.lastTrigger === undefined ? {} : { lastTrigger: seat.compaction.lastTrigger }),
+          ...(seat.compaction.lastPreTokens === undefined ? {} : { lastPreTokens: seat.compaction.lastPreTokens }),
+        },
       }),
     });
     const projectKeys = [...this.observer.projects().keys()];
@@ -462,6 +493,13 @@ export interface SeatView {
   readonly parentAgentId: string | null;
   readonly pendingPermissions: number;
   readonly lastTurn?: { readonly outcome: string; readonly endedAgo: string; readonly endedAt: string };
+  /**
+   * The seat's latest model call, and its role's marks in percent (seat context delta §5.1); the
+   * compact mark only where it applies to this seat.
+   */
+  readonly context?: { readonly used: number; readonly max: number; readonly percent: number; readonly rotateAtPercent: number | null; readonly compactAtPercent: number | null };
+  /** Compactions seen since the runtime started. */
+  readonly compaction?: { readonly lastAt: string; readonly lastAgo: string; readonly lastTrigger?: 'auto' | 'manual'; readonly lastPreTokens?: number; readonly seen: number };
 }
 
 export interface IncidentView {

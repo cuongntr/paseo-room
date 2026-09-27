@@ -2,18 +2,20 @@
  * The runtime surfaces (docs/design/runtime-panel-ux.md): the Room runtime sidebar surface and the
  * workspace panel share one navigator — Room → Project → Assignment — and the Human's seat forms.
  * The workspace panel opens on its own project. Settings › Room seats uses the host's settings
- * controls. React Native primitives only; an operator surface, never authority evidence for a seat.
+ * controls: accounts, the thinking Lead may choose, and seat context budgets. React Native
+ * primitives only; an operator surface, never authority evidence for a seat.
  */
 import { useWorkspace, type PluginSurfaceProps, type PluginWorkspacePanelProps } from '@getpaseo/plugin/client';
 import { ScrollView } from '@getpaseo/plugin/client/react-native';
 import { SettingsAction, SettingsRow, SettingsSection } from '@getpaseo/plugin/client/ui';
 import { useEffect, useState } from 'react';
 import { Text, View } from 'react-native';
+import { SeatContextSection } from './context-settings.js';
 import { unwrap, usePolled, useRuntimeRpcs, type Unwrapped } from './data.js';
 import { PeerThinkingSection } from './effort-settings.js';
-import { AssignSupervisorModal, NewProjectModal, NewSupervisorModal } from './forms.js';
+import { AssignSupervisorModal, NewProjectModal, NewSupervisorModal, StartLeadModal } from './forms.js';
 import { Button, Callout, Card, Loading, Page, Pill, SPACE, Title, type Theme } from './kit.js';
-import { agentLabel, type RoomView } from './model.js';
+import { agentLabel, sentence, type RoomView } from './model.js';
 import { AssignmentDetailView } from './record.js';
 import { ProjectScreen, RoomScreen, type RoomActions } from './room.js';
 
@@ -22,7 +24,8 @@ type Route =
   | { readonly screen: 'project'; readonly key: string }
   | { readonly screen: 'assignment'; readonly key: string; readonly projectId: string; readonly assignmentId: string };
 
-type ModalState = { readonly kind: 'supervisor' } | { readonly kind: 'project' } | { readonly kind: 'assign'; readonly key: string } | undefined;
+type ModalState =
+  | { readonly kind: 'supervisor' } | { readonly kind: 'project' } | { readonly kind: 'start-lead'; readonly key: string } | { readonly kind: 'assign'; readonly key: string } | undefined;
 
 type Navigation = PluginSurfaceProps['navigation'];
 
@@ -50,6 +53,7 @@ function Runtime(props: { readonly theme: Theme; readonly compact: boolean; read
     openAssignment: (key, projectId, assignmentId) => { setRoute({ screen: 'assignment', key, projectId, assignmentId }); },
     newSupervisor: () => { setModal({ kind: 'supervisor' }); },
     newProject: () => { setModal({ kind: 'project' }); },
+    startLead: key => { setModal({ kind: 'start-lead', key }); },
     assign: key => { setModal({ kind: 'assign', key }); },
     reload: polled.reload,
     ...(openAgent === undefined ? {} : { openAgent: (agentId: string) => { openAgent({ agentId }); } }),
@@ -100,6 +104,8 @@ function Runtime(props: { readonly theme: Theme; readonly compact: boolean; read
             onNewSupervisor={() => { setModal({ kind: 'supervisor' }); }}
             onAssign={root => { const project = room.projects.find(entry => entry.root === root); setModal(project === undefined ? undefined : { kind: 'assign', key: project.key }); }}
             {...(actions.openAgent === undefined ? {} : { openAgent: actions.openAgent })} />
+          <StartLeadModal theme={theme} room={room} projectKey={modal?.kind === 'start-lead' ? modal.key : undefined} open={modal?.kind === 'start-lead'}
+            onClose={() => { setModal(undefined); }} onDone={polled.reload} onNewSupervisor={() => { setModal({ kind: 'supervisor' }); }} />
           <AssignSupervisorModal theme={theme} room={room} projectKey={modal?.kind === 'assign' ? modal.key : undefined} open={modal?.kind === 'assign'}
             onClose={() => { setModal(undefined); }} onDone={polled.reload} onNewSupervisor={() => { setModal({ kind: 'supervisor' }); }} />
         </>
@@ -174,7 +180,7 @@ export function RoomSeatsSettings(props: PluginSurfaceProps) {
           {data === undefined
             ? <SettingsRow label={busy ? 'Checking every seat…' : 'No answer yet'} />
             : seats.map(seat => (
-              <SettingsRow key={seat.providerId} label={`${agentLabel(seat.agent)} · ${seat.role[0]?.toUpperCase() ?? ''}${seat.role.slice(1)}`}
+              <SettingsRow key={seat.providerId} label={`${agentLabel(seat.agent)} · ${sentence(seat.role)}`}
                 hint={seat.shared === undefined ? account(seat) : `${account(seat)} — linked to another home's login; run paseo-room verify`}>
                 <Pill theme={theme} tone={SEAT_TONE[seat.status]}>{SEAT_WORD[seat.status]}</Pill>
               </SettingsRow>
@@ -183,6 +189,7 @@ export function RoomSeatsSettings(props: PluginSurfaceProps) {
         </SettingsSection>
         {data === undefined || data.seats.length > 0 ? null : <Card theme={theme}><Text style={{ color: theme.colors.foregroundMuted, padding: SPACE.lg }}>The room manifest lists no seats.</Text></Card>}
         <PeerThinkingSection />
+        <SeatContextSection />
       </Page>
     </ScrollView>
   );

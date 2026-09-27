@@ -5,12 +5,15 @@
  * `@getpaseo/plugin*` and `zod` — because the installed plugin has no `node_modules`.
  * See docs/design/runtime-coordination.md §3.3 for the components this entry registers.
  */
+import type { SettingsDefinition } from '@getpaseo/plugin';
 import type { PluginServerContext } from '@getpaseo/plugin/server';
+import type { ZodType, output as ZodOutput } from 'zod';
 import { ATTENTION_SETTINGS } from './shared/attention.js';
 import { PEER_EFFORT_SETTINGS } from './shared/effort.js';
+import { SEAT_CONTEXT_SETTINGS } from './shared/seat-context.js';
 import { createRuntimeContext } from './server/context.js';
 import { ROOM_LOCATION } from './server/generated/location.js';
-import { handleSessionOpen, transformAgentCreate } from './server/hooks.js';
+import { compactMarkEnv, compactMarkOnCreate, handleSessionOpen, transformAgentCreate } from './server/hooks.js';
 import { registerLifecycle } from './server/lifecycle.js';
 import { registerRpcs } from './server/rpc.js';
 
@@ -29,7 +32,8 @@ export default function contribute(server: PluginServerContext): () => void {
     server.before('agent.create', async ({ request }, context) => {
       runtime.handle.supply(context.paseo);
       await runtime.ready;
-      return transformAgentCreate(request, runtime.hooks);
+      const decorated = transformAgentCreate(request, runtime.hooks);
+      return (await compactMarkOnCreate(decorated ?? request, runtime.compactMark)) ?? decorated;
     }),
     server.before('agent.session_open', async ({ request }, context) => {
       runtime.handle.supply(context.paseo);
@@ -38,40 +42,38 @@ export default function contribute(server: PluginServerContext): () => void {
       if (outcome === 'ambiguous' || outcome === 'provider-mismatch') {
         console.error(`[paseo-room-runtime] Correlation for agent ${request.agentId} is ${outcome}; it will not be trusted.`);
       }
-      return undefined;
+      return await compactMarkEnv(request, runtime.compactMark);
     }),
   ];
   registerRpcs(server, runtime);
-  // Room attention settings live in Paseo's host settings store. Without one (no settings
-  // directory), the runtime keeps the defaults and the settings screen says so.
-  try {
-    const settings = server.registerSettings(ATTENTION_SETTINGS);
-    runtime.attentionSettings.available = true;
-    const adopt = (state: Awaited<ReturnType<typeof settings.read>>): void => {
-      if (state.status === 'ready') runtime.attentionSettings.current = state.values;
-    };
-    settings.read().then(adopt, () => undefined);
-    const unsubscribe = settings.subscribe(adopt);
-    disposers.push(() => { void unsubscribe(); });
-  } catch (error) {
-    console.error(`[paseo-room-runtime] Room attention settings are unavailable; defaults apply: ${error instanceof Error ? error.message : String(error)}`);
-  }
-  // The Peer thinking envelope lives in the same store; without one, Peers keep their profile default.
-  try {
-    const effort = server.registerSettings(PEER_EFFORT_SETTINGS);
-    runtime.peerEffort.available = true;
-    const adopt = (state: Awaited<ReturnType<typeof effort.read>>): void => {
-      if (state.status !== 'ready') return;
-      runtime.adoptPeerEffort(state.values).catch((error: unknown) => {
-        console.error(`[paseo-room-runtime] The Lead tool list could not be rewritten: ${error instanceof Error ? error.message : String(error)}`);
-      });
-    };
-    effort.read().then(adopt, () => undefined);
-    const unsubscribe = effort.subscribe(adopt);
-    disposers.push(() => { void unsubscribe(); });
-  } catch (error) {
-    console.error(`[paseo-room-runtime] Peer effort settings are unavailable; profile defaults apply: ${error instanceof Error ? error.message : String(error)}`);
-  }
+  /**
+   * Keeps one settings document from Paseo's host settings store: read now, then again on every
+   * save. Returns the first read, or undefined when there is no store (no settings directory), in
+   * which case the runtime keeps the defaults and the settings screen says so.
+   */
+  const watch = <Schema extends ZodType>(definition: SettingsDefinition<Schema>, adopt: (values: ZodOutput<Schema>) => void, unavailable: string): Promise<void> | undefined => {
+    try {
+      const settings = server.registerSettings(definition);
+      const take = (state: Awaited<ReturnType<typeof settings.read>>): void => { if (state.status === 'ready') adopt(state.values); };
+      const read = settings.read().then(take, () => undefined);
+      const unsubscribe = settings.subscribe(take);
+      disposers.push(() => { void unsubscribe(); });
+      return read;
+    } catch (error) {
+      console.error(`[paseo-room-runtime] ${unavailable}: ${error instanceof Error ? error.message : String(error)}`);
+      return undefined;
+    }
+  };
+  runtime.attentionSettings.available = watch(ATTENTION_SETTINGS, values => { runtime.attentionSettings.current = values; },
+    'Room attention settings are unavailable; defaults apply') !== undefined;
+  runtime.peerEffort.available = watch(PEER_EFFORT_SETTINGS, values => {
+    runtime.adoptPeerEffort(values).catch((error: unknown) => {
+      console.error(`[paseo-room-runtime] The Lead tool list could not be rewritten: ${error instanceof Error ? error.message : String(error)}`);
+    });
+  }, 'Peer effort settings are unavailable; profile defaults apply') !== undefined;
+  // A seat created or resumed at daemon start waits for this first read rather than take the defaults.
+  runtime.seatContext.read = watch(SEAT_CONTEXT_SETTINGS, values => { runtime.seatContext.current = values; },
+    'Seat context settings are unavailable; defaults apply') ?? Promise.resolve();
   // A notice held for a recipient's pending permission is retried once that agent can take it.
   const retryHeld = (agentId: string): Promise<number> => runtime.controller.notices.retryFor(agentId);
   const { attention } = runtime;

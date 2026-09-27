@@ -42,6 +42,17 @@ export interface AgentSnapshot {
   readonly parentAgentId: string | null;
   /** The thinking option the agent runs with, for display only; null when Paseo reports none. */
   readonly thinking: string | null;
+  /**
+   * The context of the agent's latest model call, from Paseo's `lastUsage`; null when Paseo reports
+   * none. Never `cachedInputTokens`, which Paseo sums over a turn's calls (seat context delta K-D1).
+   */
+  readonly usage: SeatUsage | null;
+}
+
+/** Tokens in the context window and the window's size, as Paseo last reported them. */
+export interface SeatUsage {
+  readonly used: number;
+  readonly max: number;
 }
 
 /**
@@ -122,7 +133,7 @@ export type SendBehavior = 'steer' | 'interrupt';
 
 /** One timeline entry, reduced to what the runtime reads: never tool output or file content. */
 export interface TimelineEntry {
-  readonly kind: 'user' | 'assistant' | 'tool' | 'error' | 'other';
+  readonly kind: 'user' | 'assistant' | 'tool' | 'error' | 'compaction' | 'other';
   readonly text: string;
   readonly timestamp: string;
   readonly turnId?: string;
@@ -134,6 +145,8 @@ export interface TimelineEntry {
    * asked to be told when that agent finishes (Paseo's defaults for an agent caller: yes).
    */
   readonly prompts?: { readonly tool: 'send_agent_prompt' | 'create_agent'; readonly agentId?: string; readonly notified: boolean };
+  /** For a completed compaction: what triggered it and the context size before it, when Paseo says. */
+  readonly compaction?: { readonly trigger?: 'auto' | 'manual'; readonly preTokens?: number };
 }
 
 /** How Paseo launches a provider: its executable and the environment it sets. */
@@ -151,6 +164,8 @@ export interface PaseoPort {
   resolveLaunch(provider: string): Promise<PeerLaunch | undefined>;
   /** The thinking options Paseo lists for a provider's model; empty when it lists none. */
   thinkingOptions(provider: string, model: string): Promise<readonly ThinkingOption[]>;
+  /** The context window Paseo lists for a provider's model, in tokens; undefined when it lists none. */
+  modelWindow(provider: string, model: string): Promise<number | undefined>;
   /** The provider's configured executable and string environment, or undefined when it has none. */
   providerCommand(provider: string): Promise<ProviderCommand | undefined>;
   /** Creates an agent with no initial prompt; the first turn is always a separate `run`. */
@@ -254,10 +269,22 @@ export function toSnapshot(raw: RawSnapshot): AgentSnapshot {
     title: raw.title ?? null,
     parentAgentId: raw.labels[PARENT_AGENT_ID_LABEL] ?? null,
     thinking: raw.thinkingOptionId ?? raw.runtimeInfo?.thinkingOptionId ?? null,
+    usage: usageOf(raw.lastUsage),
   };
 }
 
-type RawTimelineItem = { readonly type: string; readonly text?: unknown; readonly message?: unknown; readonly messageId?: unknown; readonly clientMessageId?: unknown; readonly detail?: unknown; readonly name?: unknown };
+const positive = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value > 0;
+
+function usageOf(usage: RawSnapshot['lastUsage']): SeatUsage | null {
+  const used = usage?.contextWindowUsedTokens;
+  const max = usage?.contextWindowMaxTokens;
+  return positive(used) && positive(max) ? { used, max } : null;
+}
+
+type RawTimelineItem = {
+  readonly type: string; readonly text?: unknown; readonly message?: unknown; readonly messageId?: unknown; readonly clientMessageId?: unknown;
+  readonly detail?: unknown; readonly name?: unknown; readonly status?: unknown; readonly trigger?: unknown; readonly preTokens?: unknown;
+};
 
 const PROMPT_TOOL = /(?:^|__)(send_agent_prompt|create_agent)$/;
 
@@ -289,6 +316,14 @@ export function toTimelineEntry(item: RawTimelineItem, timestamp: string, turnId
     const writes = (detail?.type === 'edit' || detail?.type === 'write') && typeof detail.filePath === 'string' ? detail.filePath : undefined;
     const prompts = promptOf(item.name, item.detail);
     return { kind: 'tool', text: '', ...base, ...(writes === undefined ? {} : { writes }), ...(prompts === undefined ? {} : { prompts }) };
+  }
+  // Paseo shows a compaction as `loading` first; only the completed one happened.
+  if (item.type === 'compaction' && item.status === 'completed') {
+    const trigger = item.trigger === 'auto' || item.trigger === 'manual' ? item.trigger : undefined;
+    return {
+      kind: 'compaction', text: '', ...base,
+      compaction: { ...(trigger === undefined ? {} : { trigger }), ...(positive(item.preTokens) ? { preTokens: item.preTokens } : {}) },
+    };
   }
   return { kind: 'other', text: '', ...base };
 }
@@ -328,9 +363,41 @@ function identities(input: { readonly agentId?: string; readonly idempotencyKey?
   };
 }
 
+/** How long a provider's model list is reused. */
+const CATALOG_TTL_MS = 10 * 60_000;
+
+/** The fields of one model in a provider's list that the runtime reads. */
+interface CatalogModel {
+  readonly id: string;
+  readonly aliases?: readonly string[];
+  readonly isDefault?: boolean;
+  readonly contextWindowMaxTokens?: number;
+  readonly defaultThinkingOptionId?: string;
+  readonly thinkingOptions?: readonly { readonly id: string; readonly label?: string; readonly isDefault?: boolean }[];
+}
+
+/** A model in a provider's list by its id or one of its aliases. */
+function catalogEntry(models: readonly CatalogModel[], model: string): CatalogModel | undefined {
+  return models.find(candidate => candidate.id === model || candidate.aliases?.includes(model) === true);
+}
+
 /** The production port over the subprocess PaseoApi. */
 export function sdkPaseoPort(handle: PaseoHandle, waitMs = 10_000): PaseoPort {
   const api = (): Promise<PaseoApi> => handle.acquire(waitMs);
+  // Every create and resume reads a provider's model list, so one is kept per provider for a while,
+  // and concurrent readers, such as the seats resuming at daemon start, share its fetch.
+  const catalogs = new Map<string, { readonly at: number; readonly models: Promise<readonly CatalogModel[]> }>();
+  const catalog = (provider: string): Promise<readonly CatalogModel[]> => {
+    const known = catalogs.get(provider);
+    if (known !== undefined && Date.now() - known.at <= CATALOG_TTL_MS) return known.models;
+    const models = api().then(async paseo => ((await paseo.providers.listModels(provider)) as { models?: readonly CatalogModel[] }).models ?? []);
+    const entry = { at: Date.now(), models };
+    catalogs.set(provider, entry);
+    // A failed or empty answer is a failure to list, not a provider without models: it is not kept.
+    const forget = (): void => { if (catalogs.get(provider) === entry) catalogs.delete(provider); };
+    models.then(listed => { if (listed.length === 0) forget(); }, forget);
+    return models;
+  };
   return {
     async resolveLaunch(provider) {
       const paseo = await api();
@@ -346,20 +413,19 @@ export function sdkPaseoPort(handle: PaseoHandle, waitMs = 10_000): PaseoPort {
       };
       const chosen = text(profile?.model);
       if (chosen !== undefined) return { model: chosen, ...settings };
-      const listed = await paseo.providers.listModels(provider) as { models?: readonly { id: string; isDefault?: boolean }[] };
-      const fallback = listed.models?.find(model => model.isDefault === true)?.id;
+      const fallback = (await catalog(provider)).find(model => model.isDefault === true)?.id;
       return fallback === undefined ? undefined : { model: fallback, ...settings };
     },
     async thinkingOptions(provider, model) {
-      const paseo = await api();
-      const listed = await paseo.providers.listModels(provider) as {
-        models?: readonly { id: string; aliases?: readonly string[]; defaultThinkingOptionId?: string; thinkingOptions?: readonly { id: string; label?: string; isDefault?: boolean }[] }[];
-      };
-      const entry = listed.models?.find(candidate => candidate.id === model || candidate.aliases?.includes(model) === true);
+      const entry = catalogEntry(await catalog(provider), model);
       return (entry?.thinkingOptions ?? []).map(option => ({
         id: option.id, label: option.label ?? option.id,
         ...(option.id === entry?.defaultThinkingOptionId || option.isDefault === true ? { isDefault: true } : {}),
       }));
+    },
+    async modelWindow(provider, model) {
+      const tokens = catalogEntry(await catalog(provider), model)?.contextWindowMaxTokens;
+      return positive(tokens) ? tokens : undefined;
     },
     async providerCommand(provider) {
       const paseo = await api();

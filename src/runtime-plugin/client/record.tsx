@@ -9,6 +9,7 @@ import { Text, View } from 'react-native';
 import { idempotencyKey, unwrap, usePolled, useRuntimeRpcs } from './data.js';
 import { ConfirmModal } from './forms.js';
 import { Button, Callout, Card, Empty, Facts, Glyph, Loading, Pill, Row, SPACE, SectionLabel, type Theme, type Tone } from './kit.js';
+import { sentence } from './model.js';
 
 interface Claim { readonly value: string; readonly evidence: string }
 interface Finding { readonly kind: string; readonly message: string; readonly recoveryAction: string; readonly evidence: string }
@@ -44,7 +45,7 @@ const FINDING_LABEL: Readonly<Record<string, string>> = {
   'awaiting-permission': 'A Peer waits for a permission', 'uncertain-effect': 'An action\'s outcome is uncertain', 'notice-failed': 'A notice was not delivered',
   'scope-exceeded': 'Changes outside the write scope', 'worktree-retained': 'Worktree kept with unrecorded work', 'worktree-cleanup': 'Worktree directory left behind',
 };
-const findingLabel = (kind: string): string => FINDING_LABEL[kind] ?? `${kind.charAt(0).toUpperCase()}${kind.slice(1).replace(/-/g, ' ')}`;
+const findingLabel = (kind: string): string => FINDING_LABEL[kind] ?? sentence(kind.replace(/-/g, ' '));
 const FINISHED = ['accepted', 'rejected', 'abandoned'];
 const SHOWN_FINISHED = 5;
 

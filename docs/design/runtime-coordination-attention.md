@@ -220,6 +220,7 @@ fire from absence.
 | `peer-report` | a Peer's turn ended with outcome `completed` | candidate → triage (shadow only in v1) | Supervisor digest |
 | `peer-orphaned` | a Peer idles `orphanHours` (24) after its Lead was archived | digest | Supervisor |
 | `project-quiet` | the sensor recorded Lead's last turn as `continuing` (§6.4) and no seat of the project has run since, for `quietHours` (4) | now (backstop for a sensor `record`) | Supervisor |
+| `context-high` | a live Lead's context reaches its rotation mark (30%), per the [seat context delta](runtime-coordination-seat-context.md) K-D6; it closes below the mark or on archive | digest | Supervisor |
 
 `writers-observed` is an observation (D8 evidence class `observed`), not proof: a tool call shows an
 intent to write, not the resulting tree, so it is `now` rather than a page. It exists because the
@@ -654,6 +655,7 @@ files under `runtime/v1/attention` stay until `remove --apply`.
 
 | Date | Author | Change |
 |---|---|---|
+| 2026-09-26 | Bytes | §5 gains `context-high` from the [seat context delta](runtime-coordination-seat-context.md) K-D6. An open incident whose evidence is unchanged now takes the condition's current text, so a figure in it (a wait, a context size) stays current without counting a repeat. |
 | 2026-09-25 | Bytes | Code review of the field-report fixes: a marker line goes even for a turn the Supervisor prompted, since Paseo reports only the last message; incidents come first and are never cut to 240 characters or crowded out; formatted empty templates and numbered, heading and code prefixes are read correctly; a restated marker is relayed once; only digest items are superseded (§6.1a). `room_status` keeps listing decided assignments that still have a Peer to close, and its observed map is the portfolio's alone (§9.4). `writers-observed` states when each turn ended as a time, not an age that goes stale in a held letter; `assignment_create` and worktree dispatch check the base in the repository's common Git directory, not in the checkout that first opened the project, which may be a worktree removed since. |
 | 2026-09-24 | Repository owner / Bytes | Lead marker lines (§6.1a), chosen by the owner over sensor assist from the same field report: the Lead contract gains "Human Questions and Incidents", an `INCIDENT` line pages and a `NEEDS-HUMAN` line wakes the Supervisor, quoted instead of the message tail. This amends §1's exclusion of Lead contract changes for this one section; it adds a reporting duty to Lead and grants no authority. Supervisor and Peer contracts and every tool list are unchanged. |
 | 2026-09-24 | Bytes | Fixes from a Supervisor's field report: `room_status` and `runtime_findings` keep to the portfolio and the Supervisor's own project, and `room_status` lists only open assignments (§9.4); a turn without a message is no longer reported with an earlier turn's (§4); `writers-observed` counts only writes inside the working directory and names the files (§5); `attention_feedback` accepts a letter's id (§9.4). |
