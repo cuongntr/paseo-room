@@ -1,7 +1,7 @@
 /**
  * The tool lists each bridge advertises (docs/design/runtime-coordination.md §3.4).
  *
- * Registries are disjoint by construction: Supervisor sees four tools, Lead twelve, and a Peer
+ * Registries are disjoint by construction: Supervisor sees eight tools, Lead twelve, and a Peer
  * exactly `ask` and `handoff`, with the one handoff detail shape for its bound work kind. The
  * advertised JSON Schemas are for the model's benefit only; the server validates every call
  * strictly and never trusts that a client respected them.
@@ -29,6 +29,10 @@ const DESCRIPTIONS: Readonly<Record<string, string>> = {
   runtime_findings: 'List the conditions the runtime has detected in your portfolio that need attention, with evidence and a recovery action, and the open attention incidents addressed to you.',
   message_lead: 'Send one message to the Lead that owns a project in your portfolio. Name the project (its name or id) when you supervise more than one.',
   attention_feedback: 'Rate a runtime attention letter item by its item id, or every item of a letter by the letter\'s own id: useful, noise or unknown. It tunes what reaches you; it is not an instruction to anyone.',
+  lead_replace_start: 'Replace the Lead of a project whose Supervisor you are, once the runtime reports it past its context rotation mark. The runtime refuses a Lead below its mark, a busy one, and one with open assignments, running seats or undelivered notices. Otherwise it asks the Lead for a handoff; a letter tells you when the handoff arrives or fails.',
+  lead_replace_status: 'Read a Lead replacement you started: its step, and the handoff once it has arrived.',
+  lead_replace_confirm: 'Confirm a Lead replacement you started, after checking its handoff against the repository: the runtime archives the Lead and the seats Paseo archives with it, starts a successor under you, and gives it the handoff. Pass handoff to give your corrected text instead. Call it again to finish one that stopped.',
+  lead_replace_cancel: 'Cancel a Lead replacement you started. Before the archive the Lead stays as it is; tell it to continue.',
   assignment_create: 'Create a typed assignment in your current project. It is not dispatched yet.',
   assignment_dispatch: 'Dispatch a draft assignment to a new Peer on an eligible room Peer provider. isolation "worktree" asks the runtime for the Peer\'s own worktree, so it may run beside other isolated writers; the runtime refuses it when scopes overlap, a serial-only path or a writer in your workspace collides, or the cap is reached, and that refusal is final for this dispatch. Scope checks prevent collisions; they do not contain the Peer.',
   assignment_answer: 'Answer a Peer question, or follow up on a blocked handback, with a new Peer turn.',
@@ -38,7 +42,7 @@ const DESCRIPTIONS: Readonly<Record<string, string>> = {
   assignment_abandon: 'Abandon an assignment.',
   assignment_close: 'Close a decided assignment by archiving its Peer. Your workspace is not closed.',
   assignment_status: `Read one assignment, or all of yours. By default the brief you wrote is left out (its outcome stays), history keeps its latest ${String(LEAN_HISTORY)} entries, and a decided assignment with nothing left to close, its worktree included, is one line. full: true returns every assignment whole.`,
-  gate_run: 'Run the assignment\'s exact gate command independently against the handed-back candidate. It runs in the background, and a notice tells you when it ends; you need not wait or poll.',
+  gate_run: 'Run the assignment\'s exact gate command independently against the handed-back candidate. It runs in the background, and a notice tells you when it ends, once your current turn is over; you need not wait or poll.',
   workspace_close: 'Close the worktree of a closed isolated assignment that the runtime retained. discardUncommitted with a reason destroys its uncommitted work; the branch is kept.',
   lease_reclaim: 'Reclaim an isolated assignment\'s worktree after its Peer is proven archived, and dispatch a new Peer into it at the next lease epoch.',
   ask: 'Ask Lead a blocking question about your current assignment. Your turn should end after this call.',

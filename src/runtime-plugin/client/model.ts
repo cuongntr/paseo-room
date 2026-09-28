@@ -27,6 +27,8 @@ export interface RuntimeRecord { readonly projectId: string; readonly health: st
 export interface SuccessionSummary {
   readonly id: string; readonly step: string; readonly fromAgentId: string; readonly fromTitle: string | null;
   readonly canFinish: boolean; readonly canCancel: boolean; readonly failure?: { readonly code: string; readonly message: string };
+  /** A Supervisor started it at the Lead's rotation mark and reviews the handoff (seat context delta K-D9). */
+  readonly startedBy?: 'supervisor';
 }
 
 export interface ProjectView {
@@ -180,16 +182,20 @@ export const ROLE_ICON: Readonly<Record<string, string>> = { supervisor: 'Eye', 
 
 // ── Lead replacement (seat context delta K-D5, §8.3) ─────────────────────────────────────────────
 
-/** Whether a replacement waits on Human: a handoff to review, a successor to finish, or a failure to see. */
+/**
+ * Whether a replacement waits on Human: a handoff to review, a successor to finish, or a failure to
+ * see. A Supervisor reviews the handoff of a replacement it started.
+ */
 export const waitsOnHuman = (succession: SuccessionSummary | undefined): boolean =>
-  succession !== undefined && (succession.step === 'received' || succession.step === 'failed' || succession.canFinish);
+  succession !== undefined && ((succession.step === 'received' && succession.startedBy !== 'supervisor') || succession.step === 'failed' || succession.canFinish);
 
 /** Where a replacement stands, as the project screen says it. */
 export function successionHeadline(succession: SuccessionSummary): string {
   const from = succession.fromTitle ?? 'the Lead';
+  const bySupervisor = succession.startedBy === 'supervisor';
   switch (succession.step) {
-    case 'requested': return `Replacing ${from}: it is writing its handoff`;
-    case 'received': return `Replacing ${from}: its handoff is ready for your review`;
+    case 'requested': return `${bySupervisor ? 'The Supervisor is replacing' : 'Replacing'} ${from}: it is writing its handoff`;
+    case 'received': return bySupervisor ? `The Supervisor is replacing ${from}: it reviews the handoff` : `Replacing ${from}: its handoff is ready for your review`;
     case 'archived': return `${sentence(from)} is archived; its successor is not started yet`;
     case 'created': return `${sentence(from)} is archived; its successor has not received the handoff yet`;
     case 'failed': return `Replacing ${from} failed`;

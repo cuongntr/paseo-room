@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { loadPromptAsset } from '../src/room/prompts.js';
 import { DEFAULT_ATTENTION_SETTINGS, type AttentionSettings } from '../src/runtime-plugin/shared/attention.js';
 import { MAX_HANDOFF_BYTES } from '../src/runtime-plugin/shared/limits.js';
-import { DEFAULT_SEAT_CONTEXT_SETTINGS } from '../src/runtime-plugin/shared/seat-context.js';
+import { DEFAULT_SEAT_CONTEXT_SETTINGS, type SeatContextSettings } from '../src/runtime-plugin/shared/seat-context.js';
 import { AttentionEngine } from '../src/runtime-plugin/server/attention/engine.js';
 import { SeatStarter } from '../src/runtime-plugin/server/attention/seat-starter.js';
 import { controllerLedger, handoffReply, Succession } from '../src/runtime-plugin/server/attention/succession.js';
@@ -27,16 +27,18 @@ let settings: AttentionSettings;
 let engine: AttentionEngine;
 let store: SuccessionStore;
 let succession: Succession;
+let context: SeatContextSettings;
 
 const make = (text: typeof TEXT | null = TEXT): Succession => new Succession({
   paseo: h.paseo, attention: engine, ledger: controllerLedger(h.controller), store, text: text ?? undefined,
   starter: new SeatStarter({ paseo: h.paseo, git: h.controller.deps.git, recognition: h.controller.deps.recognition, attention: engine }),
-  contextSettings: () => DEFAULT_SEAT_CONTEXT_SETTINGS, now: () => clock,
+  contextSettings: () => context, now: () => clock,
 });
 
 beforeEach(async () => {
   h = await harness();
   clock = new Date('2026-09-27T08:00:00.000Z');
+  context = DEFAULT_SEAT_CONTEXT_SETTINGS;
   settings = { ...DEFAULT_ATTENTION_SETTINGS, delivery: { ...DEFAULT_ATTENTION_SETTINGS.delivery, envelopeGraceSeconds: 0 } };
   const desk = join(h.root, 'desk');
   await mkdir(desk);
@@ -436,6 +438,76 @@ describe('complete', () => {
     const reloaded = make();
     expect((await reloaded.status(id))).toMatchObject({ ok: true, value: { step: 'received', handoff: '# Handoff\n\nAll verified.' } });
     expect((await reloaded.complete(id, '# Handoff')).ok).toBe(true);
+  });
+});
+
+describe('a Supervisor replacing its Lead (K-D9)', () => {
+  const projectKey = () => join(h.repo, '.git');
+  /** The Lead's context as Paseo reports it, read afresh by the room. */
+  const usedPercent = async (percent: number): Promise<void> => {
+    agent('lead-1').usage = { used: percent * 10_000, max: 1_000_000 };
+    await engine.resync(['lead-1']);
+  };
+  /** What reached the Supervisor, sent or still held for it. */
+  const told = (): string => [...agent('sup').prompts.map(prompt => prompt.text), ...engine.delivery.held('sup').map(item => item.line)].join('\n');
+  async function startedBySupervisor(note?: string): Promise<string> {
+    await usedPercent(45);
+    const result = await succession.startForSupervisor('sup', projectKey(), note);
+    if (!result.ok) throw new Error(`${result.code}: ${result.message}`);
+    return result.value.successionId;
+  }
+
+  it('starts only for the project\'s own Supervisor, and only for a Lead past its rotation mark', async () => {
+    await usedPercent(29);
+    expect(await succession.startForSupervisor('sup', projectKey())).toMatchObject({ ok: false, code: 'rotation_not_reached' });
+    await usedPercent(45);
+    expect(await succession.startForSupervisor('another-sup', projectKey())).toMatchObject({ ok: false, code: 'unauthorized' });
+    context = { ...context, budgets: { ...context.budgets, lead: { ...context.budgets.lead, rotateAtPercent: null } } };
+    expect(await succession.startForSupervisor('sup', projectKey())).toMatchObject({ ok: false, code: 'rotation_off' });
+    expect(agent('lead-1').prompts).toEqual([]);
+
+    context = DEFAULT_SEAT_CONTEXT_SETTINGS;
+    const id = await startedBySupervisor('Keep the chart finding.');
+    expect(agent('lead-1').prompts.at(-1)?.text).toBe(`[paseo-room succession ${id}]\n\n${TEXT.request}\n\nSupervisor's note: Keep the chart finding.`);
+    expect(await succession.startedBy(id, 'sup')).toBe(true);
+    expect(await succession.startedBy(id, 'another-sup')).toBe(false);
+    expect(await succession.summaries()).toEqual([expect.objectContaining({ id, step: 'requested', startedBy: 'supervisor' })]);
+  });
+
+  it('still waits for a quiet point', async () => {
+    await usedPercent(45);
+    agent('lead-1').status = 'running';
+    agent('lead-1').activeTurn = true;
+    expect(await succession.startForSupervisor('sup', projectKey())).toMatchObject({ ok: false, code: 'lead_busy' });
+  });
+
+  it('tells the Supervisor the handoff arrived, and confirms it as it arrived', async () => {
+    const id = await startedBySupervisor();
+    h.paseo.reply('lead-1', ['# Handoff\n\nChecked against Git.']);
+    await succession.onTurnEnded('lead-1');
+    expect(told()).toContain(`repo · Lead replacement ${id}: the handoff of repo — Lead (lead-1) arrived, `);
+    const done = await succession.complete(id);
+    if (!done.ok) throw new Error(`${done.code}: ${done.message}`);
+    const successor = agent(done.value.successorAgentId);
+    expect(successor.labels[PARENT_AGENT_ID_LABEL]).toBe('sup');
+    expect(successor.prompts[0]?.text).toContain('----- handoff from repo — Lead (lead-1) -----\n\n# Handoff\n\nChecked against Git.\n\n----- end of handoff -----');
+    expect(agent('lead-1').archivedAt).not.toBeNull();
+  });
+
+  it('tells the Supervisor when no usable handoff arrives', async () => {
+    const id = await startedBySupervisor();
+    h.paseo.reply('lead-1', ['']);
+    await succession.onTurnEnded('lead-1');
+    expect(told()).toContain(`repo · Lead replacement ${id} failed: The Lead answered without a handoff; ask again.`);
+  });
+
+  it('leaves a replacement Human started to Human', async () => {
+    const id = await started();
+    expect(await succession.startedBy(id, 'sup')).toBe(false);
+    expect((await succession.summaries())[0]).not.toHaveProperty('startedBy');
+    h.paseo.reply('lead-1', ['# Handoff']);
+    await succession.onTurnEnded('lead-1');
+    expect(told()).not.toContain('Lead replacement');
   });
 });
 

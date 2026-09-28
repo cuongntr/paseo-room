@@ -170,7 +170,9 @@ Succession is a lifecycle decision. It is the Human's:
 - Supervisor must "never open another Lead for freshness or convenience".
 
 In this delta the runtime therefore only **suggests** (K-D6) and **executes the Human's
-instruction** (K-D5). Automatic succession is phase K4 and needs its own approval.
+instruction** (K-D5). Automatic succession is phase K4 and needs its own approval. Amended
+2026-09-28 by K-D9: Human delegates one case, a Lead past its rotation mark, to the project's
+Supervisor, which starts and reviews the same flow.
 
 ### K-D5 — The succession protocol
 One Human action, *Replace Lead*, runs a guarded sequence in which each step is recorded before the
@@ -260,7 +262,8 @@ Incidents live in memory, as for every attention signal, so a runtime restart re
 past its mark once more.
 `rotateAtPercent: null` turns the signal off; *Replace Lead* stays available either way, since it is
 the Human's action, not a response to the signal. A
-Supervisor may relay the line to Human; its contract gives it no authority to act on it. Supervisors
+Supervisor may relay the line to Human, and since 2026-09-28 may act on it through K-D9; turning the
+mark off withdraws that too. Supervisors
 are never subjects: their context shows on the panel only. The Supervisor line was decided on Q-K02,
 because the Human talks to the Supervisor more than to the panel.
 
@@ -285,6 +288,36 @@ Lead wrote the brief and has it in context. `assignment_status` returns, by defa
 `full: true` returns today's answer: the whole brief and the whole history. The median answer falls
 from about 10.7 KB to an estimated 3 KB. This changes a consumed Lead tool contract, but not its
 schema version: the fields kept are unchanged. The tool description states the default.
+
+### K-D9 — A Supervisor replaces its Lead at the rotation mark
+Added 2026-09-28, after the first week of live use. The Supervisor of cmdb replaced its Lead five
+times in 23 hours, each time on the Human's standing approval, and did it by hand:
+- it asked each Lead for a handoff committed into the product repository (`docs/handoff/`, five
+  files and 388 lines by the fifth);
+- it archived the Lead and created the successor with Paseo's `archive_agent` and `create_agent`,
+  outside the K-D5 checks;
+- it re-archived three predecessors that Paseo's app had loaded for history and `list_agents` then
+  showed as live.
+
+It respected the quiet point every time, and the ledger shows no orphaned assignment or notice.
+But none of that was enforced, and the handoffs left this machine's control. K-D9 gives the
+Supervisor the guarded flow instead:
+- **Who and when.** Only the project's own Supervisor (A-D3), and only for its single live Lead
+  once that Lead's context, read afresh from Paseo, is at or past its rotation mark. Below the
+  mark the runtime refuses `rotation_not_reached`; with the mark off, `rotation_off`. Any other
+  reason to replace a Lead remains Human's, so "never open another Lead for freshness or
+  convenience" still holds.
+- **Same flow.** K-D5 unchanged: the preflight's quiet point, the fixed request, the handoff stored
+  locally (K-D7), the archive, the successor under the same Supervisor and the kickoff. The record
+  names its initiator. The request's note is labelled as the Supervisor's.
+- **Review.** The Supervisor reviews the handoff instead of Human. When it arrives or fails, the
+  runtime tells the Supervisor at level `now`, even with letters off, since it answers that seat's
+  own request and the Supervisor must not poll. The Supervisor reads it with `lead_replace_status`
+  and checks it against the repository. It confirms with `lead_replace_confirm`, optionally with
+  corrected text, or cancels. A Supervisor sees and decides only replacements it started.
+- **Human stays in view.** The panel shows a replacement a Supervisor started, which Human may
+  cancel, and finish once it has stopped. The Supervisor tells Human which Lead now owns the
+  project. The prompts of §6 name "Human or your Supervisor" instead of Human alone.
 
 ## 3. Architecture
 
@@ -388,6 +421,16 @@ with the project's root and the preselected Supervisor.
 | `runtime.succession-complete` | `{ successionId, handoff }` | Steps 4–7, or the rest of them after a stop. |
 | `runtime.succession-cancel` | `{ successionId }` | Until it completes; dismisses a failed one. |
 
+K-D9 gives the Supervisor four room tools over the same flow. Each reads only a replacement that
+Supervisor started; any other answers `succession_unknown`.
+
+| Tool | Input | Effect |
+|---|---|---|
+| `lead_replace_start` | `{ project?, note? }` | Refuses `unauthorized`, `lead_unavailable`, `lead_ambiguous`, `rotation_off`, `rotation_not_reached` or any preflight blocker; otherwise steps 1–2. |
+| `lead_replace_status` | `{ successionId }` | As `runtime.succession-status`. |
+| `lead_replace_confirm` | `{ successionId, handoff? }` | Steps 4–7, with `handoff` or, omitted, the one that arrived. |
+| `lead_replace_cancel` | `{ successionId }` | As `runtime.succession-cancel`. |
+
 ### 5.3 Settings `context`, version 1
 In the host settings store, beside `attention` and `peer-effort`:
 
@@ -441,6 +484,9 @@ It says:
 
 It grants nothing.
 
+Since K-D9 the request says the replacement is Human's or, at a seat's rotation mark, the
+Supervisor's, and that whoever started it reviews the handoff.
+
 ### 6.2 Successor kickoff
 The Start project kickoff (attention §8.2), then:
 - "Your predecessor <title> (<id>) handed over; its handoff follows verbatim";
@@ -453,7 +499,7 @@ The Start project kickoff (attention §8.2), then:
     handoff's recorded Human decisions allow.
 
 The Lead contract is unchanged. The successor's authority comes from its contract and the Human
-decisions the handoff quotes, which the Human reviewed in step 3.
+decisions the handoff quotes, which the Human, or under K-D9 the Supervisor, reviewed in step 3.
 
 ## 7. Compaction resilience — options, evaluated, not committed
 
@@ -591,7 +637,9 @@ cure.
   The D4 row, [runtime-panel-ux.md](runtime-panel-ux.md) and the PRD are amended as each phase lands:
   D4 and the panel doc with K1 and K2, and the PRD on approval (§12).
 - **Unchanged:**
-  - Supervisor's row; it may relay `context-high` to Human;
+  - Supervisor's row, until K-D9; it may relay `context-high` to Human. Since 2026-09-28 it may also
+    replace a Lead past its rotation mark through the runtime (K-D9), and `supervisor.md` gains a
+    *Lead Succession* section saying so and nothing wider;
   - Lead's row;
   - Peer's row.
 - **Contracts:** `lead.md`, `supervisor.md` and `peer.md` are unchanged in K1–K2. Human-initiated
@@ -666,6 +714,7 @@ cure.
 |---|---|---|
 | K1 | Context visibility, `context-high`, settings, Claude compact mark, lean `assignment_status`, Start Lead on the project screen | Lead 30/50, Supervisor and Peer off |
 | K2 | Replace Lead: the K-D5 state machine, RPCs, modal, handoff storage | available to the Human; suggested at the rotate mark |
+| K2S | K-D9: the project's Supervisor runs K2 for a Lead past its rotation mark | on while the Lead rotate mark is on |
 | K3 | One resilience option chosen from §7 by the evidence of §11.3 | off until chosen |
 | K4 | Automatic succession at a quiet point, if ever | requires its own approval |
 
@@ -690,6 +739,7 @@ cure.
 
 | Date | Author | Change |
 |---|---|---|
+| 2026-09-28 | Repository owner / Bytes | Added K-D9 and phase K2S, approved by the repository owner after the live audit of 2026-09-28. The Supervisor had rotated the cmdb Lead five times by hand, with handoffs committed into the repository. A project's Supervisor may now run the K-D5 flow for its Lead once the runtime reports it past its rotation mark, and reviews the handoff itself. It is told when the handoff arrives, and sees only replacements it started. K-D4, K-D6, §5.2, §6, §10 and §13 amended; `supervisor.md` gains *Lead Succession*; the handoff request and kickoff name Human or the Supervisor. **Authority granted to Supervisor:** that one replacement, nothing else. |
 | 2026-09-27 | Bytes | Code review of K2:<br>• a successor that cannot take its kickoff no longer strands the project: cancel is accepted until completion, and a successor archived first is refused as `successor_gone`;<br>• a timeline that could not be read no longer fails a handoff, since only Paseo's answer that the request is absent does; the read covers 1,000 entries;<br>• a handoff request steered into a running turn is also kept out of letters and the sensor;<br>• a failed replacement stays on its project for a day;<br>• the runtime archives the seats it showed as archived with the Lead, since Paseo cascades nothing from a Lead that is not loaded;<br>• a room that could not be read afresh refuses as `paseo_unavailable`;<br>• turn ends no longer wait on the succession lane, nor does the room view;<br>• a kickoff whose delivery Paseo cannot confirm is not resent. |
 | 2026-09-27 | Bytes | Fresh-eyes review of K2. §8.2: *Replace Lead…* sits in the Seats header, since pressing a row opens its agent. At confirmation, a Lead that Human archived in Paseo after reading its handoff counts as archived. An unreadable succession record is skipped instead of failing the room view. |
 | 2026-09-27 | Bytes | K2 implemented per the [K2 plan](../plans/runtime-coordination-seat-context-k2-implementation-plan.md) (WP-S1–WP-S7), with the three refinements the owner approved: K-D3's exemption for a Lead asked for its handoff, K-D5 step 4 following Paseo's archive cascade instead of an `archiveDescendants` option, and step 7's cancel while no successor exists. Details the plan left open: the request is recorded before it is sent, so the exemption holds when it resumes the Lead; the preflight and each step after the archive read every seat afresh; the successor carries a `paseo-room.succession` label; handoffs live beside their records under `attention/successions/`; §5.2 lists every refusal code. |

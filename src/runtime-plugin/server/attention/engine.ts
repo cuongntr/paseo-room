@@ -18,6 +18,7 @@ import { AttentionLog } from './log.js';
 import { head, mask, tail } from './mask.js';
 import { Observer, type Seat, type TurnFacts } from './observer.js';
 import { Portfolio, type Resolution } from './portfolio.js';
+import type { LedgerReader } from './succession.js';
 import { age, conditions, seatLabel, type Condition, type Level, type SignalKind } from './signals.js';
 import { BASELINE, MAX_MARKER_TEXT, assistLeadTurn, markedLeadTurn, type Assessment, type Decision, type LeadTurnFacts, type Marker, type Triaged } from './triage.js';
 
@@ -88,6 +89,8 @@ export interface EngineDependencies {
   readonly log?: (message: string) => void;
   /** Whether Paseo's handle has arrived; the sweep waits for it rather than failing every pass. */
   readonly ready?: () => boolean;
+  /** The runtime ledger's open assignments of a Lead; a letter omits them when not supplied. */
+  readonly ledger?: LedgerReader;
 }
 
 interface PendingLeadTurn {
@@ -413,23 +416,39 @@ export class AttentionEngine {
     }
     this.delivery.enqueue(supervisor, {
       id: pending.id, level,
-      line: `${project.name} · ${seatLabel(lead)} ended a turn (${pending.turn.outcome})${said}`,
+      line: `${project.name} · ${seatLabel(lead)} ended a turn (${pending.turn.outcome}; ${await this.runningNow(lead, facts)})${said}`,
       createdAt: pending.turn.endedAt,
     });
   }
 
   /**
-   * Tells a project's Supervisor one fact at digest level, such as a Lead replaced (seat context
-   * delta K-D5): a one-off item, not a condition, so it opens no incident.
+   * What a Lead left running when its turn ended, counted in code: a Lead that says it will go on
+   * with nothing running and nothing open has stopped, which its own words do not show.
    */
-  told(projectKey: string, line: string): Promise<unknown> {
+  private async runningNow(lead: Seat, facts: LeadTurnFacts): Promise<string> {
+    const peers = facts.peersRunning === 0 ? 'no Peer running' : `${String(facts.peersRunning)} Peer${facts.peersRunning === 1 ? '' : 's'} running`;
+    // A project with no runtime ledger has no assignments to count, rather than none open.
+    const reader = this.deps.ledger;
+    const counted = reader !== undefined && (await this.ledgerProjects()).has(lead.project.key);
+    const ledger = counted ? await reader(lead.project.key, lead.agentId).catch(() => undefined) : undefined;
+    if (ledger === undefined || ledger.unreadable !== undefined) return peers;
+    const open = ledger.open.length;
+    return `${peers}, ${open === 0 ? 'no assignment open' : `${String(open)} assignment${open === 1 ? '' : 's'} open`}`;
+  }
+
+  /**
+   * Tells a project's Supervisor one fact at digest level, such as a Lead replaced (seat context
+   * delta K-D5): a one-off item, not a condition, so it opens no incident. Addressed to a named
+   * Supervisor, it answers that seat's own request (K-D9) and goes even with letters turned off.
+   */
+  told(projectKey: string, line: string, options: { readonly level?: 'digest' | 'now'; readonly recipient?: string } = {}): Promise<unknown> {
     return this.run(async () => {
       await this.ensureStarted();
-      const recipient = this.supervisorOf(projectKey).supervisorAgentId;
-      if (recipient === undefined || !this.deps.settings().letters.enabled) return;
+      const recipient = options.recipient ?? this.supervisorOf(projectKey).supervisorAgentId;
+      if (recipient === undefined || (options.recipient === undefined && !this.deps.settings().letters.enabled)) return;
       const id = letterId();
       this.remember(id, { recipient, projectKey, kind: 'fact' });
-      this.delivery.enqueue(recipient, { id, level: 'digest', line: `${this.projectName(projectKey)} · ${mask(line)}`, createdAt: this.time });
+      this.delivery.enqueue(recipient, { id, level: options.level ?? 'digest', line: `${this.projectName(projectKey)} · ${mask(line)}`, createdAt: this.time });
       await this.delivery.pump();
     });
   }

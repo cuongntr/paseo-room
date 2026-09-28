@@ -4,8 +4,9 @@
  * One Human action replaces a project Lead: a preflight at a quiet point, a handoff the Lead writes
  * on request and Human reviews, the Lead's archive, a successor created as Start project creates
  * one, and a kickoff carrying the handoff verbatim. Each step is recorded and every Paseo effect
- * repeats safely, so a retried call or a reload resumes where the flow stopped. Only Human starts
- * one; the runtime suggests nothing here and prompts no seat but the two it replaces.
+ * repeats safely, so a retried call or a reload resumes where the flow stopped. Human starts one,
+ * or the project's Supervisor does for a Lead past its rotation mark (K-D9), and then reviews the
+ * handoff itself; the runtime suggests nothing here and prompts no seat but the two it replaces.
  *
  * It runs on its own lane, never inside the attention lane: the archive and the creation raise the
  * lifecycle events that lane processes. What Paseo's before hooks ask of it — whether a Lead is
@@ -15,7 +16,7 @@
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { MAX_HANDOFF_BYTES, utf8Bytes } from '../../shared/limits.js';
-import { compactMarkFor, contextPercent, type SeatContextSettings } from '../../shared/seat-context.js';
+import { compactMarkFor, contextPercent, rotateMark, type SeatContextSettings } from '../../shared/seat-context.js';
 import type { Controller } from '../controller.js';
 import { settled } from '../domain/state.js';
 import { quietlySettled } from '../domain/views.js';
@@ -27,7 +28,9 @@ import type { LogRecord } from './log.js';
 import { SUCCESSION_PREFIX, type Seat } from './observer.js';
 import { kickoffFacts, type SeatStarter, type StartResult } from './seat-starter.js';
 import { seatName } from './signals.js';
-import { successionId, TERMINAL_STEPS, type SuccessionReason, type SuccessionRecord, type SuccessionStep, type SuccessionStore } from './succession-store.js';
+import {
+  successionId, TERMINAL_STEPS, type SuccessionInitiator, type SuccessionReason, type SuccessionRecord, type SuccessionStep, type SuccessionStore,
+} from './succession-store.js';
 
 /**
  * Timeline entries read back to find the handoff turn. Paseo collapses each tool call and merges a
@@ -135,6 +138,8 @@ export interface SuccessionSummary {
   readonly fromTitle: string | null;
   readonly canFinish: boolean;
   readonly canCancel: boolean;
+  /** Present when a Supervisor started it and reviews the handoff (K-D9). */
+  readonly startedBy?: 'supervisor';
   readonly failure?: { readonly code: string; readonly message: string };
 }
 
@@ -321,7 +326,7 @@ export class Succession {
   // ── Request and handoff ──────────────────────────────────────────────────────────────────────
 
   /** Steps 1–2: refuses on any blocker, else records the succession and asks the Lead for its handoff. */
-  start(input: { readonly leadAgentId: string; readonly reason: SuccessionReason; readonly note?: string | undefined }): Promise<StartResult<{ readonly successionId: string }>> {
+  start(input: { readonly leadAgentId: string; readonly reason: SuccessionReason; readonly note?: string | undefined; readonly initiator?: SuccessionInitiator }): Promise<StartResult<{ readonly successionId: string }>> {
     return this.serial(async () => {
       const checked = await this.check(input.leadAgentId);
       if (!checked.ok) return checked;
@@ -334,10 +339,12 @@ export class Succession {
       const record = await this.save({
         schema: 1, id: successionId(), projectKey: found.project.key, root: found.project.root, name: found.project.name,
         fromAgentId: found.lead.agentId, fromTitle: found.lead.title, provider: found.lead.provider, supervisorAgentId: found.supervisor?.agentId ?? null,
-        reason: input.reason, ...(note === undefined || note === '' ? {} : { note }), step: 'requested', createdAt: at, updatedAt: at,
+        reason: input.reason, initiator: input.initiator ?? { role: 'human' }, ...(note === undefined || note === '' ? {} : { note }),
+        step: 'requested', createdAt: at, updatedAt: at,
       });
       await this.log('succession.started', record);
-      const request = [`${SUCCESSION_PREFIX}${record.id}]`, this.deps.text?.request ?? '', ...(record.note === undefined ? [] : [`Human's note: ${record.note}`])].join('\n\n');
+      const noted = record.initiator?.role === 'supervisor' ? 'Supervisor\'s note' : 'Human\'s note';
+      const request = [`${SUCCESSION_PREFIX}${record.id}]`, this.deps.text?.request ?? '', ...(record.note === undefined ? [] : [`${noted}: ${record.note}`])].join('\n\n');
       try {
         // Steered, never interrupting: a turn begun since the preflight is not cancelled.
         await this.deps.paseo.send(record.fromAgentId, request, requestId(record.id), 'steer');
@@ -352,8 +359,56 @@ export class Succession {
     });
   }
 
-  /** Reads the handoff once the Lead's request turn has ended; a record past `requested` is returned as it is. */
+  /**
+   * K-D9: the project's own Supervisor replaces its Lead, and only a Lead past its rotation mark —
+   * never for freshness or convenience, which stays Human's decision. Everything after the start is
+   * K-D5's, with the Supervisor as reviewer.
+   */
+  async startForSupervisor(supervisorAgentId: string, projectKey: string, note?: string): Promise<StartResult<{ readonly successionId: string; readonly leadAgentId: string }>> {
+    const attention = this.deps.attention;
+    // The mark is judged on the context Paseo reports now, not on the last sweep's figure.
+    if (!await attention.resync()) return refuse('paseo_unavailable', 'Paseo could not be read, so the Lead\'s context is unknown; try again.');
+    if (attention.supervisorOf(projectKey).supervisorAgentId !== supervisorAgentId) {
+      return refuse('unauthorized', 'Only the project\'s own Supervisor replaces its Lead.');
+    }
+    const leads = attention.observer.live(projectKey, 'lead');
+    const [lead] = leads;
+    if (leads.length !== 1 || lead === undefined) {
+      return refuse(leads.length === 0 ? 'lead_unavailable' : 'lead_ambiguous', leads.length === 0 ? 'No live Lead runs this project.' : 'More than one Lead is live on this project; Human resolves that first.');
+    }
+    const mark = rotateMark(this.deps.contextSettings(), 'lead');
+    if (mark === null) return refuse('rotation_off', 'Lead rotation is turned off in Settings › Room seats, so only Human replaces a Lead.');
+    const percent = lead.usage === null ? null : contextPercent(lead.usage.used, lead.usage.max);
+    if (percent === null || percent < mark) {
+      return refuse('rotation_not_reached', `${seatName(lead)} is ${percent === null ? 'at an unknown share of its context' : `at ${String(percent)}% of its context`}, not past its ${String(mark)}% rotation mark; replacing it earlier is Human's decision.`);
+    }
+    const started = await this.start({ leadAgentId: lead.agentId, reason: 'context', note, initiator: { role: 'supervisor', agentId: supervisorAgentId } });
+    return started.ok ? { ok: true, value: { successionId: started.value.successionId, leadAgentId: lead.agentId } } : started;
+  }
+
+  /** Whether `supervisorAgentId` started replacement `id`; every other one is unknown to it. */
+  async startedBy(id: string, supervisorAgentId: string): Promise<boolean> {
+    const initiator = (await this.records()).get(id)?.initiator;
+    return initiator?.role === 'supervisor' && initiator.agentId === supervisorAgentId;
+  }
+
+  /**
+   * Reads the handoff once the Lead's request turn has ended; a record past `requested` is returned
+   * as it is. A Supervisor that started the replacement is told when the handoff arrives or fails,
+   * since it reviews the handoff and must not poll for it (K-D9).
+   */
   private async collect(record: SuccessionRecord): Promise<SuccessionRecord> {
+    const next = await this.read(record);
+    if (next.step !== record.step && record.initiator?.role === 'supervisor') {
+      const line = next.step === 'received'
+        ? `Lead replacement ${next.id}: the handoff of ${next.fromTitle ?? 'the Lead'} (${next.fromAgentId}) arrived, ${kb(next.receivedBytes ?? 0)}.`
+        : `Lead replacement ${next.id} failed: ${next.failure?.message ?? 'no usable handoff arrived.'}`;
+      await this.deps.attention.told(next.projectKey, line, { level: 'now', recipient: record.initiator.agentId }).catch(() => undefined);
+    }
+    return next;
+  }
+
+  private async read(record: SuccessionRecord): Promise<SuccessionRecord> {
     if (record.step !== 'requested') return record;
     const lead = await this.deps.paseo.getAgent(record.fromAgentId).catch(() => null);
     if (lead === null) return record;
@@ -445,14 +500,18 @@ export class Succession {
     return shown.map(record => ({
       id: record.id, step: record.step, projectKey: record.projectKey, name: record.name, root: record.root, fromAgentId: record.fromAgentId, fromTitle: record.fromTitle,
       canFinish: record.step === 'archived' || record.step === 'created', canCancel: record.step !== 'completed',
+      ...(record.initiator?.role === 'supervisor' ? { startedBy: 'supervisor' as const } : {}),
       ...(record.failure === undefined ? {} : { failure: record.failure }),
     }));
   }
 
   // ── Complete and cancel ──────────────────────────────────────────────────────────────────────
 
-  /** Steps 4–7, resumed after whichever step was last recorded, with the handoff as Human reviewed it. */
-  complete(id: string, handoff: string): Promise<StartResult<{ readonly successorAgentId: string }>> {
+  /**
+   * Steps 4–7, resumed after whichever step was last recorded, with the handoff as its reviewer left
+   * it; omitted, the handoff as it arrived.
+   */
+  complete(id: string, handoff?: string): Promise<StartResult<{ readonly successorAgentId: string }>> {
     return this.serial(async () => {
       const known = (await this.records()).get(id);
       if (known === undefined) return refuse('succession_unknown', `No Lead replacement ${id} is known.`);
@@ -460,13 +519,13 @@ export class Succession {
       if (record.step === 'completed' && record.toAgentId !== undefined) return { ok: true, value: { successorAgentId: record.toAgentId } };
       if (record.step === 'requested') return refuse('step_conflict', 'The Lead has not finished writing its handoff.');
       if (record.step === 'cancelled' || record.step === 'failed') return refuse('step_conflict', `This replacement was ${record.step}; start a new one.`);
-      const text = handoff.trim();
+      const text = (handoff ?? await this.deps.store.readHandoff(record.id) ?? '').trim();
       if (text === '') return refuse('handoff_empty', 'The handoff is empty.');
       if (utf8Bytes(text) > MAX_HANDOFF_BYTES) return refuse('handoff_too_large', `The handoff is ${kb(utf8Bytes(text))}, over the ${kb(MAX_HANDOFF_BYTES)} bound.`);
       const attention = this.deps.attention;
       let archivedWith: string[] = [];
       try {
-        // Until it is delivered, the stored handoff is the one Human last reviewed.
+        // Until it is delivered, the stored handoff is the one its reviewer last left.
         if (record.step !== 'created') await this.deps.store.writeHandoff(record.id, text);
         if (record.step === 'received') {
           const archived = await this.archiveLead(record);

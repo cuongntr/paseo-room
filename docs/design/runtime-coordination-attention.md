@@ -360,22 +360,28 @@ unrelayed Lead turn, never a page.
 ### 7.4 Letter format and receipts
 One line per item: `[paseo-room attention <id>] <project> · <seat> · <signal or outcome> · <age> —
 <masked excerpt ≤ 240 chars>`, plus the agent ids involved; a Lead turn with marker lines quotes
-those instead (§6.1a). There is no advice and no model text beyond the excerpt. Details come from
+those instead (§6.1a). A Lead turn's outcome also states, from code, what the Lead left running: its
+Peers running or waiting on a permission (Observer), and its open assignments (runtime ledger, when the
+project has one), e.g. `ended a turn (completed; no Peer running, no assignment open)`. There is no advice and no model text beyond the excerpt. Details come from
 `room_status` and `get_agent_activity`. The letter id doubles as the `messageId`, and a retry checks
 `promptDelivered` first, as for Phase 1 notices; given to `attention_feedback`, it rates every item
 of the letter.
 
 **Steering** (change-003 D-4, D-5). Claude, Codex, Pi and mock accept a steer, except while Claude is
 compacting, running a slash command or switching streams. In those cases Paseo replaces — interrupts
-— the turn. A page accepts that rare cost; a `now` letter and a digest never do, because they wait
-for idle. Nothing is ever sent while the recipient holds a permission: a send denies it.
+— the turn. A page accepts that cost; a `now` letter and a digest never do, because they wait for
+idle. Nothing is ever sent while the recipient holds a permission: a send denies it. The cost is not
+rare: in the first week of live use, 16 of 248 notices to running Claude Leads cancelled the turn.
 
 **Existing notices.** Phase 1–2 `Notices.deliver` calls `paseo.run()` with no `activeTurnBehavior`,
 so it interrupts a busy Lead or Supervisor and clears its pending permissions (A-D4). This affects
 `message_lead`, owner notices and pages already. The fix, part of phase O1: a notice is sent with
 `steer`, so a running recipient receives it inside its turn; a recipient holding a pending permission
 is not sent to at all — the notice stays pending and is retried on that agent's next
-`permission_resolved` or `turn_ended`. Paseo's typed client omits `activeTurnBehavior` from
+`permission_resolved` or `turn_ended`. Amended 2026-09-28: only a Supervisor message (`message_lead`)
+and a page steer into a running turn. Every other owner notice is the runtime's own fact, such as a
+handback, a Peer question or a gate's end, and it waits like a `now` letter: held while the recipient
+has an active turn, and sent when that turn ends. Paseo's typed client omits `activeTurnBehavior` from
 `PaseoAgentSendOptions`, but `agents.ref(id).send` passes its options to the daemon client unchanged
 (`C/index.js`), whose `SendMessageOptions` carries it; qualification Q-3 confirms the effect.
 
@@ -655,6 +661,8 @@ files under `runtime/v1/attention` stay until `remove --apply`.
 
 | Date | Author | Change |
 |---|---|---|
+| 2026-09-28 | Repository owner / Bytes | §7.4: a Lead turn's letter line states what the Lead left running, counted in code: its running Peers and its open runtime assignments. A Lead in live use said it would dispatch next and stopped with nothing running; the excerpt read as progress, and the Human noticed before the Supervisor did. Facts only; no advice, and the sensor's inputs are unchanged. |
+| 2026-09-28 | Repository owner / Bytes | §7.4: the runtime's own owner notices wait for the recipient's turn to end; only `message_lead` and pages steer into a running turn. Live use showed a steer to a running Claude Lead cancelling its turn in 16 of 248 notices, once cutting a Lead off mid-merge, and the Supervisor could not tell who had stopped it. |
 | 2026-09-26 | Bytes | §5 gains `context-high` from the [seat context delta](runtime-coordination-seat-context.md) K-D6. An open incident whose evidence is unchanged now takes the condition's current text, so a figure in it (a wait, a context size) stays current without counting a repeat. |
 | 2026-09-25 | Bytes | Code review of the field-report fixes: a marker line goes even for a turn the Supervisor prompted, since Paseo reports only the last message; incidents come first and are never cut to 240 characters or crowded out; formatted empty templates and numbered, heading and code prefixes are read correctly; a restated marker is relayed once; only digest items are superseded (§6.1a). `room_status` keeps listing decided assignments that still have a Peer to close, and its observed map is the portfolio's alone (§9.4). `writers-observed` states when each turn ended as a time, not an age that goes stale in a held letter; `assignment_create` and worktree dispatch check the base in the repository's common Git directory, not in the checkout that first opened the project, which may be a worktree removed since. |
 | 2026-09-24 | Repository owner / Bytes | Lead marker lines (§6.1a), chosen by the owner over sensor assist from the same field report: the Lead contract gains "Human Questions and Incidents", an `INCIDENT` line pages and a `NEEDS-HUMAN` line wakes the Supervisor, quoted instead of the message tail. This amends §1's exclusion of Lead contract changes for this one section; it adds a reporting duty to Lead and grants no authority. Supervisor and Peer contracts and every tool list are unchanged. |

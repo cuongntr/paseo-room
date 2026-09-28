@@ -62,6 +62,7 @@ describe('notices', () => {
     expect(h.paseo.agents.get('lead-1')?.prompts.filter(prompt => prompt.messageId === noticeId)).toHaveLength(1);
 
     // Lost response: delivered but unconfirmed. Retry finds it in the timeline and does not resend.
+    h.paseo.endTurn('lead-1');
     h.paseo.faults.set('send', { when: 'after' });
     h.paseo.timelineOverride = 'unknown';
     const second = await h.controller.notices.notify(await loaded(h), { kind: 'k', class: 'owner', disposition: 'lead-now', text: 'Again', recipient: { agentId: 'lead-1', role: 'lead' } });
@@ -74,13 +75,34 @@ describe('notices', () => {
 });
 
 describe('notice delivery never interrupts (attention delta §7.4)', () => {
-  it('steers into a running recipient instead of cancelling its turn', async () => {
+  it('holds a runtime notice while the recipient\'s turn runs, and delivers it when the turn ends', async () => {
     const h = await room();
     const lead = h.paseo.agents.get('lead-1');
     if (lead === undefined) throw new Error('no lead');
     lead.status = 'running';
     lead.activeTurn = true;
-    const noticeId = await h.controller.notices.notify(await loaded(h), { kind: 'k', class: 'owner', disposition: 'lead-now', text: 'While you work', recipient: { agentId: 'lead-1', role: 'lead' } });
+    // A steer Paseo cannot hand to the running turn replaces it, so the runtime's own facts wait.
+    const noticeId = await h.controller.notices.notify(await loaded(h), { kind: 'gate-ended', class: 'owner', disposition: 'lead-now', text: 'The gate passed', recipient: { agentId: 'lead-1', role: 'lead' } });
+    expect((await loaded(h)).state.notices.get(noticeId)?.state).toBe('pending');
+    expect(lead.prompts).toEqual([]);
+
+    expect(await h.controller.notices.retryFor('lead-1')).toBe(1);
+    expect(lead.prompts).toEqual([]);
+
+    h.paseo.endTurn('lead-1');
+    await h.controller.notices.retryFor('lead-1');
+    expect(lead.prompts).toEqual([expect.objectContaining({ messageId: noticeId, behavior: 'steer' })]);
+    expect(lead.interrupted).toBe(0);
+    expect((await loaded(h)).state.notices.get(noticeId)?.state).toBe('sent');
+  });
+
+  it('steers a Supervisor message into a running turn, as a person\'s directive may not wait', async () => {
+    const h = await room();
+    const lead = h.paseo.agents.get('lead-1');
+    if (lead === undefined) throw new Error('no lead');
+    lead.status = 'running';
+    lead.activeTurn = true;
+    const noticeId = await h.controller.notices.notify(await loaded(h), { kind: 'supervisor-message', class: 'owner', disposition: 'lead-now', text: 'Supervisor: stop', recipient: { agentId: 'lead-1', role: 'lead' } });
     expect(lead.interrupted).toBe(0);
     expect(lead.prompts.at(-1)).toMatchObject({ messageId: noticeId, behavior: 'steer' });
     expect((await loaded(h)).state.notices.get(noticeId)?.state).toBe('sent');

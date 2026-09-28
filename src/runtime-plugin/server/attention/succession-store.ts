@@ -33,6 +33,11 @@ const recordSchema = z.object({
   provider: z.string().min(1),
   supervisorAgentId: z.string().min(1).nullable(),
   reason: z.enum(SUCCESSION_REASONS),
+  /** Who asked for it; absent on a record made before K-D9, which only Human could start. */
+  initiator: z.discriminatedUnion('role', [
+    z.object({ role: z.literal('human') }),
+    z.object({ role: z.literal('supervisor'), agentId: z.string().min(1) }),
+  ]).optional(),
   note: z.string().optional(),
   step: z.enum(SUCCESSION_STEPS),
   toAgentId: z.string().min(1).optional(),
@@ -43,6 +48,7 @@ const recordSchema = z.object({
 });
 
 export type SuccessionRecord = Readonly<z.infer<typeof recordSchema>>;
+export type SuccessionInitiator = NonNullable<SuccessionRecord['initiator']>;
 
 export function successionId(): string {
   return `suc_${randomBytes(12).toString('base64url')}`;

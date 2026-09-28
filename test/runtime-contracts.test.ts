@@ -156,7 +156,7 @@ describe('Phase 2 Lead action contracts', () => {
 
   it('adds the two operations to Lead only, leaving Supervisor and Peer unchanged', () => {
     expect(LEAD_OPERATIONS.slice(-2)).toEqual(['workspace_close', 'lease_reclaim']);
-    expect(SUPERVISOR_OPERATIONS).toEqual(['room_status', 'runtime_findings', 'message_lead', 'attention_feedback']);
+    expect(SUPERVISOR_OPERATIONS).toEqual(['room_status', 'runtime_findings', 'message_lead', 'attention_feedback', 'lead_replace_start', 'lead_replace_status', 'lead_replace_confirm', 'lead_replace_cancel']);
     expect(PEER_REPORTING_TOOLS).toEqual(['ask', 'handoff']);
   });
 });

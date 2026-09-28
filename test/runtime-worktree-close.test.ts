@@ -104,6 +104,9 @@ describe('closing worktrees', () => {
     await finish(h, s, 'abandon', async () => { await writeFile(join(s.worktree, 'scratch.txt'), 'unsaved'); });
     const retained = await ledger(h);
     expect(retained.state.workspaces.get(s.id)?.close).toBe('open');
+    // The handback started a Lead turn; the retained notice waits for it to end.
+    h.paseo.endTurn('lead-1');
+    await h.controller.notices.retryFor('lead-1');
     expect(h.paseo.agents.get('lead-1')?.prompts.at(-1)?.text).toContain('was retained: it has uncommitted changes');
     expect(await h.controller.workspaceClose(h.lead, { assignmentId: s.id })).toMatchObject({ ok: false, code: 'workspace_retained' });
     expect(await h.controller.workspaceClose(h.lead, { assignmentId: s.id, discardUncommitted: true })).toMatchObject({ ok: false, code: 'reason_missing' });
@@ -121,6 +124,8 @@ describe('closing worktrees', () => {
     const s = await seat(h);
     await finish(h, s, 'abandon', async () => { await commit(s.worktree, 'src/late.ts'); });
     expect((await ledger(h)).state.workspaces.get(s.id)?.close).toBe('open');
+    h.paseo.endTurn('lead-1');
+    await h.controller.notices.retryFor('lead-1');
     expect(h.paseo.agents.get('lead-1')?.prompts.at(-1)?.text).toContain('commits no handoff recorded');
   });
 

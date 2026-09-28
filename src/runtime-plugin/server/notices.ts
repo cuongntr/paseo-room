@@ -7,10 +7,13 @@
  * text; delivery is at least once, a retry reuses the id, and a retry first checks the
  * recipient's timeline so a confirmed delivery is not sent twice.
  *
- * A notice never interrupts (docs/design/runtime-coordination-attention.md §7.4): it is sent with
- * `steer`, so a running recipient receives it inside its turn. Paseo clears every pending
- * permission of an agent it sends to, so a recipient holding one is not sent to at all: the notice
- * stays pending and `retryFor` delivers it when that permission resolves or the turn ends.
+ * A notice is sent with `steer` (docs/design/runtime-coordination-attention.md §7.4), but Paseo
+ * replaces — interrupts — a turn whose provider cannot take the steer, and a running Claude Lead
+ * could not take about one in sixteen in live use. So only a notice that carries a person's
+ * directive, a Supervisor message, or a page is sent into a running turn; the runtime's own facts
+ * wait until the recipient's turn has ended. Paseo also clears every pending permission of an agent
+ * it sends to, so a recipient holding one is not sent to at all. A held notice stays pending, and
+ * `retryFor` delivers it when that permission resolves or the turn ends.
  */
 import { randomBytes } from 'node:crypto';
 import type { Controller, LoadedProject } from './controller.js';
@@ -30,6 +33,11 @@ export interface NoticeRequest {
 }
 
 const plugin = { source: 'plugin' as const };
+
+/** Whether a notice waits for its recipient's turn to end rather than steer into it. */
+export function waitsForIdle(kind: string, noticeClass: NoticeClass): boolean {
+  return noticeClass === 'owner' && kind !== 'supervisor-message';
+}
 
 export function noticeText(noticeId: string, text: string): string {
   return `[paseo-room notice ${noticeId}] ${text}`;
@@ -55,12 +63,12 @@ export class Notices {
       await this.controller.append(loaded, { type: 'notice.sent', payloadVersion: 1, actor: plugin, data: { noticeId } });
       return noticeId;
     }
-    await this.deliver(loaded, noticeId, recipient.agentId, request.text);
+    await this.deliver(loaded, noticeId, recipient.agentId, request.text, waitsForIdle(request.kind, request.class));
     return noticeId;
   }
 
   /** Recorded first, so a failure here leaves a notice to retry rather than none at all. */
-  private async deliver(loaded: LoadedProject, noticeId: string, agentId: string, text: string): Promise<void> {
+  private async deliver(loaded: LoadedProject, noticeId: string, agentId: string, text: string, idleOnly: boolean): Promise<void> {
     try {
       const target = await this.controller.deps.paseo.getAgent(agentId);
       if (this.controller.deps.recognition.recognize(target?.provider ?? '')?.role === 'peer') {
@@ -69,6 +77,8 @@ export class Notices {
       }
       // Sending would clear the recipient's pending permission: hold, and retry when it resolves.
       if (target !== undefined && target.pendingPermissions.length > 0) return;
+      // Sending could interrupt the running turn: hold, and retry when it ends.
+      if (target !== undefined && idleOnly && (target.activeTurn || target.status === 'running')) return;
     } catch (error) {
       const reason = error instanceof Error ? error.message.slice(0, 1_000) || 'unknown' : 'unknown';
       await this.controller.append(loaded, { type: 'notice.uncertain', payloadVersion: 1, actor: plugin, data: { noticeId, reason } });
@@ -104,7 +114,7 @@ export class Notices {
         await this.controller.append(loaded, { type: 'notice.sent', payloadVersion: 1, actor: plugin, data: { noticeId: notice.noticeId } });
         continue;
       }
-      await this.deliver(loaded, notice.noticeId, agentId, event.data.text);
+      await this.deliver(loaded, notice.noticeId, agentId, event.data.text, waitsForIdle(event.data.kind, event.data.class));
       retried += 1;
     }
     return retried;

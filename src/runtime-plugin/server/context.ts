@@ -88,6 +88,7 @@ export function createRuntimeContext(location: RoomLocation, nodePath = process.
   const attention = new AttentionEngine({
     paseo: controller.deps.paseo, recognition, git: controller.deps.git, runtimeRoot: location.runtimeRoot,
     now, settings: () => attentionSettings.current, contextSettings: () => seatContext.current, sensor, ready: () => handle.available,
+    ledger: controllerLedger(controller),
   });
   controller.supervisorFor = gitCommonDir => attention.supervisorOf(gitCommonDir).supervisorAgentId;
   const succession = new Succession({
@@ -95,7 +96,7 @@ export function createRuntimeContext(location: RoomLocation, nodePath = process.
     starter: new SeatStarter({ paseo: controller.deps.paseo, git: controller.deps.git, recognition, attention }), contextSettings: () => seatContext.current, now,
   });
   const registries = {
-    supervisor: createSupervisorHandlers(controller, attention),
+    supervisor: createSupervisorHandlers(controller, attention, succession),
     lead: createLeadHandlers(controller),
     peer: { ...createPeerHandlers(controller) },
   };

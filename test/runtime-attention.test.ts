@@ -12,6 +12,7 @@ import { leadMarkers } from '../src/runtime-plugin/server/attention/triage.js';
 import { rolePills } from '../src/runtime-plugin/client/pills.js';
 import { GitEvidence } from '../src/runtime-plugin/server/git.js';
 import { Recognition } from '../src/runtime-plugin/server/recognition.js';
+import { ProjectStore } from '../src/runtime-plugin/server/store/project.js';
 import { FakePaseo, PARENT_AGENT_ID_LABEL } from './runtime-fake-paseo.js';
 
 let root: string;
@@ -168,7 +169,7 @@ describe('attention signals and letters', () => {
     expect(letters()).toHaveLength(1);
     const text = letters()[0]?.text ?? '';
     expect(text).toContain('1 item(s) from your portfolio');
-    expect(text).toContain('shop · lead shop — Lead (lead) ended a turn (completed): "Deployed v1.2 to dev. Token=[secret] was rotated."');
+    expect(text).toContain('shop · lead shop — Lead (lead) ended a turn (completed; no Peer running): "Deployed v1.2 to dev. Token=[secret] was rotated."');
     expect(text).not.toContain('abc123secretvalue');
 
     // The Supervisor prompted the Lead itself: Paseo reports that turn to it, so nothing is relayed.
@@ -215,6 +216,36 @@ describe('attention signals and letters', () => {
     expect(letters()[0]?.text).not.toContain('"step 2"');
   });
 
+  it('says what the Lead left running: its Peers, and its open assignments when the ledger is read', async () => {
+    engine.dispose();
+    let open: string[] = [];
+    // A runtime project for the repository: the ledger is read only for a project that has one.
+    await ProjectStore.create(runtimeRoot, await new GitEvidence().identity(repo));
+    const recognition = new Recognition(join(root, 'plugin'));
+    await recognition.load();
+    engine = new AttentionEngine({
+      paseo, recognition, git: new GitEvidence(), runtimeRoot, now: () => clock, settings: () => settings, log: () => undefined,
+      ledger: (projectKey, leadAgentId) => {
+        expect([projectKey, leadAgentId]).toEqual([join(repo, '.git'), 'lead']);
+        return Promise.resolve({ open, notices: 0, retained: 0 });
+      },
+    });
+    await settle();
+    // Says it will go on, with nothing running and nothing open: stopped, which its words hide.
+    await engine.onTurnEnded('lead', { kind: 'completed' }, [{ type: 'assistant_message', text: 'I will dispatch step 1 next.' }]);
+    advance(16 * MINUTE);
+    await settle();
+    expect(letters().at(-1)?.text).toContain('ended a turn (completed; no Peer running, no assignment open): "I will dispatch step 1 next."');
+
+    await setIdle('sup');
+    await setBusy('peer');
+    open = ['asg_1', 'asg_2'];
+    await engine.onTurnEnded('lead', { kind: 'completed' }, [{ type: 'assistant_message', text: 'Step 1 is with the Engineer.' }]);
+    advance(16 * MINUTE);
+    await settle();
+    expect(letters().at(-1)?.text).toContain('ended a turn (completed; 1 Peer running, 2 assignments open): "Step 1 is with the Engineer."');
+  });
+
   it('never reports an earlier turn\'s message for a turn that ended without one', async () => {
     await settle();
     await engine.onTurnEnded('lead', { kind: 'completed' }, [{ type: 'assistant_message', text: 'Waiting for the Human to choose Q-a.' }]);
@@ -224,7 +255,7 @@ describe('attention signals and letters', () => {
     advance(16 * MINUTE);
     await settle();
     expect(letters()).toHaveLength(1);
-    expect(letters()[0]?.text).toContain('ended a turn (canceled): (no message in this turn)');
+    expect(letters()[0]?.text).toContain('ended a turn (canceled; no Peer running): (no message in this turn)');
     expect(letters()[0]?.text).not.toContain('Q-a.');
   });
 
@@ -306,7 +337,7 @@ describe('attention signals and letters', () => {
     await settle();
     expect(letters()).toHaveLength(1);
     expect(letters()[0]?.behavior).toBe('steer');
-    expect(letters()[0]?.text).toContain('ended a turn (completed) — INCIDENT: "the review Peer ran docker volume prune -f on the whole machine; volumes of xcmdb-db are gone."');
+    expect(letters()[0]?.text).toContain('ended a turn (completed; no Peer running) — INCIDENT: "the review Peer ran docker volume prune -f on the whole machine; volumes of xcmdb-db are gone."');
     expect(letters()[0]?.text).not.toContain('Waiting for gate');
   });
 

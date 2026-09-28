@@ -13,7 +13,11 @@ export type RuntimeRole = (typeof RUNTIME_ROLES)[number];
 export const RUNTIME_AGENTS = ['codex', 'claude', 'pi'] as const;
 export type RuntimeAgent = (typeof RUNTIME_AGENTS)[number];
 
-export const SUPERVISOR_OPERATIONS = ['room_status', 'runtime_findings', 'message_lead', 'attention_feedback'] as const;
+export const SUPERVISOR_OPERATIONS = [
+  'room_status', 'runtime_findings', 'message_lead', 'attention_feedback',
+  // Replacing a portfolio Lead past its rotation mark (seat context delta K-D9).
+  'lead_replace_start', 'lead_replace_status', 'lead_replace_confirm', 'lead_replace_cancel',
+] as const;
 export const LEAD_OPERATIONS = [
   'assignment_create', 'assignment_dispatch', 'assignment_answer', 'assignment_rework',
   'assignment_accept', 'assignment_reject', 'assignment_abandon', 'assignment_close',

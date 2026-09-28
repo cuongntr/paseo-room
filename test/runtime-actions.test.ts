@@ -4,6 +4,10 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { DEFAULT_ATTENTION_SETTINGS } from '../src/runtime-plugin/shared/attention.js';
 import { AttentionEngine } from '../src/runtime-plugin/server/attention/engine.js';
+import { SeatStarter } from '../src/runtime-plugin/server/attention/seat-starter.js';
+import { controllerLedger, Succession } from '../src/runtime-plugin/server/attention/succession.js';
+import { SuccessionStore } from '../src/runtime-plugin/server/attention/succession-store.js';
+import { DEFAULT_SEAT_CONTEXT_SETTINGS } from '../src/runtime-plugin/shared/seat-context.js';
 import { createLeadHandlers, createSupervisorHandlers } from '../src/runtime-plugin/server/handlers/actions.js';
 import type { AssignmentView, ProjectState, WorkspaceRecord } from '../src/runtime-plugin/server/domain/state.js';
 import {
@@ -202,8 +206,10 @@ describe('Supervisor action handlers', () => {
     h.paseo.addAgent({ id: 'lead-2', provider: 'claude-lead', cwd: h.repo });
     expect(body(await supervisor.message_lead?.(request(supervisorCorrelation, 'message_lead', { message: 'x' }), { kind: 'action', role: 'supervisor' }) ?? { ok: false, result: {} }))
       .toMatchObject({ error: { code: 'lead_ambiguous' } });
-    // Supervisor holds no handler that changes an assignment.
-    expect(Object.keys(supervisor).sort()).toEqual(['attention_feedback', 'message_lead', 'room_status', 'runtime_findings']);
+    // Supervisor holds no handler that changes an assignment; replacing a Lead is its one lifecycle action.
+    expect(Object.keys(supervisor).sort()).toEqual([
+      'attention_feedback', 'lead_replace_cancel', 'lead_replace_confirm', 'lead_replace_start', 'lead_replace_status', 'message_lead', 'room_status', 'runtime_findings',
+    ]);
   });
 });
 
@@ -280,6 +286,32 @@ describe('Supervisor portfolio (attention delta §9.4)', () => {
     const status = await call(supervisor, bystander, 'room_status', {});
     expect(status.projects).toHaveLength(1);
     expect(status.observed).toEqual([]);
+  });
+
+  it('replaces a portfolio Lead past its rotation mark, and leaves the replacement to the Supervisor that started it', async () => {
+    const { h, attention, correlation, stranger } = await portfolioRoom();
+    const succession = new Succession({
+      paseo: h.paseo, attention, ledger: controllerLedger(h.controller), store: SuccessionStore.at(h.runtimeRoot), text: { request: 'Hand over.', kickoff: 'Take over.' },
+      starter: new SeatStarter({ paseo: h.paseo, git: h.controller.deps.git, recognition: h.controller.deps.recognition, attention }),
+      contextSettings: () => DEFAULT_SEAT_CONTEXT_SETTINGS, now: () => new Date(),
+    });
+    const supervisor = createSupervisorHandlers(h.controller, attention, succession);
+    expect(await call(createSupervisorHandlers(h.controller, attention), correlation, 'lead_replace_start', { project: 'billing' })).toMatchObject({ error: { code: 'succession_unavailable' } });
+    expect(await call(supervisor, correlation, 'lead_replace_start', { project: 'billing' })).toMatchObject({ error: { code: 'rotation_not_reached' } });
+    const lead = h.paseo.agents.get('lead-b');
+    if (lead === undefined) throw new Error('no lead-b');
+    lead.usage = { used: 400_000, max: 1_000_000 };
+    expect(await call(supervisor, stranger, 'lead_replace_start', { project: 'billing' })).toMatchObject({ error: { code: 'project_unknown' } });
+    const started = await call(supervisor, correlation, 'lead_replace_start', { project: 'billing', note: 'Name the open MR.' });
+    expect(started).toMatchObject({ successionId: expect.stringMatching(/^suc_/) as unknown, leadAgentId: 'lead-b' });
+    const successionId = started.successionId as string;
+    expect(lead.prompts.at(-1)?.text).toContain('Supervisor\'s note: Name the open MR.');
+    expect(await call(supervisor, stranger, 'lead_replace_status', { successionId })).toMatchObject({ error: { code: 'succession_unknown' } });
+    expect(await call(supervisor, correlation, 'lead_replace_status', { successionId })).toMatchObject({ succession: { id: successionId, step: 'requested' } });
+    expect(await call(supervisor, stranger, 'lead_replace_confirm', { successionId })).toMatchObject({ error: { code: 'succession_unknown' } });
+    expect(await call(supervisor, correlation, 'lead_replace_confirm', { successionId })).toMatchObject({ error: { code: 'step_conflict' } });
+    expect(await call(supervisor, stranger, 'lead_replace_cancel', { successionId })).toMatchObject({ error: { code: 'succession_unknown' } });
+    expect(await call(supervisor, correlation, 'lead_replace_cancel', { successionId })).toMatchObject({ cancelled: true });
   });
 
   it('rates only the caller\'s own attention items', async () => {

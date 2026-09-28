@@ -4,13 +4,16 @@
  * The caller is established from the correlation's durable association and corroborated by a
  * fresh Paseo snapshot of that exact agent — never from tool input. Lead's operations go through
  * the controller; Supervisor observes status, findings and attention incidents for its portfolio,
- * may route one message to a portfolio project's Lead and rate attention items, but cannot
+ * may route one message to a portfolio project's Lead, rate attention items, and replace a Lead
+ * past its rotation mark through the succession flow (seat context delta K-D9), but cannot
  * transition any assignment.
  */
 import { existsSync } from 'node:fs';
 import { z } from 'zod';
 import type { AttentionEngine } from '../attention/engine.js';
 import type { Project } from '../attention/observer.js';
+import type { StartResult } from '../attention/seat-starter.js';
+import type { Succession } from '../attention/succession.js';
 import { LEAD_ACTION_SCHEMAS, SUPERVISOR_ACTION_SCHEMAS } from '../contracts/actions.js';
 import type { BridgeRequestV1 } from '../contracts/envelope.js';
 import type { Caller, Controller, ControllerResult } from '../controller.js';
@@ -24,6 +27,9 @@ import { ProjectStore } from '../store/project.js';
 
 const failure = (code: string, message: string, retryable = false): HandlerReply => ({ ok: false, result: { schema: 1, error: { code, message: message.slice(0, 1_000), retryable } } });
 const success = (value: unknown): HandlerReply => ({ ok: true, result: { schema: 1, ...(value as object) } });
+const replacementUnavailable = failure('succession_unavailable', 'Lead replacement is not available in this runtime.');
+/** A replacement Human, or another Supervisor, started is not this Supervisor's to read or decide. */
+const notYours = (id: string): HandlerReply => failure('succession_unknown', `You started no Lead replacement ${id}.`);
 
 function fromResult<T>(result: ControllerResult<T>): HandlerReply {
   return result.ok ? success(result.value) : failure(result.code, result.message, result.retryable);
@@ -127,12 +133,12 @@ async function supervisorProjects(attention: AttentionEngine, caller: Caller): P
 }
 
 /** A project the calling Supervisor may address: in its portfolio, or the project it stands in. */
-async function projectFor(controller: Controller, attention: AttentionEngine, caller: Caller, named: string | undefined): Promise<{ readonly root: string } | HandlerReply> {
+async function projectFor(controller: Controller, attention: AttentionEngine, caller: Caller, named: string | undefined): Promise<Pick<Project, 'root' | 'key'> | HandlerReply> {
   const { allowed, own } = await supervisorProjects(attention, caller);
   if (named === undefined) {
-    if (own !== undefined) return { root: own.root };
+    if (own !== undefined) return own;
     const [only] = allowed;
-    if (allowed.length === 1 && only !== undefined) return { root: only.root };
+    if (allowed.length === 1 && only !== undefined) return only;
     return failure('project_required', allowed.length === 0
       ? 'No project is in your portfolio and you do not stand in one.'
       : `Name the project: ${allowed.map(project => project.name).join(', ')}.`);
@@ -143,13 +149,17 @@ async function projectFor(controller: Controller, attention: AttentionEngine, ca
   const match = allowed.filter(project => project.key === named || project.root === named || project.name.toLowerCase() === wanted
     || byId?.meta.gitCommonDir === project.key);
   const [found] = match;
-  if (match.length === 1 && found !== undefined) return { root: found.root };
+  if (match.length === 1 && found !== undefined) return found;
   return failure(match.length === 0 ? 'project_unknown' : 'project_ambiguous', match.length === 0
     ? `No project named ${named} is in your portfolio.`
     : `${named} names more than one project; use its id.`);
 }
 
-export function createSupervisorHandlers(controller: Controller, attention: AttentionEngine): Record<string, OperationHandler> {
+function fromStart<T>(result: StartResult<T>): HandlerReply {
+  return result.ok ? success(result.value) : failure(result.code, result.message);
+}
+
+export function createSupervisorHandlers(controller: Controller, attention: AttentionEngine, succession?: Succession): Record<string, OperationHandler> {
   const supervisor = <K extends keyof typeof SUPERVISOR_ACTION_SCHEMAS>(name: K, run: (caller: Caller, input: z.infer<(typeof SUPERVISOR_ACTION_SCHEMAS)[K]>) => Promise<HandlerReply>): OperationHandler =>
     async request => {
       const caller = await callerOf(controller, request, 'supervisor');
@@ -194,6 +204,28 @@ export function createSupervisorHandlers(controller: Controller, attention: Atte
       if (outcome === 'unknown') return failure('attention_unknown', `No attention item ${input.id} is known; it may have expired.`);
       if (outcome === 'forbidden') return failure('unauthorized', `Attention item ${input.id} was not addressed to you.`);
       return success({ recorded: true });
+    }),
+    lead_replace_start: supervisor('lead_replace_start', async (caller, input) => {
+      if (succession === undefined) return replacementUnavailable;
+      const target = await projectFor(controller, attention, caller, input.project);
+      if (isReply(target)) return target;
+      return fromStart(await succession.startForSupervisor(caller.agentId, target.key, input.note));
+    }),
+    lead_replace_status: supervisor('lead_replace_status', async (caller, input) => {
+      if (succession === undefined) return replacementUnavailable;
+      if (!await succession.startedBy(input.successionId, caller.agentId)) return notYours(input.successionId);
+      const status = await succession.status(input.successionId);
+      return status.ok ? success({ succession: status.value }) : fromStart(status);
+    }),
+    lead_replace_confirm: supervisor('lead_replace_confirm', async (caller, input) => {
+      if (succession === undefined) return replacementUnavailable;
+      if (!await succession.startedBy(input.successionId, caller.agentId)) return notYours(input.successionId);
+      return fromStart(await succession.complete(input.successionId, input.handoff));
+    }),
+    lead_replace_cancel: supervisor('lead_replace_cancel', async (caller, input) => {
+      if (succession === undefined) return replacementUnavailable;
+      if (!await succession.startedBy(input.successionId, caller.agentId)) return notYours(input.successionId);
+      return fromStart(await succession.cancel(input.successionId));
     }),
   };
 }

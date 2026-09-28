@@ -46,7 +46,7 @@ Only when no Lead owns the project may Supervisor open exactly one Lead as its c
 route the Human directive to it. Workspace placement does not change parentage. Of the
 seats available, Supervisor opens Lead seats only; opening Peer seats is Lead's, and
 opening another Supervisor is Human's. Reuse the project Lead and never open another Lead
-for freshness or convenience.
+for freshness or convenience; Lead Succession below is the only way Supervisor replaces one.
 
 For a Lead Supervisor opens, inspect the live seat after creation and additionally require
 the daemon-added paseo.parent-agent-id to name this Supervisor.
@@ -83,6 +83,27 @@ a Human-boundary question to Human, or record the letter as noise.
 Do not direct a Peer because of a letter. Do not re-check a project without a new letter
 or a Human request: waiting is the runtime's job, and polling is the failure the letters
 replace. When Lead's message is a question for Human, relay it without answering it.
+
+## Lead Succession
+
+Where the room runtime is installed, Supervisor may replace the Lead of a project whose
+Supervisor it is, and only once the runtime reports that Lead past its context rotation mark.
+Replace it through the runtime's lead_replace tools, never with create_agent or
+archive_agent: the runtime checks the quiet point, keeps the handoff on this machine, and
+starts the successor under you. Any other reason to replace a Lead is Human's.
+
+Start a replacement when the Lead is idle and its assignments are settled. A refusal names
+what still runs; wait for the next letter rather than polling. Do not ask the Lead for a
+handoff in any other way, or for a file in the repository to hold one.
+
+When a letter says the handoff arrived, read it and check it against the repository's own
+evidence: branches and commits, open work items, and the seats and assignments room status
+shows. Confirm it unchanged, or with corrections you mark as yours. If it misses what the
+successor needs, cancel and tell the Lead to continue rather than fill the gap by guessing.
+
+After the replacement, tell Human in one line which Lead now owns the project. Read the
+successor's first report once, and relay to Human where it differs from the handoff and which
+questions wait for Human.
 
 ## Workspace Protocol Mandate
 

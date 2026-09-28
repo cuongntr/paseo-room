@@ -648,6 +648,8 @@ npx paseo-room verify
   Room seats › Seat context** sets marks per role, as a share of each seat's own model window:
   - *Lead · report at* (30%): past it, the Lead's Supervisor gets one fact line and the panel shows
     it with **Replace Lead…**, so you can hand over to a fresh Lead rather than let this one compact.
+    The Supervisor may then replace that Lead itself, as below. Turning the mark off leaves
+    replacing a Lead to you alone.
   - *compact at* (Lead 50%, Supervisor and Peer off): a room Claude seat gets
     `CLAUDE_CODE_AUTO_COMPACT_WINDOW` when its session opens, at creation or on a resume after a
     daemon restart, so Claude compacts at that share instead of near the end of a 1M window. An open
@@ -734,6 +736,12 @@ learn only when you ask it to check.
     before the archive stays on the project's screen for a day, with the reason.
   - Paseo archives the seats in the Lead's workspace with it; the runtime archives them too when the
     Lead is not running, when Paseo would take none.
+  - **The Supervisor may do the same**, but only for a Lead of its own project that is past its
+    rotation mark, through the runtime's `lead_replace_*` tools. The runtime refuses a Lead below
+    the mark and applies the same quiet-point checks. The Supervisor reviews the handoff against the
+    repository, confirms it, and tells you which Lead now owns the project. The panel shows a
+    replacement the Supervisor started, and you may cancel it until it completes. Any other reason to
+    replace a Lead stays yours.
 - **Settings › Room attention.** Here you turn letters on or off, change their thresholds, and
   configure the optional **attention sensor**.
   - The sensor speaks the System One HTTP shape, with [TypeSafe Jev](https://docs.typesafe.ai/)

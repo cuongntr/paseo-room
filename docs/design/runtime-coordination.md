@@ -110,7 +110,7 @@ service or second process coordinator.
 | Actor | Runtime capabilities | Explicitly absent |
 |---|---|---|
 | Human/operator | enable/disable, inspect/export, explicit recovery/override through operator UI; start a Supervisor, start a project Lead under a chosen Supervisor, assign a project's Supervisor, configure and enable the attention sensor ([attention delta](runtime-coordination-attention.md) §9.1); set context budgets per role, start a Lead for an observed project from its own screen, and replace a project Lead with a successor after a handoff it reviewed ([seat context delta](runtime-coordination-seat-context.md) K-D2, K-D5, §8) | no automatic acceptance or silent trust enablement |
-| Supervisor | for the projects in its portfolio: project/runtime health, assignments, findings and attention incidents, momentum and safety letters, message or question to that project's Lead, `attention_feedback` | no assignment dispatch, write ownership, gate override, Peer channel, Peer lifecycle, integration, or acceptance |
+| Supervisor | for the projects in its portfolio: project/runtime health, assignments, findings and attention incidents, momentum and safety letters, message or question to that project's Lead, `attention_feedback`; for a project whose Supervisor it is, replacing its Lead once the runtime reports it past its rotation mark, through the succession flow ([seat context delta](runtime-coordination-seat-context.md) K-D9) | no assignment dispatch, write ownership, gate override, Peer channel, Peer lifecycle, integration, or acceptance; no Lead replacement below the rotation mark or outside the runtime |
 | Lead | create/dispatch assignment to an eligible exact Peer provider, answer, request rework, run gate, accept/reject/abandon, close assignment/archive managed Peer; Phase 2 closes a managed worktree workspace | no model override, Human-owned external-effect decision, or ability to make Peer an orchestrator |
 | Peer | call `ask` or `handoff` for its current assignment/reporting generation | no built-in Paseo tools, status/list, topology, other assignments, recipient selection, agent/workspace lifecycle, orchestration, gate override, or acceptance |
 
@@ -264,7 +264,10 @@ these notices. Assignment-local technical evidence goes to Lead, not Supervisor.
 the [attention delta](runtime-coordination-attention.md) §9.2: Supervisor receives, for projects in its
 portfolio only, pages, momentum signals, and Lead turn outcomes triaged to `now` or `digest`; the
 `attention` class is that delta's triage-controlled path. Pages still bypass every filter and budget,
-and no delivery interrupts a turn or clears a pending permission.
+and no delivery clears a pending permission. Amended 2026-09-28: an `owner` notice the runtime writes
+waits until its recipient's turn has ended, because Paseo interrupts a turn whose steer the provider
+cannot take; only a Supervisor message and a page are steered into a running turn, accepting that
+cost.
 
 Phase 3 adds incident deduplication by subject and kind, counts, evidence references, a non-page daily
 attention budget, and `useful | noise | unknown` Supervisor feedback. Phase 5 may add a default-off
@@ -445,7 +448,7 @@ runtime is not selected.
 
 | Tool set | Operations |
 |---|---|
-| Supervisor | `room_status`, `runtime_findings`, `message_lead` |
+| Supervisor | `room_status`, `runtime_findings`, `message_lead`, `attention_feedback`, `lead_replace_start`, `lead_replace_status`, `lead_replace_confirm`, `lead_replace_cancel` |
 | Lead | `assignment_create`, `assignment_dispatch`, `assignment_answer`, `assignment_rework`, `assignment_accept`, `assignment_reject`, `assignment_abandon`, `assignment_close`, `assignment_status`, `gate_run` |
 | Peer | `ask`, `handoff` |
 
@@ -1651,6 +1654,8 @@ Q-011 do not block Phases 0–1 because those phases contain no sensor and no wo
 
 | Date | Author | Change |
 |---|---|---|
+| 2026-09-28 | Repository owner / Bytes | D4 Supervisor row and §3.4 gain the [seat context delta](runtime-coordination-seat-context.md)'s K-D9: the Supervisor of a project may replace its Lead, but only once the runtime reports that Lead past its rotation mark, and only through the runtime's succession flow with its quiet-point checks; it reviews and confirms the handoff itself. **Authority granted:** that one lifecycle action, which Human had been approving case by case while the Supervisor carried it out with raw Paseo tools. Every other reason to replace a Lead stays Human's. |
+| 2026-09-28 | Repository owner / Bytes | D9: an `owner` notice the runtime writes (handback, Peer question, gate end, missing report, retained worktree) now waits for Lead's turn to end instead of steering into it. In live use about one steer in sixteen reached a running Claude Lead as an interrupt, which cancelled its turn mid-work and made the Supervisor ask the Human who had stopped it. A Supervisor message and a page still steer. No seat gains or loses authority. |
 | 2026-09-28 | Repository owner / Bytes | §13 Phase 2: worktree dispatch is enabled per qualified Paseo minor line from its live-qualified patch ([Phase 2 delta](runtime-coordination-phase2.md) §8, §9.3), so `0.9.2` is admitted without its own live run. No event, authority or tool change. |
 | 2026-09-28 | Repository owner / Bytes | Two defects found in live use (cmdb, 2026-09-27) fixed. D9 moves a green `gate_run` from `record` to `owner`: Lead ended its turn to wait for a gate that never told it the gate had finished, and the project stood idle about 2.5 hours; every end of a gate Lead requested now reaches Lead, while a result settling after Lead decided is only recorded. §3.4 and the recovery table judge only the open generation's own Peer turn: an answer sent the moment the asking turn ended had its generation closed as `report.missing` by that earlier turn, and the Peer's real handoff was refused `report_stale`. No seat gains or loses authority; Lead receives one more `owner` notice kind (`gate-ended`). |
 | 2026-09-27 | Repository owner / Bytes | D4 Human row gains the [seat context delta](runtime-coordination-seat-context.md)'s K2 action: replacing a project Lead after a reviewed handoff. It is Human's existing "reassigns the project" (`lead.md`), carried out through Paseo: the runtime asks the Lead for a handoff, archives it and creates its successor only on Human's instruction. No seat gains or loses authority; the handoff request and the successor's kickoff grant nothing, and no contract asset changes. |

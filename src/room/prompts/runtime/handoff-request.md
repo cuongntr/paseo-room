@@ -1,13 +1,14 @@
 ## Handoff to Your Successor
 
-Human is replacing this project's Lead seat with a fresh one and, through the room, asks you
-for a handoff. This is a lifecycle decision, not a finding about your work.
+This project's Lead seat is being replaced with a fresh one, by Human or, once a seat passes its
+context rotation mark, by your Supervisor, and the room asks you for a handoff. This is a
+lifecycle decision, not a finding about your work.
 
 Start no new work, open no Peer, and send no instruction to another seat. Answer only with the
 handoff.
 
-The handoff is written for your successor, a fresh Lead of this project. Human reviews it, and
-the successor then receives it verbatim as its first message. The successor has none of this
+The handoff is written for your successor, a fresh Lead of this project. Whoever started the
+replacement reviews it, and the successor then receives it verbatim as its first message. The successor has none of this
 conversation, so write it to be acted on without it.
 
 Write these sections, in this order, each under its own heading.

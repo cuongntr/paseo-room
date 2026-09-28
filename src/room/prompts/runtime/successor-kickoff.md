@@ -1,7 +1,8 @@
 ## Taking Over from Your Predecessor
 
-Human replaced this project's previous Lead with you and reviewed the handoff below, which that
-Lead wrote for you. It is your predecessor's account, not verified fact.
+This project's previous Lead was replaced with you, by Human or, at its context rotation mark,
+by your Supervisor, and whoever replaced it reviewed the handoff below, which that Lead wrote
+for you. It is your predecessor's account, not verified fact.
 
 Before any other work, read the files it lists first, then verify the Git, work-item and runtime
 state it describes as far as your own authority reaches.
