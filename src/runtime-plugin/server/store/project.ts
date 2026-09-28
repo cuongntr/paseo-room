@@ -17,6 +17,8 @@ import {
 export const RUNTIME_LAYOUT_VERSION = 'v1';
 const EVENT_FILE = /^(\d{12})\.json$/;
 const MAX_SEQUENCE_ATTEMPTS = 64;
+/** Event files read at once during replay; one at a time made every Lead action wait on each file's latency in turn. */
+const REPLAY_READS_IN_FLIGHT = 32;
 
 export function runtimeRoot(roomHome: string): string {
   return join(roomHome, 'runtime', RUNTIME_LAYOUT_VERSION);
@@ -49,6 +51,29 @@ export interface ReplayResult {
 
 /** An event as a writer supplies it; the store assigns envelope identity and order. */
 export type NewEvent = Omit<RuntimeEventV1, 'schema' | 'version' | 'id' | 'sequence' | 'projectId' | 'occurredAt'>;
+
+type JsonFile = { readonly value: unknown } | { readonly error: string };
+
+/**
+ * Reads and parses each named file, `REPLAY_READS_IN_FLIGHT` at a time. A file that cannot be read
+ * or parsed carries the reason instead of a value.
+ */
+async function readJsonFiles(directory: string, names: readonly string[]): Promise<Map<string, JsonFile>> {
+  const files = new Map<string, JsonFile>();
+  const pending = names.values();
+  const reader = async (): Promise<void> => {
+    // Every reader draws from the one iterator, so each file is read exactly once.
+    for (const name of pending) {
+      try {
+        files.set(name, { value: JSON.parse(await readFile(join(directory, name), 'utf8')) as unknown });
+      } catch (error) {
+        files.set(name, { error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(REPLAY_READS_IN_FLIGHT, names.length) }, reader));
+  return files;
+}
 
 function eventName(sequence: number): string {
   return `${String(sequence).padStart(12, '0')}.json`;
@@ -119,6 +144,7 @@ export class ProjectStore {
   /** Reads every event strictly. Any unreadable file pauses the project; nothing is moved. */
   async replay(): Promise<ReplayResult> {
     const names = (await readdir(this.eventsDirectory)).sort();
+    const files = await readJsonFiles(this.eventsDirectory, names.filter(name => EVENT_FILE.test(name)));
     const problems: ReplayProblem[] = [];
     const events: RuntimeEventV1[] = [];
     const ids = new Map<string, string>();
@@ -126,16 +152,9 @@ export class ProjectStore {
       if (name.startsWith('.tmp-')) continue;
       const match = EVENT_FILE.exec(name);
       if (!match) { problems.push({ file: name, reason: 'unexpected-file', detail: 'Not a runtime event file name.' }); continue; }
-      let raw: string;
-      let value: unknown;
-      try {
-        raw = await readFile(join(this.eventsDirectory, name), 'utf8');
-        value = JSON.parse(raw);
-      } catch (error) {
-        problems.push({ file: name, reason: 'unreadable', detail: error instanceof Error ? error.message : String(error) });
-        continue;
-      }
-      const read = readEvent(value);
+      const file = files.get(name) ?? { error: 'The event file was not read.' };
+      if ('error' in file) { problems.push({ file: name, reason: 'unreadable', detail: file.error }); continue; }
+      const read = readEvent(file.value);
       if (!read.ok) { problems.push({ file: name, reason: read.reason, detail: read.detail }); continue; }
       const event = read.event;
       if (event.sequence !== Number(match[1])) {
