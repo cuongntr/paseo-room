@@ -84,7 +84,8 @@ export function Card(props: { readonly theme: Theme; readonly children: ReactNod
 /** One row of a card; pressable when `onPress` is given, with a divider above all but the first. */
 export function Row(props: {
   readonly theme: Theme; readonly first?: boolean; readonly onPress?: () => void; readonly accessibilityLabel?: string;
-  readonly leading?: ReactNode; readonly title: ReactNode; readonly subtitle?: ReactNode; readonly meta?: ReactNode; readonly trailing?: ReactNode; readonly indent?: number;
+  readonly leading?: ReactNode; readonly title: ReactNode; readonly subtitle?: ReactNode; readonly detail?: ReactNode; readonly meta?: ReactNode; readonly trailing?: ReactNode;
+  readonly indent?: number;
 }) {
   const { colors } = props.theme;
   const body = (pressedOrHovered: boolean) => (
@@ -96,6 +97,7 @@ export function Row(props: {
       <View style={{ flex: 1, minWidth: 0 }}>
         <Text numberOfLines={1} style={{ color: colors.foreground, fontSize: 14, fontWeight: '500' }}>{props.title}</Text>
         {props.subtitle === undefined ? null : <Text numberOfLines={2} style={{ color: colors.foregroundMuted, fontSize: 12.5, marginTop: 2 }}>{props.subtitle}</Text>}
+        {props.detail === undefined ? null : <Text numberOfLines={1} style={{ color: colors.foregroundMuted, fontSize: 11.5, marginTop: 2 }}>{props.detail}</Text>}
         {props.meta === undefined ? null : <Text numberOfLines={1} style={{ color: colors.foregroundMuted, fontSize: 11.5, marginTop: 2, opacity: 0.85 }}>{props.meta}</Text>}
       </View>
       {props.trailing === undefined ? null : <View style={{ flexDirection: 'row', alignItems: 'center', gap: SPACE.sm }}>{props.trailing}</View>}

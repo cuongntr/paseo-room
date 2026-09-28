@@ -10,7 +10,7 @@ import { realpath } from 'node:fs/promises';
 import { basename, dirname, relative, resolve } from 'node:path';
 import type { PluginLifecycleEvents } from '@getpaseo/plugin/server';
 import type { RuntimeAgent, RuntimeRole } from '../../shared/policy.js';
-import type { GitEvidence } from '../git.js';
+import type { Checkout, GitEvidence } from '../git.js';
 import { toTimelineEntry, type AgentSnapshot, type PaseoPort, type SeatUsage, type TimelineEntry } from '../paseo-port.js';
 import type { Recognition } from '../recognition.js';
 import { leadMarkers, type Marker } from './triage.js';
@@ -78,6 +78,8 @@ export interface Seat {
   cwd: string;
   workspaceId: string | null;
   project: Project;
+  /** The checkout the seat works in, read at each snapshot and turn end; undefined outside Git. */
+  checkout: Checkout | undefined;
   parentAgentId: string | null;
   state: SeatState;
   archivedAt: string | null;
@@ -101,7 +103,7 @@ export interface Seat {
 export interface ObserverDependencies {
   readonly paseo: Pick<PaseoPort, 'listAgents' | 'getAgent' | 'recentTimeline'>;
   readonly recognition: Pick<Recognition, 'recognize'>;
-  readonly git: Pick<GitEvidence, 'identity'>;
+  readonly git: Pick<GitEvidence, 'identity' | 'checkout'>;
   readonly now: () => Date;
 }
 
@@ -175,8 +177,9 @@ export class Observer {
     if (recognized === undefined) return undefined;
     const known = this.seatsById.get(snapshot.id);
     const project = known !== undefined && known.cwd === snapshot.cwd ? known.project : await this.projectOf(snapshot.cwd);
+    const checkout = await this.checkoutOf(snapshot.cwd, project);
     const seat: Seat = known ?? {
-      agentId: snapshot.id, role: recognized.role, agent: recognized.agent, provider: snapshot.provider, title: snapshot.title, model: snapshot.model, thinking: snapshot.thinking, cwd: snapshot.cwd, workspaceId: snapshot.workspaceId, project,
+      agentId: snapshot.id, role: recognized.role, agent: recognized.agent, provider: snapshot.provider, title: snapshot.title, model: snapshot.model, thinking: snapshot.thinking, cwd: snapshot.cwd, workspaceId: snapshot.workspaceId, project, checkout,
       parentAgentId: snapshot.parentAgentId, state: stateOf(snapshot), archivedAt: snapshot.archivedAt,
       turnStartedAt: undefined, lastTurn: undefined, failures: [], pending: new Map(), writeTurns: [], usage: snapshot.usage, compaction: undefined, refreshedAt: this.time,
     };
@@ -186,6 +189,7 @@ export class Observer {
     seat.cwd = snapshot.cwd;
     seat.workspaceId = snapshot.workspaceId;
     seat.project = project;
+    seat.checkout = checkout;
     seat.parentAgentId = snapshot.parentAgentId;
     seat.state = stateOf(snapshot);
     seat.archivedAt = snapshot.archivedAt;
@@ -196,6 +200,11 @@ export class Observer {
     for (const id of live) if (!seat.pending.has(id)) seat.pending.set(id, this.time);
     this.seatsById.set(seat.agentId, seat);
     return seat;
+  }
+
+  /** Where in its repository `cwd` lies; undefined outside Git, or when Git cannot say. */
+  private async checkoutOf(cwd: string, project: Project): Promise<Checkout | undefined> {
+    return project.git ? await this.deps.git.checkout(cwd).catch(() => undefined) : undefined;
   }
 
   /** Re-reads seats whose snapshot is older than `maxAgeMs`; a failed read changes nothing. */
@@ -242,6 +251,8 @@ export class Observer {
     // then; a Peer's waits for the stale sweep. Only the figure is taken: the turn's own facts stand.
     // A seat first seen at this event was just read whole.
     const usage = seat.role !== 'peer' && !fresh ? this.deps.paseo.getAgent(agentId).then(snapshot => snapshot?.usage ?? null, () => null) : Promise.resolve(null);
+    // A turn may have switched the seat's branch.
+    const checkout = fresh ? Promise.resolve(seat.checkout) : this.checkoutOf(seat.cwd, seat.project);
     let entries: readonly TimelineEntry[] = [];
     if (turnId !== undefined && turnId !== null && turnId !== '') {
       entries = (await this.deps.paseo.recentTimeline(agentId, TURN_READ).catch(() => [])).filter(entry => entry.turnId === turnId);
@@ -257,6 +268,7 @@ export class Observer {
     if (bounded) for (const entry of entries) if (entry.kind === 'compaction') this.compacted(seat, entry, now);
     const read = await usage;
     if (read !== null) seat.usage = read;
+    seat.checkout = await checkout;
     seat.lastTurn = turn;
     seat.turnStartedAt = undefined;
     if (seat.state !== 'archived' && seat.state !== 'closed') seat.state = seat.pending.size > 0 ? 'permission' : 'idle';

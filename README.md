@@ -672,8 +672,8 @@ npx paseo-room verify
   puts what needs you first. Below that come your projects, ordered by status, then your
   Supervisors.
   - A project shows its Supervisor, its Lead and Peer seats (each opens its agent in Paseo, and
-    shows the model and thinking option it runs with) and its runtime record: assignments, isolated
-    writers, findings and recovery.
+    shows the model and thinking option it runs with, and the worktree or main checkout it works in
+    with its branch) and its runtime record: assignments, isolated writers, findings and recovery.
   - Starting a Supervisor, adding a repository, starting a Lead for a project that has none, and
     assigning a Supervisor are guided forms.
   - The design notes are in [docs/design/runtime-panel-ux.md](docs/design/runtime-panel-ux.md).

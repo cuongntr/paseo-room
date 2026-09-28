@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  contextLine, fateLine, handoffSize, hasLead, leadlessProjects, projectStatus, sentence, successionHeadline, supervisorChoices, supervisorSummary, waitsOnHuman,
+  checkoutLine, contextLine, fateLine, handoffSize, hasLead, leadlessProjects, projectStatus, sentence, successionHeadline, supervisorChoices, supervisorSummary, waitsOnHuman,
   watchingLabel, type ProjectView, type RoomView, type SeatView, type SuccessionSummary,
 } from '../src/runtime-plugin/client/model.js';
 import { clockTime } from '../src/runtime-plugin/client/time.js';
@@ -35,6 +35,16 @@ describe('role pills', () => {
     expect(peer?.lines.at(-1)).toEqual(['Runs', 'claude-opus-5-5 · thinking medium']);
     const [bare] = rolePills(room([project({ seats: [seat('peer-2', 'peer', { model: null, thinking: null })] })]));
     expect(bare?.lines.map(([key]) => key)).not.toContain('Runs');
+  });
+
+  it('says which worktree or main checkout a seat works in, and on which branch', () => {
+    const worktree = { root: '/h/.paseo/worktrees/x/asg-a', displayRoot: '~/.paseo/worktrees/x/asg-a', linked: true, branch: 'paseo-room/asg_A' };
+    expect(checkoutLine(seat('peer-1', 'peer', { checkout: worktree }))).toBe('worktree on paseo-room/asg_A · ~/.paseo/worktrees/x/asg-a');
+    expect(checkoutLine(seat('peer-1', 'peer', { checkout: { root: '/w/shop', displayRoot: '~/w/shop', linked: false, branch: 'main' } }))).toBe('main checkout on main');
+    expect(checkoutLine(seat('lead-1', 'lead', { checkout: { root: '/w/shop', displayRoot: '~/w/shop', linked: false } }))).toBe('main checkout at a detached HEAD');
+    expect(checkoutLine(seat('lead-1', 'lead'))).toBeUndefined();
+    const [peer] = rolePills(room([project({ seats: [seat('peer-1', 'peer', { checkout: worktree })] })]));
+    expect(peer?.lines).toContainEqual(['Works in', 'worktree on paseo-room/asg_A · ~/.paseo/worktrees/x/asg-a']);
   });
 
   it('says when a project has no Supervisor and a Peer has no Lead here', () => {

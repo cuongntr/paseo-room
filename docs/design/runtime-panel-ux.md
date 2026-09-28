@@ -90,8 +90,10 @@ belongs to an observed project, and falls back to Room otherwise. Row order:
 - **Supervisor row.** Name, `Watching N projects`, its folder and context line, a state pill and
   **Open**. A final row offers *New Supervisor*.
 - **Seat row** (a project's Lead → Peer tree). The seat's name, then `role · agent · model ·
-  thinking <option>` as Paseo reports them, any waiting permissions, the last turn, a state pill and
-  **Open**. A runtime-dispatched Peer is named `<Disposition> · <outcome gist> · <assignment id>`, so
+  thinking <option>` as Paseo reports them, any waiting permissions, then where it works — *Worktree
+  on paseo-room/asg_… · ~/.paseo/worktrees/…* or *Main checkout on main* (*at a detached HEAD* when
+  HEAD names no branch) — then the last turn, a state pill and **Open**. The main checkout is the
+  project's own folder, so only a worktree names its path. A runtime-dispatched Peer is named `<Disposition> · <outcome gist> · <assignment id>`, so
   the tree says what each Peer is doing without opening it. The Seats header offers **Replace
   Lead…** for the project's Lead while no replacement is open; it sits beside the rows rather than in
   one, because pressing a row opens its agent.
@@ -167,6 +169,7 @@ belongs to an observed project, and falls back to Room otherwise. Row order:
   popover shows:
   - for a Lead: the project and its Supervisor;
   - for a Peer: the project, its Lead and its Supervisor;
+  - *Works in*, for a Lead or a Peer: the same checkout line as its seat row;
   - for a Supervisor: the projects it watches and its folder;
   - *Runs*: the model and thinking option the seat runs with, when Paseo reports them;
   - *Context*: the context line, when Paseo reports a figure;
@@ -190,6 +193,9 @@ belongs to an observed project, and falls back to Room otherwise. Row order:
 - for seats, `context` — `{ used, max, percent, rotateAtPercent, compactAtPercent }` — and
   `compaction` — `{ lastAt, lastAgo, lastTrigger?, lastPreTokens?, seen }` — per the
   [seat context delta](runtime-coordination-seat-context.md) §5.1;
+- for seats, `checkout` — `{ root, displayRoot, linked, branch? }` — the checkout the seat works in,
+  read from Git at each snapshot and turn end ([attention delta](runtime-coordination-attention.md)
+  §4); absent outside Git;
 - for projects, `succession` — `{ id, step, fromAgentId, fromTitle, canFinish, canCancel, failure? }`
   — while a Lead replacement is not finished. A project whose last seat that replacement archived
   stays listed.
@@ -219,3 +225,4 @@ Replace Lead uses `runtime.succession-preflight`, `-start`, `-status`, `-complet
 | 2026-09-25 | Bytes | Seat rows and role pills show the model and thinking option each seat runs with; runtime Peers are named by disposition, outcome gist and assignment id instead of `Peer <id>`. |
 | 2026-09-26 | Bytes | Seat context K1: context line on seat rows, the Supervisor row and the role pill; *New project* renamed *Add repository*, offering observed projects without a Lead; *Start Lead* on a project with none; Supervisor pickers list running Supervisors first with state and folder; Room seats gains *Seat context*. |
 | 2026-09-27 | Bytes | Seat context K2: **Replace Lead…** in the Seats header and on a `context-high` item, a three-step modal (why and preflight, the handoff to review, confirm), a progress callout on the project and a *replacing Lead* pill on its row, and **Finish replacing Lead** in place of *Start Lead* while a replacement waits. |
+| 2026-09-28 | Bytes | Seat rows and role pills say which checkout each Lead and Peer works in — a linked worktree with its branch and path, or the main checkout with its branch — so a worktree Peer can be told apart from one in the Lead's folder. |

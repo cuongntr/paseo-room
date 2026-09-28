@@ -11,6 +11,7 @@ export interface SeatView {
   readonly agentId: string; readonly role: string; readonly provider: string; readonly title: string | null; readonly state: string;
   readonly model?: string | null; readonly thinking?: string | null;
   readonly cwd: string; readonly displayCwd: string; readonly workspaceId?: string | null; readonly parentAgentId: string | null; readonly pendingPermissions: number;
+  readonly checkout?: { readonly root: string; readonly displayRoot: string; readonly linked: boolean; readonly branch?: string };
   readonly lastTurn?: { readonly outcome: string; readonly endedAgo: string; readonly endedAt: string };
   readonly context?: { readonly used: number; readonly max: number; readonly percent: number; readonly rotateAtPercent: number | null; readonly compactAtPercent: number | null };
   readonly compaction?: { readonly lastAt: string; readonly lastTrigger?: string; readonly lastPreTokens?: number; readonly seen: number };
@@ -54,6 +55,19 @@ export const seatName = (seat: SeatView): string => seat.title ?? `${seat.role} 
 /** What a seat runs on, as Paseo reports it — `claude-opus-5-5 · thinking medium` — or '' when unknown. */
 export const launchLabel = (seat: Pick<SeatView, 'model' | 'thinking'>): string =>
   [seat.model ?? '', seat.thinking === undefined || seat.thinking === null ? '' : `thinking ${seat.thinking}`].filter(part => part !== '').join(' · ');
+
+/**
+ * Where a seat works — `worktree on paseo-room/asg_… · ~/.paseo/worktrees/…` or `main checkout on
+ * main` — or undefined outside Git. The main checkout is the project's own folder, so only a
+ * worktree names its path.
+ */
+export function checkoutLine(seat: Pick<SeatView, 'checkout'>): string | undefined {
+  const { checkout } = seat;
+  if (checkout === undefined) return undefined;
+  const where = checkout.linked ? 'worktree' : 'main checkout';
+  const head = checkout.branch === undefined ? `${where} at a detached HEAD` : `${where} on ${checkout.branch}`;
+  return checkout.linked ? `${head} · ${checkout.displayRoot}` : head;
+}
 
 type SeatContext = NonNullable<SeatView['context']>;
 

@@ -72,6 +72,26 @@ describe('Room Observer', () => {
     expect(room.descendants('lead').map(seat => seat.agentId)).toEqual(['peer']);
   });
 
+  it('knows the checkout each seat works in, and reads its branch again when a turn ends', async () => {
+    const desk = join(root, 'desk');
+    await mkdir(desk);
+    const tree = join(root, 'tree');
+    git(repo, 'worktree', 'add', '-q', '-b', 'paseo-room/asg_x', tree);
+    paseo.addAgent({ id: 'sup', provider: 'claude-supervisor', cwd: desk });
+    paseo.addAgent({ id: 'lead', provider: 'claude-lead', cwd: repo });
+    paseo.addAgent({ id: 'peer', provider: 'claude-peer', cwd: tree, labels: { [PARENT_AGENT_ID_LABEL]: 'lead' } });
+    const room = observer();
+    await room.rebuild();
+    expect(room.seat('lead')?.checkout).toEqual({ root: repo, linked: false, branch: 'main' });
+    expect(room.seat('peer')?.checkout).toEqual({ root: tree, linked: true, branch: 'paseo-room/asg_x' });
+    expect(room.seat('sup')?.checkout).toBeUndefined();
+
+    git(repo, 'checkout', '-q', '-b', 'feature');
+    await room.onTurnStarted('lead');
+    await room.onTurnEnded('lead', { kind: 'completed' }, []);
+    expect(room.seat('lead')?.checkout).toEqual({ root: repo, linked: false, branch: 'feature' });
+  });
+
   it('tracks turns, the last message, write evidence, triggers and repeated failures', async () => {
     paseo.addAgent({ id: 'lead', provider: 'claude-lead', cwd: repo });
     const room = observer();

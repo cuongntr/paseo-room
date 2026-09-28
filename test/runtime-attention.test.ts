@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ROLES } from '../src/roles.js';
 import { renderRuntimeManifestFile } from '../src/runtime.js';
 import { DEFAULT_ATTENTION_SETTINGS, type AttentionSettings } from '../src/runtime-plugin/shared/attention.js';
-import { AttentionEngine } from '../src/runtime-plugin/server/attention/engine.js';
+import { AttentionEngine, homeRelative } from '../src/runtime-plugin/server/attention/engine.js';
 import { head } from '../src/runtime-plugin/server/attention/mask.js';
 import { leadMarkers } from '../src/runtime-plugin/server/attention/triage.js';
 import { rolePills } from '../src/runtime-plugin/client/pills.js';
@@ -535,6 +535,8 @@ describe('attention signals and letters', () => {
     await settle();
     const view = engine.roomView();
     expect(view.projects[0]?.seats.find(seat => seat.agentId === 'peer')).toMatchObject({ model: 'claude-opus-5-5', thinking: 'medium' });
+    expect(view.projects[0]?.seats.find(seat => seat.agentId === 'lead')?.checkout).toEqual({ root: repo, displayRoot: homeRelative(repo), linked: false, branch: 'main' });
+    expect(view.supervisors[0]?.checkout).toBeUndefined();
     expect(view.started).toBe(true);
     expect(view.supervisors.map(seat => seat.agentId)).toEqual(['sup']);
     expect(view.projects).toHaveLength(1);

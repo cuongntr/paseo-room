@@ -11,7 +11,7 @@ import { idempotencyKey, unwrap, useRuntimeRpcs } from './data.js';
 import { ATTENTION_SETTINGS_SCREEN, openSettings } from './host.js';
 import { Button, Callout, Card, Dot, Empty, Glyph, IconButton, Pill, Row, SPACE, SectionLabel, Title, ago, type Theme } from './kit.js';
 import {
-  KIND_LABEL, LEVEL_STYLE, ROLE_ICON, STATE_LABEL, STATUS_TONE, contextLine, contextTone, hasLead, lastActivity, launchLabel, projectHeadline, projectStatus, providerLabel, seatName,
+  KIND_LABEL, LEVEL_STYLE, ROLE_ICON, STATE_LABEL, STATUS_TONE, checkoutLine, contextLine, contextTone, hasLead, lastActivity, launchLabel, projectHeadline, projectStatus, providerLabel, seatName,
   sentence, sortIncidents, sortProjects, stateTone, successionHeadline, waitsOnHuman, watchingLabel, type IncidentView, type ProjectView, type RoomView, type SeatView,
 } from './model.js';
 import { RuntimeRecord } from './record.js';
@@ -34,6 +34,12 @@ function seatMeta(seat: SeatView): string | undefined {
   const parts = [seat.lastTurn === undefined ? undefined : `Last turn ${seat.lastTurn.outcome} ${ago(seat.lastTurn.endedAt)}`, contextLine(seat)?.text];
   const shown = parts.filter(part => part !== undefined);
   return shown.length === 0 ? undefined : shown.join(' · ');
+}
+
+/** A seat's detail line: the worktree or main checkout it works in, and the branch there. */
+function seatWhere(seat: SeatView): string | undefined {
+  const line = checkoutLine(seat);
+  return line === undefined ? undefined : sentence(line);
 }
 
 /** A context figure past its role's rotation or compact mark, as a pill; nothing below them. */
@@ -252,6 +258,7 @@ function SeatTree(props: { readonly theme: Theme; readonly seats: readonly SeatV
           leading={<Glyph theme={theme} name={ROLE_ICON[seat.role] ?? 'Bot'} boxed tone={seat.role === 'lead' ? 'accent' : 'muted'} />}
           title={seatName(seat)}
           subtitle={`${seat.role === 'lead' ? 'Lead' : seat.role === 'peer' ? 'Peer' : 'Supervisor'} · ${providerLabel(seat.provider)}${launchLabel(seat) === '' ? '' : ` · ${launchLabel(seat)}`}${seat.pendingPermissions > 0 ? ` · ${String(seat.pendingPermissions)} permission${seat.pendingPermissions === 1 ? '' : 's'} waiting` : ''}`}
+          detail={seatWhere(seat)}
           meta={seatMeta(seat)}
           trailing={(
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: SPACE.sm }}>

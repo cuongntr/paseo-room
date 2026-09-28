@@ -194,7 +194,10 @@ characters, kept in memory only), whether the last turn contained a file-writing
 (a `tool_call` whose normalised `detail.type` is `edit` or `write`, with its `filePath` —
 Paseo normalises every provider's tool calls into `ToolCallDetail`, `P/agent-types.d.ts`), and how
 the turn was triggered: a Paseo system envelope (`<paseo-system>` — `S/agent/agent-prompt.js`
-`formatSystemNotificationPrompt`), a runtime notice or letter, or another message.
+`formatSystemNotificationPrompt`), a runtime notice or letter, or another message. For display only,
+the checkout the seat works in — its root, whether it is a linked worktree or the main checkout, and
+the branch there — read from Git at each snapshot and again when a turn ends, since a turn may switch
+branches; nothing decides on it.
 
 Per project: seats by role, the resolved Supervisor (A-D3), running descendants of the Lead,
 open incidents. Unrecognised agents are ignored, except as descendants when they are parented to a
@@ -485,8 +488,9 @@ Changing these assets changes what Supervisor is told. The commit must state the
 (several projects) and the unchanged limits.
 
 ### 9.4 Tools (`runtime/v1/tools/supervisor.json`)
-- `room_status` returns the portfolio's observed map, and nothing of another Supervisor's. Its runtime
-  projects are those of the portfolio and the project the Supervisor stands in. They list every
+- `room_status` returns the portfolio's observed map, and nothing of another Supervisor's; each seat in
+  it names its checkout (§4). Its runtime projects are those of the portfolio and the project the
+  Supervisor stands in. They list every
   assignment still open or still to close, and only count settled ones — decided and closed, or
   decided without a Peer to close — so the result stays within one tool answer.
 - `runtime_findings` includes open attention incidents, and its findings keep to the same projects.
@@ -661,6 +665,7 @@ files under `runtime/v1/attention` stay until `remove --apply`.
 
 | Date | Author | Change |
 |---|---|---|
+| 2026-09-28 | Repository owner / Bytes | §4, §9.4: the Observer reads each seat's checkout from Git — linked worktree or main checkout, and its branch — at each snapshot and turn end, and `room_status` shows it. The panel listed a worktree Peer with no sign of where it worked. Display only; no signal reads it. |
 | 2026-09-28 | Repository owner / Bytes | §7.4: a Lead turn's letter line states what the Lead left running, counted in code: its running Peers and its open runtime assignments. A Lead in live use said it would dispatch next and stopped with nothing running; the excerpt read as progress, and the Human noticed before the Supervisor did. Facts only; no advice, and the sensor's inputs are unchanged. |
 | 2026-09-28 | Repository owner / Bytes | §7.4: the runtime's own owner notices wait for the recipient's turn to end; only `message_lead` and pages steer into a running turn. Live use showed a steer to a running Claude Lead cancelling its turn in 16 of 248 notices, once cutting a Lead off mid-merge, and the Supervisor could not tell who had stopped it. |
 | 2026-09-26 | Bytes | §5 gains `context-high` from the [seat context delta](runtime-coordination-seat-context.md) K-D6. An open incident whose evidence is unchanged now takes the condition's current text, so a figure in it (a wait, a context size) stays current without counting a repeat. |

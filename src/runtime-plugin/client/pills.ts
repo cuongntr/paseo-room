@@ -3,7 +3,7 @@
  * (Paseo gives a custom provider no tab icon, and plugins cannot decorate tabs). Pure: derives
  * the pills from the room view, so the registrar only adds, updates and removes.
  */
-import { contextLine, launchLabel, type RoomView } from './model.js';
+import { checkoutLine, contextLine, launchLabel, type RoomView } from './model.js';
 
 export type SeatRole = 'supervisor' | 'lead' | 'peer';
 
@@ -36,6 +36,8 @@ export function rolePills(room: RoomView): readonly RolePill[] {
       const lines: [string, string][] = [['Project', `${project.name} · ${project.displayRoot}`]];
       if (seat.role === 'peer') lines.push(['Lead', parent === undefined ? 'not in this project' : titleOf(parent)]);
       lines.push(['Supervisor', project.supervisor === undefined ? 'none — assign one in Room runtime' : titleOf(project.supervisor)]);
+      const where = checkoutLine(seat);
+      if (where !== undefined) lines.push(['Works in', where]);
       const runs = launchLabel(seat);
       if (runs !== '') lines.push(['Runs', runs]);
       const context = contextLine(seat, 'clock');

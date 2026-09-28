@@ -79,7 +79,7 @@ export interface SensorHook {
 export interface EngineDependencies {
   readonly paseo: PaseoPort;
   readonly recognition: Pick<Recognition, 'recognize'>;
-  readonly git: Pick<GitEvidence, 'identity'>;
+  readonly git: Pick<GitEvidence, 'identity' | 'checkout'>;
   readonly runtimeRoot: string;
   readonly now: () => Date;
   readonly settings: () => AttentionSettings;
@@ -495,6 +495,7 @@ export class AttentionEngine {
     const seatView = (seat: Seat): SeatView => ({
       agentId: seat.agentId, role: seat.role, provider: seat.provider, title: seat.title, model: seat.model, thinking: seat.thinking, state: seat.state, cwd: seat.cwd,
       displayCwd: homeRelative(seat.cwd), workspaceId: seat.workspaceId, parentAgentId: seat.parentAgentId, pendingPermissions: seat.pending.size,
+      ...(seat.checkout === undefined ? {} : { checkout: { ...seat.checkout, displayRoot: homeRelative(seat.checkout.root) } }),
       ...(seat.lastTurn === undefined ? {} : {
         lastTurn: { outcome: seat.lastTurn.outcome, endedAgo: age(now - seat.lastTurn.endedAt), endedAt: new Date(seat.lastTurn.endedAt).toISOString() },
       }),
@@ -549,6 +550,8 @@ export interface SeatView {
   readonly workspaceId: string | null;
   readonly parentAgentId: string | null;
   readonly pendingPermissions: number;
+  /** The checkout the seat works in, where Git says: a linked worktree or the main checkout, and its branch. */
+  readonly checkout?: { readonly root: string; readonly displayRoot: string; readonly linked: boolean; readonly branch?: string };
   readonly lastTurn?: { readonly outcome: string; readonly endedAgo: string; readonly endedAt: string };
   /**
    * The seat's latest model call, and its role's marks in percent (seat context delta §5.1); the

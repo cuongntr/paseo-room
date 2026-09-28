@@ -48,6 +48,16 @@ export interface RepositoryIdentity {
   readonly gitCommonDir: string;
 }
 
+/** Where a directory sits in its repository, for display: which checkout, and what it has checked out. */
+export interface Checkout {
+  /** The checkout's canonical root. */
+  readonly root: string;
+  /** A linked worktree rather than the repository's main checkout. */
+  readonly linked: boolean;
+  /** The branch HEAD names; absent on a detached HEAD. */
+  readonly branch?: string;
+}
+
 export type CandidateDerivation =
   | { readonly ok: true; readonly candidate: CandidateRefV1; readonly noChange: boolean }
   | { readonly ok: false; readonly code: 'dirty' | 'not-descendant' | 'wrong-repository'; readonly message: string };
@@ -95,6 +105,20 @@ export class GitEvidence {
     const canonicalRoot = await realpath(top);
     const gitCommonDir = await realpath(isAbsolute(common) ? common : resolve(cwd, common));
     return { canonicalRoot, gitCommonDir };
+  }
+
+  /** The checkout `cwd` lies in; a linked worktree keeps its own Git directory beside the common one. */
+  async checkout(cwd: string): Promise<Checkout> {
+    const probe = await this.git(cwd, ['rev-parse', '--show-toplevel', '--absolute-git-dir', '--git-common-dir']);
+    if (probe.code !== 0) throw new GitEvidenceError(`${cwd} is not inside a Git working tree.`, 'not-a-repository');
+    const [top, gitDir, common] = probe.stdout.split('\n');
+    if (top === undefined || top === '' || gitDir === undefined || gitDir === '' || common === undefined || common === '') {
+      throw new GitEvidenceError('git rev-parse returned no repository paths.', 'unexpected-output');
+    }
+    const root = await realpath(top);
+    const [own, shared] = await Promise.all([realpath(gitDir), realpath(isAbsolute(common) ? common : resolve(cwd, common))]);
+    const branch = await this.branch(root);
+    return { root, linked: own !== shared, ...(branch === undefined ? {} : { branch }) };
   }
 
   async head(root: string): Promise<string> {
