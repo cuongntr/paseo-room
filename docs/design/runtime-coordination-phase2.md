@@ -458,8 +458,19 @@ Paseo's `0.9.2` changelog.
 
 No change weakens a guarantee the runtime relies on, and two strengthen it: an archived Peer's
 history stays readable after its worktree is removed, and an unmounted volume no longer archives
-workspaces the runtime holds leases in. This is reading source, not a live run; the first worktree
-dispatch on the operator's `0.9.2` daemon will be recorded here.
+workspaces the runtime holds leases in. This is reading source, not a live run.
+
+The first worktree dispatch on the operator's `0.9.2` daemon followed the same day, from the
+paseo-beads Lead with a `claude-peer`, in the operator's own room with real credentials. It ran
+through without a defect. Evidence is from the event ledger and Git (times UTC):
+
+| Step | Observed |
+|---|---|
+| Create and prove | `asg_QsUCN2NpoajT`, seven write scopes: `lease.reserved` at 05:00:36.473, `workspace.create-succeeded` 0.26 s later, after the Git proof — `HEAD` at the exact base `a032639`, branch `paseo-room/asg_QsUCN2NpoajT`, directory `~/.paseo/worktrees/3qildizi/asg-qsucn2npoajt`. |
+| Parentage | The Peer was created with the runtime-chosen agent id through the lease's workspace, parented to the Lead, with its `cwd` in the worktree; Paseo accepted its first run 1.2 s after creation. |
+| Handback and gate | The Peer handed back after 4.5 min. The runtime gate (`npm run -s typecheck && npm test`) ran in the worktree on candidate `037f0da` and exited 0 in 4.1 s. Every changed path lay inside the lease's scopes: no `scope.exceeded`. |
+| Accept and close | The Lead accepted after its own review and a live read-only run. The release closed the clean worktree with `directoryRemoved: true`: `git worktree list` no longer shows it, and the branch is kept. `main` then stood at `037f0da`; the runtime merges nothing, so moving it was the Lead's step. |
+| Next dispatch | A minute after the close, `asg_EvdrULDc2gqO` got its own worktree from `037f0da` and handed back 15 min later. |
 
 A later patch is admitted as soon as a daemon runs it, before anyone has read it. What bounds that
 risk is that dispatch never takes Paseo's word for a worktree: the Git proof after creation (P2-D4)
@@ -487,6 +498,7 @@ bound a line; it never qualifies a new one.
 
 | Date | Author | Change |
 |---|---|---|
+| 2026-09-28 | Bytes | §9.3 records the first live worktree dispatch on the operator's `0.9.2` daemon: create and Git proof, parentage, handback, a gate in the worktree, acceptance and a clean close, then a second dispatch from the new base. No defect; no event, authority or tool change. |
 | 2026-09-28 | Repository owner / Bytes | §8 qualifies worktree dispatch per minor line from its live-qualified patch, instead of per exact patch; §9.3 records the `0.9.1` → `0.9.2` comparison that admits `0.9.2`, and how a later patch is bounded out. `QUALIFIED_WORKTREE_DAEMONS` became `QUALIFIED_WORKTREE_LINES`, whose lines carry a `from` patch and an optional `below` bound. No event, authority or tool change. |
 | 2026-09-23 | Bytes | After code review (0c56cd8, 226b833, 2db759e): §7 now records a worktree create as failed only on a conflict or a replayed recorded failure, never on a new error; §8 names the single worktree-disposition rule, on-disk re-checks of left-behind directories, and the split retained/leftover counts. No event or contract change. |
 | 2026-09-23 | Bytes | Recorded §9.2: L-2 to L-7 and reclaim pass live on an isolated `0.9.1` daemon with `codex-peer`, `claude-peer` and `pi-peer`, after fixing three recovery defects the run exposed; `0.9.1` added to the qualified list. |
