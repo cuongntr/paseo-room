@@ -220,7 +220,8 @@ export class Recovery {
     let snapshot: WorkspaceSnapshot;
     try {
       snapshot = await this.controller.deps.paseo.createWorktreeWorkspace({
-        workspaceId: record.workspaceId, idempotencyKey: record.idempotencyKey, title: `room ${view.id}`, cwd: loaded.store.meta.canonicalRoot,
+        // A request recorded without its title was sent with the id-only title of that time.
+        workspaceId: record.workspaceId, idempotencyKey: record.idempotencyKey, title: record.title ?? `room ${view.id}`, cwd: loaded.store.meta.canonicalRoot,
         baseCommit: record.baseCommit, branchName: record.branchName, worktreeSlug: record.worktreeSlug,
       });
     } catch (error) {

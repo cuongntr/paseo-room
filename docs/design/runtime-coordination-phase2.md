@@ -61,7 +61,10 @@ receipt keyed by that key with a request fingerprint and refuses a reused key wi
 request (`*_request_key_conflict`) or a reused id (`*_id_conflict`)
 (`S/server/creation/index.js:29-34, 211-216`; receipts are files under `$PASEO_HOME/creations`).
 The runtime therefore writes the chosen `workspaceId` and key into the intent event **before**
-calling, and recovery reissues the identical request instead of searching by path or title.
+calling, and recovery reissues the identical request instead of searching by path or title. The
+fingerprint covers the whole request, so the intent also records the workspace title it sends —
+the gist of the assignment's outcome, which Paseo's sidebar shows above the branch — and a request
+recorded before titles were recorded is reissued with the `room <id>` title it was sent with.
 Agent creation gains the same treatment (`agentId` uuid and `idempotencyKey`,
 `P/messages.js:1385-1410`), which Phase 1 does not yet use.
 
@@ -202,14 +205,15 @@ runtime isolation and removes nothing.
 ## 4. Data Model and Events
 
 All additions are new event types at `payloadVersion: 1`, or new optional action fields; no v1
-payload is edited (`src/runtime-plugin/server/events/schema.ts` header rule). A Phase 1 plugin that
+payload is edited (`src/runtime-plugin/server/events/schema.ts` header rule) beyond an optional
+field, which an older reader ignores and whose absence keeps the older meaning. A Phase 1 plugin that
 meets these events refuses the unknown type and pauses the project, which is the intended
 fail-closed downgrade (§8).
 
 | Event | Payload | Notes |
 |---|---|---|
 | `lease.reserved` | `workspaceId`, `branch`, `baseCommit`, `scopes`, `serialOnly`, `epoch: 1` | follows `ownership.reserved`; `workspaceId` is the runtime-chosen `wks_…` |
-| `workspace.create-requested` | `intentId`, `workspaceId`, `idempotencyKey`, `baseCommit`, `branchName`, `worktreeSlug` | written before the call (P2-D3) |
+| `workspace.create-requested` | `intentId`, `workspaceId`, `idempotencyKey`, `baseCommit`, `branchName`, `worktreeSlug`, `title?` | written before the call (P2-D3); `title` since 2026-09-28, absent meaning `room <id>` |
 | `workspace.create-succeeded` | `intentId`, `workspaceId`, `worktreePath`, `branch`, `headCommit` | only after P2-D4 Git proof |
 | `workspace.create-failed` / `-uncertain` | `intentId`, `reason` | |
 | `workspace.create-refused` | `intentId`, `workspaceId`, `reason` | created but failed proof; close follows |
@@ -311,7 +315,7 @@ These rows extend Phase 1 design §6; the Phase 1 rows stand.
 
 | Unresolved intent | Recovery evidence | Forbidden |
 |---|---|---|
-| `workspace.create-requested` | reissue the identical request with the recorded `workspaceId` and key; the receipt replays or conflicts (P2-D3). A workspace it returns, or that Paseo lists, is refused and closed (recovery never adopts). It is `workspace.create-failed` only on a conflict, or when the reissue fails with exactly the failure recorded for the first attempt (a replayed receipt) and Paseo lists no such workspace; any other error — a timeout, a create still in flight — leaves it uncertain | adopting a worktree by path, slug or branch name; retrying with a new key; reading a new error as a definite failure |
+| `workspace.create-requested` | reissue the identical request with the recorded `workspaceId`, key and title; the receipt replays or conflicts (P2-D3). A workspace it returns, or that Paseo lists, is refused and closed (recovery never adopts). It is `workspace.create-failed` only on a conflict, or when the reissue fails with exactly the failure recorded for the first attempt (a replayed receipt) and Paseo lists no such workspace; any other error — a timeout, a create still in flight — leaves it uncertain | adopting a worktree by path, slug or branch name; retrying with a new key; reading a new error as a definite failure |
 | Peer create in a lease | Phase 1 rule, with the lease's `workspaceId` in the expected placement | placing the retry in Lead's workspace |
 | `workspace.close-requested` | Paseo no longer listing the workspace, plus directory existence (a refused worktree's directory is learned before its close is requested; after a crash in that close it is unknown) | treating elapsed time as closed; deleting the directory or branch itself |
 | lease with a dead Peer | Phase 1 archive/`closed` proof, then explicit `lease_reclaim` | reclaim on idle, turn end or timeout |
@@ -498,6 +502,7 @@ bound a line; it never qualifies a new one.
 
 | Date | Author | Change |
 |---|---|---|
+| 2026-09-28 | Repository owner / Bytes | A worktree workspace is titled with the gist of its assignment's outcome instead of `room <id>`: Paseo's sidebar listed several `room asg_…` rows whose work could not be told apart. The branch keeps `paseo-room/<id>`. `workspace.create-requested` gains an optional `title`, which recovery reissues because Paseo's receipt fingerprints the whole request; a request recorded without one is reissued with `room <id>` (P2-D3, §4, §7). No authority or tool change. |
 | 2026-09-28 | Bytes | §9.3 records the first live worktree dispatch on the operator's `0.9.2` daemon: create and Git proof, parentage, handback, a gate in the worktree, acceptance and a clean close, then a second dispatch from the new base. No defect; no event, authority or tool change. |
 | 2026-09-28 | Repository owner / Bytes | §8 qualifies worktree dispatch per minor line from its live-qualified patch, instead of per exact patch; §9.3 records the `0.9.1` → `0.9.2` comparison that admits `0.9.2`, and how a later patch is bounded out. `QUALIFIED_WORKTREE_DAEMONS` became `QUALIFIED_WORKTREE_LINES`, whose lines carry a `from` patch and an optional `below` bound. No event, authority or tool change. |
 | 2026-09-23 | Bytes | After code review (0c56cd8, 226b833, 2db759e): §7 now records a worktree create as failed only on a conflict or a replayed recorded failure, never on a new error; §8 names the single worktree-disposition rule, on-disk re-checks of left-behind directories, and the split retained/leftover counts. No event or contract change. |

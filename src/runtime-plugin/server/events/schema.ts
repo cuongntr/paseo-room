@@ -146,6 +146,9 @@ export const EVENT_PAYLOADS = {
   'workspace.create-requested': {
     intentId: id, workspaceId: workspaceIdSchema, idempotencyKey: z.string().min(1).max(512), baseCommit: commitSchema,
     branchName: branch, worktreeSlug: z.string().min(1).max(128),
+    // The workspace title sent, which recovery must send again: Paseo's receipt compares the whole
+    // request. Absent on a request made before titles named the work, which used `room <id>`.
+    title: z.string().min(1).max(512).optional(),
   },
   // Written only after the Git proof (P2-D4); `branch` is the name Paseo resolved.
   'workspace.create-succeeded': { intentId: id, workspaceId: workspaceIdSchema, worktreePath: z.string().min(1).max(4096), branch, headCommit: commitSchema },

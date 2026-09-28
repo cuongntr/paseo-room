@@ -160,6 +160,10 @@ describe('worktree dispatch', () => {
       directories.add(record?.worktreePath ?? '');
     }
     expect(directories.size).toBe(3);
+    // Paseo's sidebar shows the workspace title above the branch, which carries the id: the title says what the work is.
+    const titles = h.paseo.calls.filter(call => call.operation === 'createWorktreeWorkspace').map(call => (call.args[0] as { title: string }).title);
+    expect(titles).toEqual(['Add the feature', 'Add the feature', 'Add the feature']);
+    expect(loaded.state.workspaces.get(ids[0] ?? '')?.title).toBe('Add the feature');
     expect(h.paseo.calls.filter(call => call.operation === 'createAgent')).toEqual([]);
     expect(await h.git('status', '--porcelain')).toBe('?? lead-wip.txt');
     expect(await h.git('rev-parse', 'HEAD')).toBe(h.base);

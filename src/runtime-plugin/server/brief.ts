@@ -43,6 +43,14 @@ export function peerTitle(assignment: Nameable): string {
   return `${disposition(assignment.input.kind)} · ${gist(assignment.input.outcome)} · ${assignment.id}`;
 }
 
+/**
+ * The title of the Paseo workspace a worktree dispatch creates: what the work is, since Paseo's
+ * sidebar shows it above the branch, which already carries the assignment id.
+ */
+export function worktreeTitle(assignment: Nameable): string {
+  return gist(assignment.input.outcome);
+}
+
 function list(title: string, items: readonly string[]): string[] {
   return items.length === 0 ? [] : [`${title}:`, ...items.map(item => `- ${item}`), ''];
 }

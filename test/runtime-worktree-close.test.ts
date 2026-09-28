@@ -301,6 +301,32 @@ describe('recovery of Phase 2 intents', () => {
     expect((await h.git('worktree', 'list')).split('\n')).toHaveLength(1);
   });
 
+  it('reissues a lost worktree request with the title it recorded, so Paseo replays it rather than refusing a different request', async () => {
+    const h = await room();
+    const created = await h.controller.createAssignment(h.lead, writableBrief(h.base, { writeScope: ['src'], gate, outcome: 'Restore the facet overlay for bd workspaces on bd 1.3' }));
+    const id = created.ok ? created.value.assignmentId : '';
+    h.paseo.faults.set('createWorktreeWorkspace', { when: 'after' });
+    expect(await h.controller.dispatch(h.lead, { assignmentId: id, peerProvider: 'codex-peer', isolation: 'worktree' })).toMatchObject({ code: 'workspace_uncertain' });
+    h.paseo.faults.delete('createWorktreeWorkspace');
+    expect((await restarted(h).recoverAll())[0]?.actions).toEqual([expect.objectContaining({ outcome: 'archived-unbound' })]);
+    const titles = h.paseo.calls.filter(call => call.operation === 'createWorktreeWorkspace').map(call => (call.args[0] as { title: string }).title);
+    expect(titles).toEqual(['Restore the facet overlay for bd workspaces on…', 'Restore the facet overlay for bd workspaces on…']);
+    expect((await ledger(h)).state.workspaces.get(id)).toMatchObject({ create: 'refused', close: 'succeeded' });
+    expect(h.paseo.workspaces.size).toBe(1);
+  });
+
+  it('reissues a request recorded before titles were with the id-only title it was sent with', async () => {
+    const h = await room();
+    const { id, workspaceId } = await reserved(h);
+    // The crash came after Paseo made the worktree: its receipt holds the request of that time.
+    await h.paseo.createWorktreeWorkspace({
+      workspaceId, idempotencyKey: `ws-${id}-e1`, title: `room ${id}`, cwd: h.repo, baseCommit: h.base, branchName: `paseo-room/${id}`, worktreeSlug: id.toLowerCase(),
+    });
+    expect((await restarted(h).recoverAll())[0]?.actions).toEqual([expect.objectContaining({ intent: 'wsc-crash', outcome: 'archived-unbound' })]);
+    expect(h.paseo.workspaces.size).toBe(1);
+    expect(h.paseo.workspaces.get(workspaceId)?.archivedAt).not.toBeNull();
+  });
+
   it('records a create as failed only when the reissue replays the recorded failure and no such workspace exists', async () => {
     const h = await room();
     const created = await h.controller.createAssignment(h.lead, writableBrief(h.base, { writeScope: ['src'], gate }));

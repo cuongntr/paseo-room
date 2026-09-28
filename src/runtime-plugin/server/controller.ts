@@ -13,7 +13,7 @@ import { join } from 'node:path';
 import { isDelegating, type PeerEffortSettings } from '../shared/effort.js';
 import { worktreeQualified, type WorktreeLine } from '../shared/identity.js';
 import type { RuntimeRole } from '../shared/policy.js';
-import { assignmentName, peerTitle, renderBrief, renderContinuation } from './brief.js';
+import { assignmentName, peerTitle, renderBrief, renderContinuation, worktreeTitle } from './brief.js';
 import { mintCapability, publishCapability } from './capabilities.js';
 import type { CorrelationRegistry } from './correlations.js';
 import { evaluateAcceptance, rerunRedReason } from './domain/acceptance.js';
@@ -421,15 +421,19 @@ export class Controller {
    */
   private async createWorktree(loaded: LoadedProject, assignmentId: string, caller: Caller): Promise<ControllerResult<{ readonly path: string; readonly branch: string }>> {
     const lease = loaded.state.ownership.get(assignmentId)?.lease;
-    if (lease === undefined) return refuse('lease_missing', `Assignment ${assignmentId} holds no lease.`);
+    const view = loaded.state.assignments.get(assignmentId);
+    if (lease === undefined || view === undefined) return refuse('lease_missing', `Assignment ${assignmentId} holds no lease.`);
     const intentId = token('wsc');
     const request = {
-      workspaceId: lease.workspaceId, idempotencyKey: `ws-${assignmentId}-e${String(lease.epoch)}`, title: `room ${assignmentId}`,
+      workspaceId: lease.workspaceId, idempotencyKey: `ws-${assignmentId}-e${String(lease.epoch)}`, title: worktreeTitle(view),
       cwd: loaded.store.meta.canonicalRoot, baseCommit: lease.baseCommit, branchName: lease.branch, worktreeSlug: assignmentId.toLowerCase(),
     };
     await this.append(loaded, {
       type: 'workspace.create-requested', payloadVersion: 1, assignmentId, actor: this.plugin, idempotencyKey: intentId,
-      data: { intentId, workspaceId: request.workspaceId, idempotencyKey: request.idempotencyKey, baseCommit: request.baseCommit, branchName: request.branchName, worktreeSlug: request.worktreeSlug },
+      data: {
+        intentId, workspaceId: request.workspaceId, idempotencyKey: request.idempotencyKey, baseCommit: request.baseCommit, branchName: request.branchName,
+        worktreeSlug: request.worktreeSlug, title: request.title,
+      },
     });
     let snapshot: WorkspaceSnapshot;
     try {

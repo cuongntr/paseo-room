@@ -87,6 +87,8 @@ export interface WorkspaceRecord {
   readonly baseCommit: string;
   readonly branchName: string;
   readonly worktreeSlug: string;
+  /** The workspace title the create request sent; absent on one recorded before titles were. */
+  readonly title?: string;
   readonly create: WorkspaceCreateState;
   readonly createIntentId: string;
   readonly worktreePath?: string;
@@ -602,8 +604,8 @@ export function applyEvent(state: ProjectState, event: RuntimeEventV1): void {
     case 'workspace.create-requested':
       state.workspaces.set(id, {
         assignmentId: id, workspaceId: event.data.workspaceId, idempotencyKey: event.data.idempotencyKey, baseCommit: event.data.baseCommit,
-        branchName: event.data.branchName, worktreeSlug: event.data.worktreeSlug, create: 'requested', createIntentId: event.data.intentId,
-        close: 'open', eventIds: [event.id],
+        branchName: event.data.branchName, worktreeSlug: event.data.worktreeSlug, ...(event.data.title === undefined ? {} : { title: event.data.title }),
+        create: 'requested', createIntentId: event.data.intentId, close: 'open', eventIds: [event.id],
       });
       update(state, id, { openIntents: withIntent(view, event.data.intentId, event.type) }, event); return;
     case 'workspace.create-succeeded':
