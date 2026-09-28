@@ -791,8 +791,8 @@ work.
 
 Worktree dispatch is enabled per Paseo minor line, from the patch that passed the live
 qualification in the Phase 2 delta §9: `0.9.1` and every later `0.9` release. An earlier patch, a
-prerelease or another minor refuses `worktree_unqualified`, and dispatch without isolation still
-works.
+prerelease or build-stamped version, or another minor refuses `worktree_unqualified`, and dispatch
+without isolation still works.
 
 To stop using it, finish, close or abandon the recorded work, then run setup **without**
 `--runtime`. Setup refuses while anything is still active or uncertain — including an isolated

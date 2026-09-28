@@ -834,8 +834,9 @@ silently claiming the stronger guarantee.
   project, which is stricter: separate scopes are not evidence of separate trees, and a
   repository protocol cannot relax the limit. The only exception is runtime-isolated worktree
   dispatch (runtime Phase 2, [runtime-coordination-phase2.md](design/runtime-coordination-phase2.md)):
-  `assignment_dispatch` with `isolation: 'worktree'`, on a daemon version that passed its live
-  qualification. Every other Peer, and every writer in Lead's own workspace, keeps the limit.
+  `assignment_dispatch` with `isolation: 'worktree'`, on a daemon of a qualified Paseo line: a
+  minor from the patch that passed its live qualification. Every other Peer, and every writer in
+  Lead's own workspace, keeps the limit.
 - **No security sandbox.** The room delivers tool policy and role authority. A Peer with
   shell access is not contained by it. Withholding executable resources and `paseo*` skills
   (§2b) is capability hygiene, and the MCP check is a bounded heuristic (§2a); neither is

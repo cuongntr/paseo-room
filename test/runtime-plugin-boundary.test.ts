@@ -79,17 +79,32 @@ describe('runtime plugin module boundary', () => {
   });
 
   it('qualifies worktree dispatch only on live-qualified lines inside the plugin range', () => {
-    // Each line needs its own live record (docs/design/runtime-coordination-phase2.md §9.2, §9.3).
-    expect(QUALIFIED_WORKTREE_LINES).toEqual(['0.9.1']);
-    for (const version of QUALIFIED_WORKTREE_LINES) expect(satisfies(version, RUNTIME_PASEO_RANGE), version).toBe(true);
+    // Each line starts at a patch with its own live record (docs/design/runtime-coordination-phase2.md
+    // §9.2); the line rule, not a record, admits its later patches (§9.3).
+    expect(QUALIFIED_WORKTREE_LINES).toEqual([{ from: '0.9.1' }]);
+    for (const line of QUALIFIED_WORKTREE_LINES) {
+      expect(satisfies(line.from, RUNTIME_PASEO_RANGE), line.from).toBe(true);
+      // `satisfies` reads forms the rule does not ('v0.9.1', ' 0.9.1'); each bound must be one it reads.
+      for (const version of [line.from, ...(line.below === undefined ? [] : [line.below])]) {
+        expect(worktreeQualified(version, [{ from: version }]), version).toBe(true);
+      }
+    }
   });
 
   it('qualifies a line from its qualified patch on, and never a prerelease or another minor', () => {
     for (const version of ['0.9.1', '0.9.2', '0.9.17']) expect(worktreeQualified(version), version).toBe(true);
     const refused = ['0.9.0', '0.8.0', '0.10.0', '1.9.1', '0.10.0-beta.1', '0.9.3-beta.1', '0.9.2+build', 'v0.9.2', '0.09.2', '', undefined];
     for (const version of refused) expect(worktreeQualified(version), String(version)).toBe(false);
-    expect(worktreeQualified('0.10.2', ['0.9.1', '0.10.1'])).toBe(true);
+    expect(worktreeQualified('0.10.2', [{ from: '0.9.1' }, { from: '0.10.1' }])).toBe(true);
     expect(worktreeQualified('0.9.1', [])).toBe(false);
+  });
+
+  it('keeps a patch bounded out of its line, and admits a later one qualified again', () => {
+    const lines = [{ from: '0.9.1', below: '0.9.5' }, { from: '0.9.7' }];
+    for (const version of ['0.9.1', '0.9.4', '0.9.7', '0.9.9']) expect(worktreeQualified(version, lines), version).toBe(true);
+    for (const version of ['0.9.5', '0.9.6']) expect(worktreeQualified(version, lines), version).toBe(false);
+    // A bound the rule cannot read makes its line qualify nothing, rather than no bound at all.
+    expect(worktreeQualified('0.9.2', [{ from: '0.9.1', below: 'v0.9.5' }])).toBe(false);
   });
 
   it('keeps code modules out of the plugin root and inside the host-supplied import set', async () => {

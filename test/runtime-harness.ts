@@ -80,9 +80,10 @@ export async function harness(options: { readonly associationWaitMs?: number; re
 
   const controller = new Controller({
     runtimeRoot, paseo, git: new GitEvidence(), recognition, correlations, associationWaitMs: options.associationWaitMs ?? 200,
-    ...(options.worktrees === true ? { daemonVersion: () => QUALIFIED_TEST_DAEMON, qualifiedLines: [QUALIFIED_TEST_DAEMON] } : {}),
-    // A real daemon version, judged against the shipped qualified lines.
-    ...(options.daemonVersion === undefined ? {} : { daemonVersion: () => options.daemonVersion }),
+    // A real daemon version is judged against the shipped qualified lines; otherwise `worktrees`
+    // qualifies a fake one.
+    ...(options.daemonVersion !== undefined ? { daemonVersion: () => options.daemonVersion }
+      : options.worktrees === true ? { daemonVersion: () => QUALIFIED_TEST_DAEMON, qualifiedLines: [{ from: QUALIFIED_TEST_DAEMON }] } : {}),
     ...(options.peerEffort === undefined ? {} : { peerEffort: () => options.peerEffort as PeerEffortSettings }),
   });
   const lead: Caller = { agentId: 'lead-1', providerId: 'codex-lead', role: 'lead', workspaceId: 'ws-1', cwd: repo };

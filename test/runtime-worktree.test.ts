@@ -57,7 +57,7 @@ describe('worktree dispatch refusals', () => {
   });
 
   it('dispatches on a later patch of a qualified line, and refuses one before it or a prerelease', async () => {
-    for (const version of ['0.9.0', '0.10.0-beta.1']) {
+    for (const version of ['0.9.0', '0.9.3-beta.1', '0.10.0-beta.1']) {
       const h = await room({ daemonVersion: version });
       const id = await assignment(h);
       expect(await refusedQuietly(h, () => h.controller.dispatch(h.lead, isolated(id))), version).toBe('worktree_unqualified');

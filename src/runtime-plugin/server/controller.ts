@@ -11,7 +11,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { isDelegating, type PeerEffortSettings } from '../shared/effort.js';
-import { worktreeQualified } from '../shared/identity.js';
+import { worktreeQualified, type WorktreeLine } from '../shared/identity.js';
 import type { RuntimeRole } from '../shared/policy.js';
 import { assignmentName, peerTitle, renderBrief, renderContinuation } from './brief.js';
 import { mintCapability, publishCapability } from './capabilities.js';
@@ -58,7 +58,7 @@ export interface ControllerDependencies {
   /** The hosting daemon's version; read from Paseo's own package when not supplied. */
   readonly daemonVersion?: () => string | undefined;
   /** Minor lines on which worktree dispatch is qualified; `QUALIFIED_WORKTREE_LINES` when not supplied. */
-  readonly qualifiedLines?: readonly string[];
+  readonly qualifiedLines?: readonly WorktreeLine[];
   /** The operator's thinking envelope; the profile's option alone when not supplied. */
   readonly peerEffort?: () => PeerEffortSettings;
 }

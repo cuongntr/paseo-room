@@ -11,7 +11,8 @@
 Paseo facts below are read from the installed `0.9.1` packages and cited by path. `S/` is
 `@getpaseo/server/dist/server/` under the global `@getpaseo/cli` install; `C/` and `P/` are
 `node_modules/@getpaseo/client/dist/` and `node_modules/@getpaseo/protocol/dist/` in this repository.
-Reading source is not qualification: everything a running daemon must confirm is listed in §9.
+Reading source is not qualification: everything a running daemon must confirm is listed in §9, and
+only that live run qualifies a line (§8).
 
 ## 1. Scope
 
@@ -324,10 +325,12 @@ Restart replays events and reruns only these bounded queries; there is still no 
 - Paseo range stays `>=0.8.0 <0.10.0`, but worktree dispatch is **refused on any daemon outside a
   qualified line**. A line is a minor version, qualified from the patch that passed §9 live: it
   admits that patch and every later release of the same minor, and refuses an earlier patch, a
-  prerelease and another minor. `0.9.1` passed §9 (§9.2), so the `0.9` line is qualified from it
-  (§9.3). The refusal is a runtime check, not a range change. A new minor needs its own §9 run, as
-  it needs a range change before the plugin loads on it at all. A patch that changes a surface §9.3
-  lists is bounded out of its line until it passes §9.
+  prerelease or build-stamped version, and another minor. `0.9.1` passed §9 (§9.2), so the `0.9`
+  line is qualified from it (§9.3). The refusal is a runtime check, not a range change. A new minor
+  needs its own §9 run, as it needs a range change before the plugin loads on it at all. A later
+  patch is admitted without being read: nothing refuses it automatically. A maintainer who finds
+  that one changes a surface §9.3 lists gives its line a `below` bound in a paseo-room release, and
+  until the operator installs that release a daemon on that patch is still admitted.
 - Deselection (Phase 1 design §14) adds one step: no lease is non-released **and** no workspace
   create or close is unresolved before the plugin is unregistered. A retained worktree does not
   block it; its warning counts retained worktrees and left-behind directories apart and names a
@@ -344,8 +347,8 @@ Restart replays events and reruns only these bounded queries; there is still no 
 
 ## 9. Live Qualification — release blockers
 
-On a real daemon at the first qualified patch of each claimed minor line (§8), with the Claude
-carrier installed:
+On a real daemon at the patch a qualified line starts `from` (§8), with the Claude carrier
+installed:
 
 1. **L-1 Authority:** the plugin's IPC client may call `workspace.create.request` and
    `archive_workspace_request`, which require `workspace.manage` (`S/server/authorization/operation-permissions.js:23, 190`).
@@ -451,7 +454,7 @@ Paseo's `0.9.2` changelog.
 | `S/server/session/git-mutation/git-mutation-service.js` | a branch Paseo makes with `checkout -b` gets `--no-track` (#5249); runtime worktrees come from `git worktree add`, and the runtime never pushes |
 | `S/server/agent/tools/paseo-tools.js` | an agent's own `create_agent` tool checks that a local directory exists (#5322); not a plugin path |
 | `S/server/session/owned-subscriptions/` | per-session delivery state no longer outlives a closed session (a leak fix), for every client alike |
-| Providers, the file observer, the Git watcher, schedules, hub permissions, web UI | not on a path worktree dispatch uses |
+| Providers, the file observer, the Git watcher, schedules, hub permissions, web UI | not on a path worktree dispatch uses. Claude gains `providerOptions.extraArgs`, which a `before('agent.create')` hook may set (#5206); the room's hooks set none. |
 
 No change weakens a guarantee the runtime relies on, and two strengthen it: an archived Peer's
 history stays readable after its worktree is removed, and an unmounted volume no longer archives
@@ -465,9 +468,10 @@ outside Lead's directory, the Peer's placement is checked before its first promp
 adopts a workspace, and close reports `directoryRemoved` from disk. A patch that broke creation or
 close would show as refusals, retained worktrees or uncertain leases, not as a Peer writing in the
 wrong place. When Paseo ships a patch, compare the first two rows with the qualified patch; if
-either differs, or a change reaches a path dispatch uses, bound the line below that patch in
-`src/runtime-plugin/shared/identity.ts` until it passes §9. That comparison can bound a line; it
-never qualifies a new one.
+either differs, or a change reaches a path dispatch uses, give the line a `below` bound at that
+patch in `src/runtime-plugin/shared/identity.ts`, and add a later patch back as a new line `from` it
+once it passes §9. A bound reaches an operator only with a paseo-room release. That comparison can
+bound a line; it never qualifies a new one.
 
 ## 10. Open Questions
 
@@ -483,7 +487,7 @@ never qualifies a new one.
 
 | Date | Author | Change |
 |---|---|---|
-| 2026-09-28 | Repository owner / Bytes | §8 qualifies worktree dispatch per minor line from its live-qualified patch, instead of per exact patch; §9.3 records the `0.9.1` → `0.9.2` comparison that admits `0.9.2`, and how a later patch is bounded out. `QUALIFIED_WORKTREE_DAEMONS` became `QUALIFIED_WORKTREE_LINES`. No event, authority or tool change. |
+| 2026-09-28 | Repository owner / Bytes | §8 qualifies worktree dispatch per minor line from its live-qualified patch, instead of per exact patch; §9.3 records the `0.9.1` → `0.9.2` comparison that admits `0.9.2`, and how a later patch is bounded out. `QUALIFIED_WORKTREE_DAEMONS` became `QUALIFIED_WORKTREE_LINES`, whose lines carry a `from` patch and an optional `below` bound. No event, authority or tool change. |
 | 2026-09-23 | Bytes | After code review (0c56cd8, 226b833, 2db759e): §7 now records a worktree create as failed only on a conflict or a replayed recorded failure, never on a new error; §8 names the single worktree-disposition rule, on-disk re-checks of left-behind directories, and the split retained/leftover counts. No event or contract change. |
 | 2026-09-23 | Bytes | Recorded §9.2: L-2 to L-7 and reclaim pass live on an isolated `0.9.1` daemon with `codex-peer`, `claude-peer` and `pi-peer`, after fixing three recovery defects the run exposed; `0.9.1` added to the qualified list. |
 | 2026-09-23 | Repository owner / Bytes | Approved the §3 amendment (Q-P2-01) and landed it: `lead.md` Moving Write Ownership, the `shared-authority.md` Authority Floor, their static tests, `AGENTS.md`, `docs/design.md`, `README.md`, orchestration-hardening Q-003 and PRD Q-011. Design Active; the implementation plan may now be drafted. |
