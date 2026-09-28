@@ -173,8 +173,11 @@ cannot produce a candidate and cannot be waived into one by Lead.
 
 `GateSpecV1.runtimeRerun` separately selects `none`, `optional`, or `required`. An explicit Lead
 `gate_run` performs an independent rerun against an already validated candidate. It never substitutes
-for Peer verification. If `required`, acceptance waits for a terminal rerun result; if `optional`,
-absence is displayed without weakening the Peer gate requirement.
+for Peer verification. Lead ends its turn while the gate runs, so the gate's end — green, red or
+uncertain — is an `owner` notice to Lead naming the gate, the candidate and why a red result is red;
+a result that settles after Lead has decided is only recorded. If `required`, acceptance waits for a
+terminal rerun result; if `optional`, absence is displayed without weakening the Peer gate
+requirement.
 
 The runtime gate process contract is fixed. `timeoutSeconds` is an integer from 1 through 3,600,
 the exact command is at most 16 KiB, the retained combined stdout/stderr tail is at most 64 KiB, and
@@ -250,8 +253,8 @@ Every signal first enters one code-owned class:
 
 | Class | Default behavior | Examples |
 |---|---|---|
-| `record` | event/status only | normal create, dispatch, rework, acceptance, green gate |
-| `owner` | notify Lead | Peer question, invalid result, blocked handback, candidate movement, red/unrun gate |
+| `record` | event/status only | normal create, dispatch, rework, acceptance, a gate result that settles after Lead decided |
+| `owner` | notify Lead | Peer question, invalid result, blocked handback, candidate movement, red/unrun Peer gate, the end of a `gate_run` Lead requested (green, red or uncertain) |
 | `operator` | notify/show operator | plugin, manifest, state, export or compatibility fault |
 | `page` | notify the authority recipient immediately; never filtered or budgeted | duplicate/ambiguous Lead, writer ownership conflict, unavailable Lead with active work, explicit Human-boundary or irreversible-risk condition |
 | `attention` | incident/panel first; deterministic Phase 3 policy may digest it | recurring rework, repeated weak evidence, possible goal drift or stalled progress |
@@ -611,8 +614,14 @@ ancestry, cleanliness, changed paths, workspace and immutable candidate. Read-on
 and relevant workspace facts are likewise derived, never copied from Peer claims.
 
 A turn that ends without an accepted reporting action after every spool entry is terminal produces
-`peer.report-missing`, projects `blocked` and notifies Lead. Unresolved report persistence instead
-produces `peer.report-uncertain`, projects `uncertain` and holds the generation fence closed. Final prose,
+`peer.report-missing`, projects `blocked` and notifies Lead. Only the open generation's own turn is
+judged: Lead may answer the moment the asking turn ends, and that answer opens the next generation
+before the runtime has judged the asking turn. The runtime notes when each turn began, as Paseo
+announces it; a turn that began before the open generation's prompt was requested is an earlier turn
+ending late and is not judged. Recovery likewise leaves a generation whose turn has not begun while
+the runtime was listening, as long as its Peer is idle and could still begin it; a Peer closed,
+archived or failed first is judged. Unresolved report persistence instead produces
+`peer.report-uncertain`, projects `uncertain` and holds the generation fence closed. Final prose,
 fenced JSON, canonical/projected message content and turn completion may aid diagnostics but never
 create a question, handoff, candidate or acceptance. There is no parser, fence removal, embedded-JSON
 extraction, repair loop, implicit retry, model substitution or automatic context transfer.
@@ -998,7 +1007,7 @@ record write failed. Recovery converges the record to observed reality or asks f
 | agent `run()`/prompt | fresh agent turn/timeline evidence tied to the captured reporting generation and exact dispatched prompt; absent or ambiguous evidence remains uncertain | blind resend, opening a later generation, or inferring delivery from a lifecycle notification |
 | reporting-tool permission | live provider permission state for the bound agent and exact tool name | treating a pending or denied permission as a missing report, or answering it on the seat's behalf |
 | Peer reporting action | durable accepted-action/receipt event bound to the lifetime identity and captured reporting generation; an unresolved spool request retains that generation and is revalidated against fresh live facts | reparsing direct/canonical/projected messages, assigning an old request to a newer generation, or treating turn completion as a report |
-| Peer turn end missed while the plugin was down | the open generation's prompt in the timeline, no active turn, status `idle`/`error`/`closed`, and a Paseo record updated after that prompt; judged by the turn-end handler's logic, `report.uncertain` while any spool request is unresolved | treating a lifecycle notification as the only evidence of a turn end, or recording `report.missing` over an unresolved report |
+| Peer turn end missed while the plugin was down | the open generation's prompt in the timeline, no active turn, status `idle`/`error`/`closed`, and a Paseo record updated after that prompt; when the prompt was requested while the runtime was listening and the Peer is idle and unarchived, also an announced turn start after it; judged by the turn-end handler's logic, `report.uncertain` while any spool request is unresolved | treating a lifecycle notification as the only evidence of a turn end, recording `report.missing` over an unresolved report, or judging an earlier turn's late end as the open generation's |
 | gate run | atomically published terminal result sidecar plus candidate/workspace identity | treating plugin restart, missing result, or a reused numeric PID as pass/fail/stopped |
 | agent archive/writer release | successful archive result plus corroborating live Paseo status | treating assignment close, idle, turn completion, acceptance, rejection, abandonment or time as stopped |
 | Phase 2 workspace close | live workspace status from Paseo after writer release | reusing path because a timeout elapsed |
@@ -1642,6 +1651,7 @@ Q-011 do not block Phases 0–1 because those phases contain no sensor and no wo
 
 | Date | Author | Change |
 |---|---|---|
+| 2026-09-28 | Repository owner / Bytes | Two defects found in live use (cmdb, 2026-09-27) fixed. D9 moves a green `gate_run` from `record` to `owner`: Lead ended its turn to wait for a gate that never told it the gate had finished, and the project stood idle about 2.5 hours; every end of a gate Lead requested now reaches Lead, while a result settling after Lead decided is only recorded. §3.4 and the recovery table judge only the open generation's own Peer turn: an answer sent the moment the asking turn ended had its generation closed as `report.missing` by that earlier turn, and the Peer's real handoff was refused `report_stale`. No seat gains or loses authority; Lead receives one more `owner` notice kind (`gate-ended`). |
 | 2026-09-27 | Repository owner / Bytes | D4 Human row gains the [seat context delta](runtime-coordination-seat-context.md)'s K2 action: replacing a project Lead after a reviewed handoff. It is Human's existing "reassigns the project" (`lead.md`), carried out through Paseo: the runtime asks the Lead for a handoff, archives it and creates its successor only on Human's instruction. No seat gains or loses authority; the handoff request and the successor's kickoff grant nothing, and no contract asset changes. |
 | 2026-09-26 | Repository owner / Bytes | D4 Human row gains the [seat context delta](runtime-coordination-seat-context.md)'s K1 actions: per-role context budgets, and Start Lead for an observed project. No seat gains or loses authority: `context-high` is a fact line to a Supervisor, and `assignment_status` keeps its fields while leaving the brief out by default. |
 | 2026-09-25 | Repository owner / Bytes | §3.1 launch rule amended by the [peer-effort delta](runtime-coordination-peer-effort.md): Lead may choose a runtime Peer's thinking option inside an operator-set envelope, validated against Paseo's listed options; the runtime still chooses none, and model identity is unchanged. |

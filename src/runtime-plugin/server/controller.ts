@@ -16,12 +16,12 @@ import type { RuntimeRole } from '../shared/policy.js';
 import { assignmentName, peerTitle, renderBrief, renderContinuation } from './brief.js';
 import { mintCapability, publishCapability } from './capabilities.js';
 import type { CorrelationRegistry } from './correlations.js';
-import { evaluateAcceptance } from './domain/acceptance.js';
+import { evaluateAcceptance, rerunRedReason } from './domain/acceptance.js';
 import { sha256 } from './domain/receipts.js';
 import { normalizeScope, parseScope } from './domain/scope.js';
 import { activeLeases, applyEvent, checkEvent, leadWorkspaceWriter, leaseCollision, project, reclaimCheck, type AssignmentView, type ProjectState } from './domain/state.js';
 import { validateAssignmentCreate } from './domain/validate.js';
-import { EVENT_SCHEMA, type RuntimeEventV1 } from './events/schema.js';
+import { EVENT_SCHEMA, type GateResultV1, type RuntimeEventV1 } from './events/schema.js';
 import { gateRequestedData, runGate, type GateEvent, type GateOutcome, type GateRequest } from './gate.js';
 import type { GitEvidence, WorktreeProof } from './git.js';
 import { hostPaseoVersion } from './host.js';
@@ -675,6 +675,7 @@ export class Controller {
           const fresh = await this.load(store);
           if (!fresh.ok) throw new Error(fresh.message);
           await this.append(fresh.value, { ...event, payloadVersion: 1, assignmentId: view.id, actor: this.plugin });
+          if (event.type !== 'gate.requested') await this.gateEnded(fresh.value, view.id, event.data);
         });
       };
       // The process runs after this queue slot is released, so its own appends can proceed. Any
@@ -691,6 +692,31 @@ export class Controller {
       this.gates.set(gateRunId, started);
       return done({ gateRunId });
     });
+  }
+
+  /**
+   * Tells Lead that a runtime gate it asked for has ended, green or not (D9 `owner`): Lead ends its
+   * turn while the gate runs, and nothing else would wake it. A result settling after Lead has
+   * decided changes nothing, and is only recorded. Call inside the project's queue, once the
+   * `gate.finished` or `gate.uncertain` event is recorded.
+   */
+  async gateEnded(loaded: LoadedProject, assignmentId: string, ended: { readonly result: GateResultV1 } | { readonly gateRunId: string; readonly reason: string }): Promise<void> {
+    const view = loaded.state.assignments.get(assignmentId);
+    if (view === undefined || view.decision !== undefined) return;
+    let text: string;
+    if ('result' in ended) {
+      const red = rerunRedReason(ended.result);
+      const on = `on candidate ${ended.result.candidate.commit.slice(0, 12)}`;
+      text = red === undefined
+        ? `The runtime gate ${ended.result.id} of ${assignmentName(view)} passed ${on}: exit 0. Accepting it is still your decision.`
+        : `The runtime gate ${ended.result.id} of ${assignmentName(view)} is red ${on}: ${red}.${ended.result.workspaceMoved ? ' Request a new handoff.' : ''}`;
+    } else {
+      text = `The runtime gate ${ended.gateRunId} of ${assignmentName(view)} has no trustworthy result (${ended.reason.replace(/\.$/, '')}). Run gate_run again if the assignment needs it.`;
+    }
+    await this.notices.notify(loaded, {
+      kind: 'gate-ended', class: 'owner', disposition: 'lead-now', assignmentId, text,
+      recipient: { agentId: view.leadAgentId, role: 'lead' },
+    }).catch(() => undefined);
   }
 
   /** Lead's technical decision, bound to the exact candidate and its evidence. */

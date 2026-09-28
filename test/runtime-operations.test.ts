@@ -111,6 +111,25 @@ describe('gate, decisions and closure', () => {
     expect((await view(d)).view?.decision?.type).toBe('accepted');
   });
 
+  it('tells Lead when the gate it asked for ends, green or red', async () => {
+    // Lead ends its turn while the gate runs; a finished gate is the only thing that wakes it.
+    const green = await dispatched();
+    await report(green, 'handoff');
+    const passed = await green.h.controller.gateRun(green.h.lead, { assignmentId: green.id });
+    if (!passed.ok) throw new Error(passed.message);
+    await green.h.controller.gates.get(passed.value.gateRunId);
+    expect(green.h.paseo.agents.get('lead-1')?.prompts.at(-1)?.text).toMatch(new RegExp(`runtime gate ${passed.value.gateRunId} of .+ passed on candidate [0-9a-f]{12}: exit 0\\.`));
+
+    const red = await dispatched({ gate: { command: 'exit 3', timeoutSeconds: 30, runtimeRerun: 'optional', processContractVersion: 1 } });
+    await report(red, 'handoff');
+    const failed = await red.h.controller.gateRun(red.h.lead, { assignmentId: red.id });
+    if (!failed.ok) throw new Error(failed.message);
+    await red.h.controller.gates.get(failed.value.gateRunId);
+    expect(red.h.paseo.agents.get('lead-1')?.prompts.at(-1)?.text).toMatch(new RegExp(`runtime gate ${failed.value.gateRunId} of .+ is red on candidate [0-9a-f]{12}: it exited 3\\.$`));
+    const notice = (await loaded(red.h)).events.find(event => event.type === 'notice.pending' && event.data.kind === 'gate-ended');
+    expect(notice).toMatchObject({ assignmentId: red.id, data: { class: 'owner', disposition: 'lead-now', recipientAgentId: 'lead-1' } });
+  });
+
   it('refuses acceptance of a moved candidate and requires an override for red evidence', async () => {
     const moved = await dispatched();
     await report(moved, 'handoff');

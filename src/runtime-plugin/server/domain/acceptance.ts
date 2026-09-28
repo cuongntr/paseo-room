@@ -6,6 +6,7 @@
  * missing Peer gate produces no candidate at all, and a missing required rerun keeps acceptance
  * disabled — neither can be waived after handoff.
  */
+import type { GateResultV1 } from '../events/schema.js';
 import type { AssignmentView, GateRun } from './state.js';
 
 export type AcceptanceCode =
@@ -33,9 +34,18 @@ function peerVerification(view: AssignmentView): 'passed' | 'failed' | 'not-run'
   return outcome === 'passed' || outcome === 'failed' || outcome === 'not-run' ? outcome : undefined;
 }
 
+/** Why a finished runtime gate is red, or undefined when it is green. */
+export function rerunRedReason(result: GateResultV1): string | undefined {
+  if (result.workspaceMoved) return 'the workspace moved while it ran';
+  if (result.timedOut) return 'it timed out';
+  if (result.termination === 'uncertain') return 'how it ended is uncertain';
+  if (result.termination !== 'exited') return `it was ${result.termination}${result.signal === undefined ? '' : ` by ${result.signal}`}`;
+  if (result.exitCode !== 0) return `it exited ${result.exitCode === undefined ? 'without a code' : String(result.exitCode)}`;
+  return undefined;
+}
+
 function rerunIsRed(gate: GateRun): boolean {
-  const result = gate.result;
-  return result === undefined || result.timedOut || result.termination !== 'exited' || result.exitCode !== 0 || result.workspaceMoved;
+  return gate.result === undefined || rerunRedReason(gate.result) !== undefined;
 }
 
 export function evaluateAcceptance(view: AssignmentView, request: AcceptanceRequest): AcceptanceDecision {

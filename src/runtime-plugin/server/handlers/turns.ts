@@ -6,6 +6,10 @@
  * never read as a report. Unresolved report persistence is uncertain instead, and holds the
  * generation fence closed. A pending permission for the reporting tool is an expected wait, not
  * a missing report; the runtime never answers it, because that decision belongs to a person.
+ *
+ * A turn is judged only as the open generation's own turn. Lead may answer the moment the asking
+ * turn ends, and the answer opens the next generation before this handler has judged that turn;
+ * the earlier turn's end must not close the generation its answer opened.
  */
 import type { PluginLifecycleEvents } from '@getpaseo/plugin/server';
 import { assignmentName } from '../brief.js';
@@ -21,6 +25,50 @@ const plugin = { source: 'plugin' as const };
 export function reportingToolOf(name: string): 'ask' | 'handoff' | undefined {
   const match = new RegExp(`(?:^|__)${BRIDGE_SERVER_NAME}__(ask|handoff)$`).exec(name);
   return match?.[1] === 'ask' || match?.[1] === 'handoff' ? match[1] : undefined;
+}
+
+/** Starts kept per agent, and agents kept at all; a Peer's turns never overlap, so a few suffice. */
+const KEPT_STARTS = 8;
+const KEPT_AGENTS = 1_000;
+
+/**
+ * When each turn began, as Paseo announced it to this process. It tells a late end of an earlier
+ * turn from the end of the turn a new prompt opened. Knowledge starts with the process: a turn that
+ * began before it is unknown, and is judged as it always was.
+ */
+export class TurnStarts {
+  /** Every turn that began at or after this instant was announced here. */
+  readonly since: number;
+  private readonly starts = new Map<string, { readonly turnId: string | null; readonly at: number }[]>();
+
+  constructor(private readonly now: () => number = Date.now) {
+    this.since = now();
+  }
+
+  started(agentId: string, turnId: string | null): void {
+    const kept = (this.starts.get(agentId) ?? []).slice(-(KEPT_STARTS - 1));
+    this.starts.delete(agentId);
+    this.starts.set(agentId, [...kept, { turnId, at: this.now() }]);
+    const oldest = this.starts.size > KEPT_AGENTS ? this.starts.keys().next().value : undefined;
+    if (oldest !== undefined) this.starts.delete(oldest);
+  }
+
+  /** When the named turn began; without a turn id, the latest start, since an agent's turns never overlap. */
+  startOf(agentId: string, turnId: string | null): number | undefined {
+    const starts = this.starts.get(agentId) ?? [];
+    return (turnId === null ? starts.at(-1) : starts.filter(start => start.turnId === turnId).at(-1))?.at;
+  }
+
+  /** Whether a turn of the agent began at or after `at`. */
+  startedSince(agentId: string, at: number): boolean {
+    return (this.starts.get(agentId) ?? []).some(start => start.at >= at);
+  }
+}
+
+/** When the open generation's prompt was requested, from the ledger. */
+export function promptRequestedAt(loaded: LoadedProject, view: AssignmentView): number | undefined {
+  const requested = loaded.events.filter(event => event.type === 'run.requested' && event.assignmentId === view.id && event.data.generation === view.runGeneration).at(-1);
+  return requested === undefined ? undefined : Date.parse(requested.occurredAt);
 }
 
 interface Located {
@@ -66,12 +114,13 @@ export async function settleEndedTurn(controller: Controller, spool: Spool, load
 }
 
 export interface TurnHandlers {
+  turnStarted(event: PluginLifecycleEvents['agent.turn_started']): void;
   turnEnded(event: PluginLifecycleEvents['agent.turn_ended']): Promise<'missing' | 'uncertain' | 'waiting' | 'none'>;
   permissionRequested(event: PluginLifecycleEvents['agent.permission_requested']): Promise<boolean>;
   permissionResolved(event: PluginLifecycleEvents['agent.permission_resolved']): Promise<boolean>;
 }
 
-export function createTurnHandlers(controller: Controller, spool: Spool): TurnHandlers {
+export function createTurnHandlers(controller: Controller, spool: Spool, starts: TurnStarts): TurnHandlers {
   const within = async <T>(agentId: string, fallback: T, work: (loaded: LoadedProject, view: AssignmentView) => Promise<T>): Promise<T> => {
     const located = await locatePeer(controller, agentId);
     if (located === undefined) return fallback;
@@ -83,10 +132,21 @@ export function createTurnHandlers(controller: Controller, spool: Spool): TurnHa
   };
 
   return {
+    turnStarted(event) {
+      starts.started(event.agent.id, event.turnId);
+    },
+
     async turnEnded(event) {
+      // Read before any wait: once this turn has ended, the next may start before it is judged.
+      const startedAt = starts.startOf(event.agent.id, event.turnId);
       // Let every report this turn sent reach a terminal reply before judging the turn.
       await spool.schedule();
-      return await within(event.agent.id, 'none' as const, async (loaded, view) => await settleEndedTurn(controller, spool, loaded, view, event.agent.id));
+      return await within(event.agent.id, 'none' as const, async (loaded, view) => {
+        const requestedAt = promptRequestedAt(loaded, view);
+        // Began before this generation's prompt was sent: an earlier turn ending late.
+        if (startedAt !== undefined && requestedAt !== undefined && startedAt < requestedAt) return 'none';
+        return await settleEndedTurn(controller, spool, loaded, view, event.agent.id);
+      });
     },
 
     async permissionRequested(event) {

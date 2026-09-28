@@ -10,7 +10,7 @@ import type { CompactMarkDependencies, HookDependencies } from './hooks.js';
 import { GitEvidence } from './git.js';
 import { createLeadHandlers, createSupervisorHandlers } from './handlers/actions.js';
 import { createPeerHandlers } from './handlers/peer.js';
-import { createTurnHandlers, type TurnHandlers } from './handlers/turns.js';
+import { createTurnHandlers, TurnStarts, type TurnHandlers } from './handlers/turns.js';
 import { PaseoHandle, sdkPaseoPort } from './paseo-port.js';
 import { Recognition, type ManifestState } from './recognition.js';
 import { Recovery } from './recovery.js';
@@ -110,13 +110,14 @@ export function createRuntimeContext(location: RoomLocation, nodePath = process.
     log: message => { console.error(`[paseo-room-runtime] ${message}`); },
   });
   const ready = recognition.load();
+  const turnStarts = new TurnStarts();
   return {
     location,
     recognition,
     correlations,
     handle,
     controller,
-    recovery: new Recovery(controller, spool),
+    recovery: new Recovery(controller, spool, turnStarts),
     hooks: {
       recognition, correlations, nodePath, runtimeRoot: location.runtimeRoot,
       bridgeScript: join(location.pluginDirectory, 'server', 'bridge', 'bridge.mjs'),
@@ -127,7 +128,7 @@ export function createRuntimeContext(location: RoomLocation, nodePath = process.
     },
     registries,
     spool,
-    turns: createTurnHandlers(controller, spool),
+    turns: createTurnHandlers(controller, spool, turnStarts),
     attention,
     attentionSettings,
     attentionKey,

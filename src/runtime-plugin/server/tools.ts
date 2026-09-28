@@ -38,7 +38,7 @@ const DESCRIPTIONS: Readonly<Record<string, string>> = {
   assignment_abandon: 'Abandon an assignment.',
   assignment_close: 'Close a decided assignment by archiving its Peer. Your workspace is not closed.',
   assignment_status: `Read one assignment, or all of yours. By default the brief you wrote is left out (its outcome stays), history keeps its latest ${String(LEAN_HISTORY)} entries, and a decided assignment with nothing left to close, its worktree included, is one line. full: true returns every assignment whole.`,
-  gate_run: 'Run the assignment\'s exact gate command independently against the handed-back candidate.',
+  gate_run: 'Run the assignment\'s exact gate command independently against the handed-back candidate. It runs in the background, and a notice tells you when it ends; you need not wait or poll.',
   workspace_close: 'Close the worktree of a closed isolated assignment that the runtime retained. discardUncommitted with a reason destroys its uncommitted work; the branch is kept.',
   lease_reclaim: 'Reclaim an isolated assignment\'s worktree after its Peer is proven archived, and dispatch a new Peer into it at the next lease epoch.',
   ask: 'Ask Lead a blocking question about your current assignment. Your turn should end after this call.',

@@ -57,6 +57,25 @@ describe('gate_run review fixes', () => {
     if (!started.ok) throw new Error(started.message);
     expect(await h.controller.gates.get(started.value.gateRunId)).toMatchObject({ status: 'uncertain' });
     expect((await loaded(h)).state.assignments.get(id)?.gates.map(gate => gate.status)).toEqual(['uncertain']);
+    expect(h.paseo.agents.get('lead-1')?.prompts.at(-1)?.text).toContain(`runtime gate ${started.value.gateRunId} of`);
+    expect(h.paseo.agents.get('lead-1')?.prompts.at(-1)?.text).toContain('has no trustworthy result (The gate runner failed:');
+  });
+
+  it('tells Lead about a gate that finished while the runtime was down', async () => {
+    const h = await room();
+    const { id } = await handedBack(h);
+    const project = await loaded(h);
+    const view = project.state.assignments.get(id);
+    if (view?.candidate === undefined) throw new Error('missing candidate');
+    await h.controller.append(project, { type: 'gate.requested', payloadVersion: 1, assignmentId: id, actor: { source: 'plugin' }, data: { gateRunId: 'gate-down', candidate: view.candidate, command: 'sleep 1', timeoutSeconds: 30, processContractVersion: 1, environmentPolicyVersion: 1 } });
+    await writeFile(join(project.store.gatesDirectory, 'gate-down.result.json'), JSON.stringify({
+      id: 'gate-down', assignmentId: id, candidate: view.candidate, command: 'sleep 1', startedAt: '2026-09-22T10:00:00Z',
+      exitCode: 0, timedOut: false, termination: 'exited', processContractVersion: 1, environmentPolicyVersion: 1, outputDigest: `sha256:${'0'.repeat(64)}`, workspaceMoved: false,
+    }));
+    await new Recovery(h.controller).recoverAll();
+    expect((await loaded(h)).state.assignments.get(id)?.gates.map(gate => gate.status)).toEqual(['finished']);
+    expect(h.paseo.agents.get('lead-1')?.prompts.at(-1)?.text).toContain('runtime gate gate-down of');
+    expect(h.paseo.agents.get('lead-1')?.prompts.at(-1)?.text).toContain('passed on candidate');
   });
 
   it('lets an uncertain gate settle from a late sidecar and stops it blocking once the Peer is archived', async () => {
@@ -77,6 +96,8 @@ describe('gate_run review fixes', () => {
     }));
     await new Recovery(h.controller).recoverAll();
     expect((await loaded(h)).state.assignments.get(id)?.gates.map(gate => gate.status)).toEqual(['finished']);
+    // Lead decided before the result settled: it is recorded, and Lead is not woken for it.
+    expect((await loaded(h)).events.some(event => event.type === 'notice.pending' && event.data.kind === 'gate-ended')).toBe(false);
   });
 });
 

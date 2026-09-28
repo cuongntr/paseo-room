@@ -79,7 +79,7 @@ export default function contribute(server: PluginServerContext): () => void {
   const { attention } = runtime;
   disposers.push(registerLifecycle(server, runtime.handle, runtime.recovery, {
     created: async event => { await attention.onCreated(event.agent.id); },
-    turnStarted: async event => { await attention.onTurnStarted(event.agent.id); },
+    turnStarted: async event => { runtime.turns.turnStarted(event); await attention.onTurnStarted(event.agent.id); },
     archived: async event => { await attention.onArchived(event.agent.id, event.archivedAt); },
     turnEnded: async event => {
       await runtime.turns.turnEnded(event);

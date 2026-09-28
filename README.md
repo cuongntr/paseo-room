@@ -626,6 +626,8 @@ npx paseo-room verify
 - **Lead** gains room tools such as `assignment_create`, `assignment_dispatch`, `assignment_answer`,
   `assignment_accept`, `gate_run`, and for isolated writers `workspace_close` and `lease_reclaim`.
   `assignment_create` refuses a base that is not a commit of the repository (`base_unknown`).
+  `gate_run` runs in the background, and a notice tells Lead when the gate ends, green, red or
+  without a trustworthy result.
   `assignment_status` leaves out the brief Lead wrote (its outcome stays), keeps the last 10 history
   entries, and gives a decided assignment with nothing left to close one line, unless Lead passes
   `full: true`.

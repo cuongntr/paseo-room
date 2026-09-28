@@ -22,7 +22,7 @@
 import type { Controller, LoadedProject } from './controller.js';
 import type { AssignmentView } from './domain/state.js';
 import { recoverGate } from './gate.js';
-import { settleEndedTurn } from './handlers/turns.js';
+import { promptRequestedAt, settleEndedTurn, type TurnStarts } from './handlers/turns.js';
 import { checkLeadOwnership } from './ownership.js';
 import { ASSIGNMENT_LABEL, CreationConflictError, PARENT_AGENT_ID_LABEL, peerStopped, type AgentSnapshot, type WorkspaceSnapshot } from './paseo-port.js';
 import type { Spool } from './spool.js';
@@ -49,7 +49,7 @@ function lastIntent(loaded: LoadedProject, assignmentId: string, type: 'archive.
 }
 
 export class Recovery {
-  constructor(private readonly controller: Controller, private readonly spool?: Spool) {}
+  constructor(private readonly controller: Controller, private readonly spool?: Spool, private readonly turns?: TurnStarts) {}
 
   async recoverAll(): Promise<RecoveryReport[]> {
     const stores = await ProjectStore.list(this.controller.deps.runtimeRoot, this.controller.deps.now);
@@ -99,6 +99,7 @@ export class Recovery {
           const late = await recoverGate(gate.gateRunId, loaded.value.store.gatesDirectory);
           if (late.status === 'finished') {
             await this.controller.append(loaded.value, { type: 'gate.finished', payloadVersion: 1, assignmentId: view.id, actor: plugin, data: { result: late.result } });
+            await this.controller.gateEnded(loaded.value, view.id, { result: late.result });
             actions.push({ assignmentId: view.id, intent: gate.gateRunId, outcome: 'succeeded', detail: 'A late gate result sidecar settled the gate.' });
           }
         }
@@ -152,6 +153,12 @@ export class Recovery {
     if ((view.state !== 'active' && view.state !== 'awaiting-permission') || Object.values(view.openIntents).includes('run.requested')) return undefined;
     const live = await this.controller.deps.paseo.getAgent(agentId);
     if (live === undefined || !turnIsOver(live)) return undefined;
+    // Every turn start since the prompt was sent was announced here; with none, the generation's
+    // turn has not begun, and the end just seen belonged to an earlier turn. An idle Peer will still
+    // begin it; one closed, archived or failed never will, and is judged now.
+    const requestedAt = promptRequestedAt(loaded, view);
+    const unbegun = this.turns !== undefined && requestedAt !== undefined && requestedAt >= this.turns.since && !this.turns.startedSince(agentId, requestedAt);
+    if (unbegun && live.status === 'idle' && live.archivedAt === null) return undefined;
     const intent = `turn-g${String(view.runGeneration)}`;
     if (await this.controller.deps.paseo.promptDelivered(agentId, `${view.id}-g${String(view.runGeneration)}`) !== 'delivered') return undefined;
     const outcome = await settleEndedTurn(this.controller, this.spool, loaded, view, agentId);
@@ -267,10 +274,12 @@ export class Recovery {
     const outcome = await recoverGate(gateRunId, loaded.store.gatesDirectory);
     if (outcome.status === 'finished') {
       await this.controller.append(loaded, { type: 'gate.finished', payloadVersion: 1, assignmentId, actor: plugin, data: { result: outcome.result } });
+      await this.controller.gateEnded(loaded, assignmentId, { result: outcome.result });
       return { assignmentId, intent: gateRunId, outcome: 'succeeded', detail: 'The gate result sidecar was published.' };
     }
     const reason = outcome.status === 'uncertain' ? outcome.reason : outcome.message;
     await this.controller.append(loaded, { type: 'gate.uncertain', payloadVersion: 1, assignmentId, actor: plugin, data: { gateRunId, reason } });
+    await this.controller.gateEnded(loaded, assignmentId, { gateRunId, reason });
     return { assignmentId, intent: gateRunId, outcome: 'uncertain', detail: reason };
   }
 }
