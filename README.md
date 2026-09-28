@@ -766,7 +766,7 @@ and the refusal is final for that dispatch — narrow or sequence the work:
 
 | Code | Why |
 |---|---|
-| `worktree_unqualified` | the daemon's version has not passed live qualification for worktree dispatch |
+| `worktree_unqualified` | the daemon is not on a Paseo line qualified for worktree dispatch: `0.9.1` or a later `0.9` release |
 | `worktree_setup_unobservable` | `paseo.json` at the base declares `worktree.setup`, which Paseo runs where the runtime cannot see it finish |
 | `scope_not_canonical` | a `writeScope` or `serialOnly` item is not a repository-relative path or `*`/`?`/`**` glob |
 | `writer_exclusive` | a writer is still active in Lead's workspace (or, the other way round, isolated writers are active) |
@@ -789,9 +789,10 @@ the same worktree at the next lease epoch; the old Peer's late reports are refus
 the Human form of both, only where the runtime would accept it, and asks twice before discarding
 work.
 
-Worktree dispatch is enabled per daemon version, only after the live qualification in the Phase 2
-delta §9 passes on that version; `0.9.1` is qualified. On any other version the runtime refuses
-`worktree_unqualified` and dispatch without isolation still works.
+Worktree dispatch is enabled per Paseo minor line, from the patch that passed the live
+qualification in the Phase 2 delta §9: `0.9.1` and every later `0.9` release. An earlier patch, a
+prerelease or another minor refuses `worktree_unqualified`, and dispatch without isolation still
+works.
 
 To stop using it, finish, close or abandon the recorded work, then run setup **without**
 `--runtime`. Setup refuses while anything is still active or uncertain — including an isolated

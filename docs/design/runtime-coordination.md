@@ -1448,8 +1448,8 @@ Phase 2 is authorized by its own design delta,
 amendment — granting only runtime-managed, worktree-isolated concurrency — the repository owner
 approved and landed on 2026-09-23. The delta governs; the list below is the original scope. It is
 implemented by the [Phase 2 plan](../plans/runtime-coordination-phase2-implementation-plan.md)
-and enabled per qualified daemon version (delta §8, §9); `0.9.1` qualified live on 2026-09-23
-(delta §9.2).
+and enabled per qualified Paseo minor line (delta §8, §9); `0.9.1` qualified live on 2026-09-23
+(delta §9.2), and the `0.9` line from it on 2026-09-28 (delta §9.3).
 
 - PRD REQ-010 and REQ-011;
 - multiple writable Peers;
@@ -1651,6 +1651,7 @@ Q-011 do not block Phases 0–1 because those phases contain no sensor and no wo
 
 | Date | Author | Change |
 |---|---|---|
+| 2026-09-28 | Repository owner / Bytes | §13 Phase 2: worktree dispatch is enabled per qualified Paseo minor line from its live-qualified patch ([Phase 2 delta](runtime-coordination-phase2.md) §8, §9.3), so `0.9.2` is admitted without its own live run. No event, authority or tool change. |
 | 2026-09-28 | Repository owner / Bytes | Two defects found in live use (cmdb, 2026-09-27) fixed. D9 moves a green `gate_run` from `record` to `owner`: Lead ended its turn to wait for a gate that never told it the gate had finished, and the project stood idle about 2.5 hours; every end of a gate Lead requested now reaches Lead, while a result settling after Lead decided is only recorded. §3.4 and the recovery table judge only the open generation's own Peer turn: an answer sent the moment the asking turn ended had its generation closed as `report.missing` by that earlier turn, and the Peer's real handoff was refused `report_stale`. No seat gains or loses authority; Lead receives one more `owner` notice kind (`gate-ended`). |
 | 2026-09-27 | Repository owner / Bytes | D4 Human row gains the [seat context delta](runtime-coordination-seat-context.md)'s K2 action: replacing a project Lead after a reviewed handoff. It is Human's existing "reassigns the project" (`lead.md`), carried out through Paseo: the runtime asks the Lead for a handoff, archives it and creates its successor only on Human's instruction. No seat gains or loses authority; the handoff request and the successor's kickoff grant nothing, and no contract asset changes. |
 | 2026-09-26 | Repository owner / Bytes | D4 Human row gains the [seat context delta](runtime-coordination-seat-context.md)'s K1 actions: per-role context budgets, and Start Lead for an observed project. No seat gains or loses authority: `context-high` is a fact line to a Supervisor, and `assignment_status` keeps its fields while leaving the brief out by default. |

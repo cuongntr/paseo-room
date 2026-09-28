@@ -321,9 +321,13 @@ Restart replays events and reruns only these bounded queries; there is still no 
 
 - Gated twice: the §3 amendment landed, and an explicit `isolation: 'worktree'` per dispatch.
   Without both, runtime behaviour is Phase 1 byte for byte. No new setup flag.
-- Paseo range stays `>=0.8.0 <0.10.0`, but worktree dispatch is **refused on any daemon version
-  that has not passed §9**; `0.9.1` is the first candidate. The refusal is a runtime check, not a
-  range change.
+- Paseo range stays `>=0.8.0 <0.10.0`, but worktree dispatch is **refused on any daemon outside a
+  qualified line**. A line is a minor version, qualified from the patch that passed §9 live: it
+  admits that patch and every later release of the same minor, and refuses an earlier patch, a
+  prerelease and another minor. `0.9.1` passed §9 (§9.2), so the `0.9` line is qualified from it
+  (§9.3). The refusal is a runtime check, not a range change. A new minor needs its own §9 run, as
+  it needs a range change before the plugin loads on it at all. A patch that changes a surface §9.3
+  lists is bounded out of its line until it passes §9.
 - Deselection (Phase 1 design §14) adds one step: no lease is non-released **and** no workspace
   create or close is unresolved before the plugin is unregistered. A retained worktree does not
   block it; its warning counts retained worktrees and left-behind directories apart and names a
@@ -340,7 +344,8 @@ Restart replays events and reruns only these bounded queries; there is still no 
 
 ## 9. Live Qualification — release blockers
 
-On a real daemon at each claimed version, with the Claude carrier installed:
+On a real daemon at the first qualified patch of each claimed minor line (§8), with the Claude
+carrier installed:
 
 1. **L-1 Authority:** the plugin's IPC client may call `workspace.create.request` and
    `archive_workspace_request`, which require `workspace.manage` (`S/server/authorization/operation-permissions.js:23, 190`).
@@ -424,6 +429,46 @@ event, as in Phase 1.
 On this evidence `0.9.1` joins `QUALIFIED_WORKTREE_DAEMONS`. Q-P2-02 stays open: repositories that
 declare `worktree.setup` are still refused.
 
+### 9.3 Line qualification — 2026-09-28
+
+§9.2 qualified one patch. Paseo published `0.9.0` and `0.9.1` on 2026-09-22, `0.9.2` on 2026-09-24
+and `0.10.0-beta.1` on 2026-09-27. A list of exact patches therefore refused worktree dispatch on
+the operator's `0.9.2` daemon two days after qualification, although nothing the runtime uses had
+changed. Worktree management itself is long established in Paseo: documented since 2026-02-05, and
+`worktree-core.js` is byte-identical from `0.8.0` to `0.9.2`. §8 now qualifies a minor line from
+its qualified patch, and `QUALIFIED_WORKTREE_DAEMONS` became `QUALIFIED_WORKTREE_LINES`.
+
+The published `0.9.1` and `0.9.2` packages were compared file by file. `#` numbers are entries of
+Paseo's `0.9.2` changelog.
+
+| Surface | `0.9.1` → `0.9.2` |
+|---|---|
+| `@getpaseo/plugin`, `@getpaseo/client`, `@getpaseo/protocol`: the plugin compiler, the SDK and the wire types | identical but for their version field |
+| Worktree creation, archive and recovery: `S/server/worktree-core.js`, `paseo-worktree-service.js`, `worktree-session.js`, `worktree-bootstrap.js`, `resolve-worktree-creation-intent.js`, `workspace-archive-service.js`, `S/server/session/workspace-recovery/`, `S/utils/worktree.js`; creation receipts `S/server/creation/`; plugin lifecycle hooks `S/server/plugins/lifecycle/` | identical |
+| `S/server/agent/agent-manager.js` | a history load settles residency before it prepares the config, so an archived agent whose worktree was removed stays readable (#5229); a history replay replaces the committed timeline instead of appending to it (#5286). Creation's working-directory check is unchanged, moved into a helper. |
+| `S/server/session/workspace-provisioning/`, `workspace-registry-model.js`, `workspace-reconciliation-service.js`, and the line of `session.js` that wires them | a workspace directory that is gone is an absence, not evidence that a worktree stopped being one; workspaces are not archived while their project root is unreachable (#5227) |
+| `S/server/bootstrap.js`, `S/server/plugins/plugin-process.js` | shutdown closes agents, each within 5 s, before it stops plugins (#5253); a provider connection's close runs once |
+| `S/server/session/git-mutation/git-mutation-service.js` | a branch Paseo makes with `checkout -b` gets `--no-track` (#5249); runtime worktrees come from `git worktree add`, and the runtime never pushes |
+| `S/server/agent/tools/paseo-tools.js` | an agent's own `create_agent` tool checks that a local directory exists (#5322); not a plugin path |
+| `S/server/session/owned-subscriptions/` | per-session delivery state no longer outlives a closed session (a leak fix), for every client alike |
+| Providers, the file observer, the Git watcher, schedules, hub permissions, web UI | not on a path worktree dispatch uses |
+
+No change weakens a guarantee the runtime relies on, and two strengthen it: an archived Peer's
+history stays readable after its worktree is removed, and an unmounted volume no longer archives
+workspaces the runtime holds leases in. This is reading source, not a live run; the first worktree
+dispatch on the operator's `0.9.2` daemon will be recorded here.
+
+A later patch is admitted as soon as a daemon runs it, before anyone has read it. What bounds that
+risk is that dispatch never takes Paseo's word for a worktree: the Git proof after creation (P2-D4)
+refuses and closes a workspace that is not the exact base in a clean checkout of this repository
+outside Lead's directory, the Peer's placement is checked before its first prompt, recovery never
+adopts a workspace, and close reports `directoryRemoved` from disk. A patch that broke creation or
+close would show as refusals, retained worktrees or uncertain leases, not as a Peer writing in the
+wrong place. When Paseo ships a patch, compare the first two rows with the qualified patch; if
+either differs, or a change reaches a path dispatch uses, bound the line below that patch in
+`src/runtime-plugin/shared/identity.ts` until it passes §9. That comparison can bound a line; it
+never qualifies a new one.
+
 ## 10. Open Questions
 
 | ID | Question | Owner | Status |
@@ -438,6 +483,7 @@ declare `worktree.setup` are still refused.
 
 | Date | Author | Change |
 |---|---|---|
+| 2026-09-28 | Repository owner / Bytes | §8 qualifies worktree dispatch per minor line from its live-qualified patch, instead of per exact patch; §9.3 records the `0.9.1` → `0.9.2` comparison that admits `0.9.2`, and how a later patch is bounded out. `QUALIFIED_WORKTREE_DAEMONS` became `QUALIFIED_WORKTREE_LINES`. No event, authority or tool change. |
 | 2026-09-23 | Bytes | After code review (0c56cd8, 226b833, 2db759e): §7 now records a worktree create as failed only on a conflict or a replayed recorded failure, never on a new error; §8 names the single worktree-disposition rule, on-disk re-checks of left-behind directories, and the split retained/leftover counts. No event or contract change. |
 | 2026-09-23 | Bytes | Recorded §9.2: L-2 to L-7 and reclaim pass live on an isolated `0.9.1` daemon with `codex-peer`, `claude-peer` and `pi-peer`, after fixing three recovery defects the run exposed; `0.9.1` added to the qualified list. |
 | 2026-09-23 | Repository owner / Bytes | Approved the §3 amendment (Q-P2-01) and landed it: `lead.md` Moving Write Ownership, the `shared-authority.md` Authority Floor, their static tests, `AGENTS.md`, `docs/design.md`, `README.md`, orchestration-hardening Q-003 and PRD Q-011. Design Active; the implementation plan may now be drafted. |

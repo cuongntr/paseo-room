@@ -178,8 +178,10 @@ ones that surprise a reader of the code.
   anything is recorded, and replay re-checks the same rules. Paseo branches silently from an
   existing branch of the requested name, so the Git proof after creation is mandatory, and a
   worktree is closed automatically only when nothing uncommitted or unrecorded could be lost.
-  Worktree dispatch is enabled per daemon version (`QUALIFIED_WORKTREE_DAEMONS`), because the
-  plugin reads Paseo's version from its own host package rather than trusting the plugin range.
+  Worktree dispatch is enabled per Paseo minor line from its live-qualified patch
+  (`QUALIFIED_WORKTREE_LINES`), not per exact patch: Paseo ships patches every few days, and the Git
+  proof, not Paseo's word, decides whether a worktree is usable. The plugin reads Paseo's version
+  from its own host package rather than trusting the plugin range.
 
 ## 3. Where the instruction layers live
 

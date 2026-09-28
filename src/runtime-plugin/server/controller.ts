@@ -11,7 +11,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { isDelegating, type PeerEffortSettings } from '../shared/effort.js';
-import { QUALIFIED_WORKTREE_DAEMONS } from '../shared/identity.js';
+import { worktreeQualified } from '../shared/identity.js';
 import type { RuntimeRole } from '../shared/policy.js';
 import { assignmentName, peerTitle, renderBrief, renderContinuation } from './brief.js';
 import { mintCapability, publishCapability } from './capabilities.js';
@@ -57,8 +57,8 @@ export interface ControllerDependencies {
   readonly associationWaitMs?: number;
   /** The hosting daemon's version; read from Paseo's own package when not supplied. */
   readonly daemonVersion?: () => string | undefined;
-  /** Versions on which worktree dispatch is qualified; `QUALIFIED_WORKTREE_DAEMONS` when not supplied. */
-  readonly qualifiedDaemons?: readonly string[];
+  /** Minor lines on which worktree dispatch is qualified; `QUALIFIED_WORKTREE_LINES` when not supplied. */
+  readonly qualifiedLines?: readonly string[];
   /** The operator's thinking envelope; the profile's option alone when not supplied. */
   readonly peerEffort?: () => PeerEffortSettings;
 }
@@ -386,8 +386,7 @@ export class Controller {
    */
   private async worktreeRefusal(loaded: LoadedProject, view: AssignmentView, serialOnly: readonly string[]): Promise<ControllerResult<LeaseRequest>> {
     const version = (this.deps.daemonVersion ?? hostPaseoVersion)();
-    const qualified = this.deps.qualifiedDaemons ?? QUALIFIED_WORKTREE_DAEMONS;
-    if (version === undefined || !qualified.includes(version)) {
+    if (!worktreeQualified(version, this.deps.qualifiedLines)) {
       return refuse('worktree_unqualified', `Worktree dispatch has not been qualified on Paseo ${version ?? '(unknown version)'}; dispatch without isolation.`);
     }
     // Commit questions go to the common directory, which every worktree shares and none removes;

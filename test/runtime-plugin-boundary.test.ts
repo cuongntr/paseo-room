@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { QUALIFIED_WORKTREE_DAEMONS, RUNTIME_PASEO_RANGE, RUNTIME_PLUGIN_ID } from '../src/runtime-plugin/shared/identity.js';
+import { QUALIFIED_WORKTREE_LINES, RUNTIME_PASEO_RANGE, RUNTIME_PLUGIN_ID, worktreeQualified } from '../src/runtime-plugin/shared/identity.js';
 import { satisfies } from 'semver';
 import { runtimePluginInventory } from './package-inventory.js';
 
@@ -78,10 +78,18 @@ describe('runtime plugin module boundary', () => {
     expect(RUNTIME_PLUGIN_ID).not.toBe('paseo-room-claude-carrier');
   });
 
-  it('qualifies worktree dispatch only on live-qualified versions inside the plugin range', () => {
-    // Each entry needs its own live record (docs/design/runtime-coordination-phase2.md §9.2).
-    expect(QUALIFIED_WORKTREE_DAEMONS).toEqual(['0.9.1']);
-    for (const version of QUALIFIED_WORKTREE_DAEMONS) expect(satisfies(version, RUNTIME_PASEO_RANGE), version).toBe(true);
+  it('qualifies worktree dispatch only on live-qualified lines inside the plugin range', () => {
+    // Each line needs its own live record (docs/design/runtime-coordination-phase2.md §9.2, §9.3).
+    expect(QUALIFIED_WORKTREE_LINES).toEqual(['0.9.1']);
+    for (const version of QUALIFIED_WORKTREE_LINES) expect(satisfies(version, RUNTIME_PASEO_RANGE), version).toBe(true);
+  });
+
+  it('qualifies a line from its qualified patch on, and never a prerelease or another minor', () => {
+    for (const version of ['0.9.1', '0.9.2', '0.9.17']) expect(worktreeQualified(version), version).toBe(true);
+    const refused = ['0.9.0', '0.8.0', '0.10.0', '1.9.1', '0.10.0-beta.1', '0.9.3-beta.1', '0.9.2+build', 'v0.9.2', '0.09.2', '', undefined];
+    for (const version of refused) expect(worktreeQualified(version), String(version)).toBe(false);
+    expect(worktreeQualified('0.10.2', ['0.9.1', '0.10.1'])).toBe(true);
+    expect(worktreeQualified('0.9.1', [])).toBe(false);
   });
 
   it('keeps code modules out of the plugin root and inside the host-supplied import set', async () => {
