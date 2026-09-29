@@ -8,6 +8,10 @@ import { defineSettings } from '@getpaseo/plugin';
 import { z } from 'zod';
 import type { RuntimeAgent, RuntimeRole } from './policy.js';
 
+/** A Lead replacement's id (K-D5): how its record is named, and what the panel and Supervisor tools take. */
+export const SUCCESSION_ID = /^suc_[A-Za-z0-9_-]{16}$/;
+export const successionIdSchema = z.string().regex(SUCCESSION_ID);
+
 /** Claude Code's variable for the window its auto-compaction works against, in tokens. */
 export const COMPACT_WINDOW_ENV = 'CLAUDE_CODE_AUTO_COMPACT_WINDOW';
 

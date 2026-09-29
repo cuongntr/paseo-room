@@ -8,6 +8,7 @@ import { defineRpc } from '@getpaseo/plugin';
 import { z } from 'zod';
 import { boundedString, MAX_HANDOFF_BYTES } from './limits.js';
 import { RUNTIME_AGENTS, RUNTIME_ROLES } from './policy.js';
+import { successionIdSchema as successionId } from './seat-context.js';
 import { runtimeRpcErrorSchema, runtimeRpcResponseSchema } from './rpc.js';
 
 const view = z.record(z.string(), z.unknown());
@@ -175,7 +176,6 @@ export const runtimeAttentionStatusRpc = defineRpc({
   output: answer(view),
 });
 
-const successionId = z.string().regex(/^suc_[A-Za-z0-9_-]{16}$/);
 
 /** What blocks replacing a Lead, what Paseo's archive does to its seats, and who follows it (seat context delta K-D5). */
 export const runtimeSuccessionPreflightRpc = defineRpc({

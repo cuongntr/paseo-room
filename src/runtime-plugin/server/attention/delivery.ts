@@ -5,8 +5,10 @@
  * permission of its recipient, so nothing is sent while the Supervisor holds one. A `now` letter
  * waits for the Supervisor to be idle; a page waits `pageHoldSeconds` and then steers into a
  * running turn. Digest lines coalesce and go together, at most once per `digestMinutes`. Non-page
- * wakes are budgeted per hour; overflow joins the digest. Queues live in memory: a plugin reload
- * drops them, and their conditions re-fire from facts.
+ * wakes are budgeted per hour; overflow joins the digest. A reply answers the Supervisor's own
+ * request (seat context delta K-D9): it goes as soon as the Supervisor is idle, even with letters
+ * off, and counts against no budget. Queues live in memory: a plugin reload drops them, and their
+ * conditions re-fire from facts.
  */
 import { randomBytes } from 'node:crypto';
 import type { AttentionSettings } from '../../shared/attention.js';
@@ -42,9 +44,12 @@ export interface LetterItem {
   readonly level: Level;
   readonly line: string;
   readonly createdAt: number;
+  /** An answer to the Supervisor's own request, which it waits for rather than polls. */
+  readonly reply?: true;
 }
 
 interface Queue {
+  replies: LetterItem[];
   pages: LetterItem[];
   now: LetterItem[];
   digest: LetterItem[];
@@ -89,7 +94,7 @@ export class Delivery {
   private queue(supervisorAgentId: string): Queue {
     let queue = this.queues.get(supervisorAgentId);
     if (queue === undefined) {
-      queue = { pages: [], now: [], digest: [], lastDigestAt: 0, wakes: [], retry: undefined };
+      queue = { replies: [], pages: [], now: [], digest: [], lastDigestAt: 0, wakes: [], retry: undefined };
       this.queues.set(supervisorAgentId, queue);
     }
     return queue;
@@ -97,13 +102,14 @@ export class Delivery {
 
   enqueue(supervisorAgentId: string, item: LetterItem): void {
     const queue = this.queue(supervisorAgentId);
-    const lane = item.level === 'page' ? queue.pages : item.level === 'now' ? queue.now : queue.digest;
+    const lane = item.reply === true ? queue.replies : item.level === 'page' ? queue.pages : item.level === 'now' ? queue.now : queue.digest;
     if (!lane.some(entry => entry.id === item.id)) lane.push(item);
   }
 
   /** Withdraws an item not yet sent, because its condition cleared first. */
   withdraw(id: string): void {
     for (const queue of this.queues.values()) {
+      queue.replies = queue.replies.filter(item => item.id !== id);
       queue.pages = queue.pages.filter(item => item.id !== id);
       queue.now = queue.now.filter(item => item.id !== id);
       queue.digest = queue.digest.filter(item => item.id !== id);
@@ -113,7 +119,7 @@ export class Delivery {
   /** Items still waiting for a Supervisor, for the panel. */
   held(supervisorAgentId: string): readonly LetterItem[] {
     const queue = this.queues.get(supervisorAgentId);
-    return queue === undefined ? [] : [...queue.pages, ...queue.now, ...queue.digest];
+    return queue === undefined ? [] : [...queue.replies, ...queue.pages, ...queue.now, ...queue.digest];
   }
 
   /** Drops every held item of a Supervisor that can no longer receive letters, returning them. */
@@ -137,17 +143,26 @@ export class Delivery {
     const queue = this.queue(supervisorAgentId);
     const settings = this.deps.settings();
     const seat = this.deps.observer.seat(supervisorAgentId);
-    if (seat === undefined || seat.state === 'archived' || !settings.letters.enabled) return;
+    if (seat === undefined || seat.state === 'archived') return;
     // Paseo's send clears pending permissions: never send while one is pending.
     if (seat.pending.size > 0 || seat.state === 'permission') return;
     const now = this.deps.now().getTime();
     const idle = seat.state === 'idle' || seat.state === 'closed';
+    const enabled = settings.letters.enabled;
 
     if (queue.retry !== undefined) {
       if (!idle && queue.retry.level !== 'page') return;
+      if (!enabled && !queue.retry.items.every(item => item.reply === true)) return;
       await this.send(supervisorAgentId, queue, queue.retry.id, queue.retry.text, queue.retry.items, queue.retry.level);
       return;
     }
+    if (idle && queue.replies.length > 0) {
+      const items = queue.replies.splice(0, LETTER_MAX_ITEMS);
+      const id = letterId();
+      await this.send(supervisorAgentId, queue, id, render(id, items, now), items, 'now');
+      return;
+    }
+    if (!enabled) return;
 
     const holdMs = settings.delivery.pageHoldSeconds * 1_000;
     const pageDue = queue.pages.some(item => idle || now - item.createdAt >= holdMs);

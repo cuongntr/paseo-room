@@ -344,6 +344,10 @@ archived, the letter is shown on the panel as `human-required` and nothing is se
   `digestMinutes`.
 - Non-page `now` letters are budgeted at `wakesPerHour` (6) per Supervisor; overflow joins the digest.
   Pages are never budgeted.
+- A **reply** answers the Supervisor's own request, such as the handoff of a Lead replacement it
+  started ([seat context delta](runtime-coordination-seat-context.md) K-D9). It waits for idle like a
+  `now` letter, but goes even with letters off and is never budgeted or moved to the digest: the
+  Supervisor waits for it rather than polls.
 - Deduplication is by `(project, signal, subject)`: a repeat updates the open incident's count and
   evidence instead of creating a letter.
 
@@ -665,6 +669,7 @@ files under `runtime/v1/attention` stay until `remove --apply`.
 
 | Date | Author | Change |
 |---|---|---|
+| 2026-09-28 | Bytes | §7.2: a reply to the Supervisor's own request goes even with letters off and outside the wake budget. K-D9 promised this, but only the enqueue honoured it; delivery still dropped the item with letters off, or moved it to the digest past the budget. |
 | 2026-09-28 | Repository owner / Bytes | §4, §9.4: the Observer reads each seat's checkout from Git — linked worktree or main checkout, and its branch — at each snapshot and turn end, and `room_status` shows it. The panel listed a worktree Peer with no sign of where it worked. Display only; no signal reads it. |
 | 2026-09-28 | Repository owner / Bytes | §7.4: a Lead turn's letter line states what the Lead left running, counted in code: its running Peers and its open runtime assignments. A Lead in live use said it would dispatch next and stopped with nothing running; the excerpt read as progress, and the Human noticed before the Supervisor did. Facts only; no advice, and the sensor's inputs are unchanged. |
 | 2026-09-28 | Repository owner / Bytes | §7.4: the runtime's own owner notices wait for the recipient's turn to end; only `message_lead` and pages steer into a running turn. Live use showed a steer to a running Claude Lead cancelling its turn in 16 of 248 notices, once cutting a Lead off mid-merge, and the Supervisor could not tell who had stopped it. |

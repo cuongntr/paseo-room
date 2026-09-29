@@ -27,12 +27,9 @@ import { ProjectStore } from '../store/project.js';
 
 const failure = (code: string, message: string, retryable = false): HandlerReply => ({ ok: false, result: { schema: 1, error: { code, message: message.slice(0, 1_000), retryable } } });
 const success = (value: unknown): HandlerReply => ({ ok: true, result: { schema: 1, ...(value as object) } });
-const replacementUnavailable = failure('succession_unavailable', 'Lead replacement is not available in this runtime.');
-/** A replacement Human, or another Supervisor, started is not this Supervisor's to read or decide. */
-const notYours = (id: string): HandlerReply => failure('succession_unknown', `You started no Lead replacement ${id}.`);
 
-function fromResult<T>(result: ControllerResult<T>): HandlerReply {
-  return result.ok ? success(result.value) : failure(result.code, result.message, result.retryable);
+function fromResult<T>(result: ControllerResult<T> | StartResult<T>): HandlerReply {
+  return result.ok ? success(result.value) : failure(result.code, result.message, 'retryable' in result && result.retryable);
 }
 
 /** Resolves and corroborates the calling seat. */
@@ -155,11 +152,7 @@ async function projectFor(controller: Controller, attention: AttentionEngine, ca
     : `${named} names more than one project; use its id.`);
 }
 
-function fromStart<T>(result: StartResult<T>): HandlerReply {
-  return result.ok ? success(result.value) : failure(result.code, result.message);
-}
-
-export function createSupervisorHandlers(controller: Controller, attention: AttentionEngine, succession?: Succession): Record<string, OperationHandler> {
+export function createSupervisorHandlers(controller: Controller, attention: AttentionEngine, succession: Succession): Record<string, OperationHandler> {
   const supervisor = <K extends keyof typeof SUPERVISOR_ACTION_SCHEMAS>(name: K, run: (caller: Caller, input: z.infer<(typeof SUPERVISOR_ACTION_SCHEMAS)[K]>) => Promise<HandlerReply>): OperationHandler =>
     async request => {
       const caller = await callerOf(controller, request, 'supervisor');
@@ -168,6 +161,11 @@ export function createSupervisorHandlers(controller: Controller, attention: Atte
       if (isReply(input)) return input;
       return await run(caller, input as z.infer<(typeof SUPERVISOR_ACTION_SCHEMAS)[K]>);
     };
+  /** A Lead replacement the caller started; one Human or another Supervisor started is unknown to it (K-D9). */
+  const replacement = <K extends 'lead_replace_status' | 'lead_replace_confirm' | 'lead_replace_cancel'>(name: K, run: (input: z.infer<(typeof SUPERVISOR_ACTION_SCHEMAS)[K]>) => Promise<HandlerReply>): OperationHandler =>
+    supervisor(name, async (caller, input) => (await succession.startedBy(input.successionId, caller.agentId)
+      ? await run(input)
+      : failure('succession_unknown', `You started no Lead replacement ${input.successionId}.`)));
   return {
     room_status: supervisor('room_status', async caller => {
       const { portfolio, allowed } = await supervisorProjects(attention, caller);
@@ -206,26 +204,15 @@ export function createSupervisorHandlers(controller: Controller, attention: Atte
       return success({ recorded: true });
     }),
     lead_replace_start: supervisor('lead_replace_start', async (caller, input) => {
-      if (succession === undefined) return replacementUnavailable;
       const target = await projectFor(controller, attention, caller, input.project);
       if (isReply(target)) return target;
-      return fromStart(await succession.startForSupervisor(caller.agentId, target.key, input.note));
+      return fromResult(await succession.startForSupervisor(caller.agentId, target.key, input.note));
     }),
-    lead_replace_status: supervisor('lead_replace_status', async (caller, input) => {
-      if (succession === undefined) return replacementUnavailable;
-      if (!await succession.startedBy(input.successionId, caller.agentId)) return notYours(input.successionId);
+    lead_replace_status: replacement('lead_replace_status', async input => {
       const status = await succession.status(input.successionId);
-      return status.ok ? success({ succession: status.value }) : fromStart(status);
+      return status.ok ? success({ succession: status.value }) : fromResult(status);
     }),
-    lead_replace_confirm: supervisor('lead_replace_confirm', async (caller, input) => {
-      if (succession === undefined) return replacementUnavailable;
-      if (!await succession.startedBy(input.successionId, caller.agentId)) return notYours(input.successionId);
-      return fromStart(await succession.complete(input.successionId, input.handoff));
-    }),
-    lead_replace_cancel: supervisor('lead_replace_cancel', async (caller, input) => {
-      if (succession === undefined) return replacementUnavailable;
-      if (!await succession.startedBy(input.successionId, caller.agentId)) return notYours(input.successionId);
-      return fromStart(await succession.cancel(input.successionId));
-    }),
+    lead_replace_confirm: replacement('lead_replace_confirm', async input => fromResult(await succession.complete(input.successionId, input.handoff))),
+    lead_replace_cancel: replacement('lead_replace_cancel', async input => fromResult(await succession.cancel(input.successionId))),
   };
 }

@@ -16,7 +16,7 @@ import { ProjectStore } from '../store/project.js';
 import { Delivery, LETTER_PREFIX, keepNewest, letterId } from './delivery.js';
 import { AttentionLog } from './log.js';
 import { head, mask, tail } from './mask.js';
-import { Observer, type Seat, type TurnFacts } from './observer.js';
+import { Observer, type Checkout, type Seat, type TurnFacts } from './observer.js';
 import { Portfolio, type Resolution } from './portfolio.js';
 import type { LedgerReader } from './succession.js';
 import { age, conditions, seatLabel, type Condition, type Level, type SignalKind } from './signals.js';
@@ -79,7 +79,7 @@ export interface SensorHook {
 export interface EngineDependencies {
   readonly paseo: PaseoPort;
   readonly recognition: Pick<Recognition, 'recognize'>;
-  readonly git: Pick<GitEvidence, 'identity' | 'checkout'>;
+  readonly git: Pick<GitEvidence, 'identity' | 'isLinked' | 'branch'>;
   readonly runtimeRoot: string;
   readonly now: () => Date;
   readonly settings: () => AttentionSettings;
@@ -427,10 +427,7 @@ export class AttentionEngine {
    */
   private async runningNow(lead: Seat, facts: LeadTurnFacts): Promise<string> {
     const peers = facts.peersRunning === 0 ? 'no Peer running' : `${String(facts.peersRunning)} Peer${facts.peersRunning === 1 ? '' : 's'} running`;
-    // A project with no runtime ledger has no assignments to count, rather than none open.
-    const reader = this.deps.ledger;
-    const counted = reader !== undefined && (await this.ledgerProjects()).has(lead.project.key);
-    const ledger = counted ? await reader(lead.project.key, lead.agentId).catch(() => undefined) : undefined;
+    const ledger = await this.deps.ledger?.(lead.project.key, lead.agentId).catch(() => undefined);
     if (ledger === undefined || ledger.unreadable !== undefined) return peers;
     const open = ledger.open.length;
     return `${peers}, ${open === 0 ? 'no assignment open' : `${String(open)} assignment${open === 1 ? '' : 's'} open`}`;
@@ -438,17 +435,18 @@ export class AttentionEngine {
 
   /**
    * Tells a project's Supervisor one fact at digest level, such as a Lead replaced (seat context
-   * delta K-D5): a one-off item, not a condition, so it opens no incident. Addressed to a named
-   * Supervisor, it answers that seat's own request (K-D9) and goes even with letters turned off.
+   * delta K-D5): a one-off item, not a condition, so it opens no incident. `replyTo` names a
+   * Supervisor waiting on its own request instead (K-D9), which Delivery answers as a reply.
    */
-  told(projectKey: string, line: string, options: { readonly level?: 'digest' | 'now'; readonly recipient?: string } = {}): Promise<unknown> {
+  told(projectKey: string, line: string, replyTo?: string): Promise<unknown> {
     return this.run(async () => {
       await this.ensureStarted();
-      const recipient = options.recipient ?? this.supervisorOf(projectKey).supervisorAgentId;
-      if (recipient === undefined || (options.recipient === undefined && !this.deps.settings().letters.enabled)) return;
+      const recipient = replyTo ?? this.supervisorOf(projectKey).supervisorAgentId;
+      if (recipient === undefined || (replyTo === undefined && !this.deps.settings().letters.enabled)) return;
       const id = letterId();
       this.remember(id, { recipient, projectKey, kind: 'fact' });
-      this.delivery.enqueue(recipient, { id, level: options.level ?? 'digest', line: `${this.projectName(projectKey)} · ${mask(line)}`, createdAt: this.time });
+      const text = `${this.projectName(projectKey)} · ${mask(line)}`;
+      this.delivery.enqueue(recipient, replyTo === undefined ? { id, level: 'digest', line: text, createdAt: this.time } : { id, level: 'now', line: text, createdAt: this.time, reply: true });
       await this.delivery.pump();
     });
   }
@@ -551,7 +549,7 @@ export interface SeatView {
   readonly parentAgentId: string | null;
   readonly pendingPermissions: number;
   /** The checkout the seat works in, where Git says: a linked worktree or the main checkout, and its branch. */
-  readonly checkout?: { readonly root: string; readonly displayRoot: string; readonly linked: boolean; readonly branch?: string };
+  readonly checkout?: Checkout & { readonly displayRoot: string };
   readonly lastTurn?: { readonly outcome: string; readonly endedAgo: string; readonly endedAt: string };
   /**
    * The seat's latest model call, and its role's marks in percent (seat context delta §5.1); the

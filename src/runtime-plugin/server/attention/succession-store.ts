@@ -10,10 +10,10 @@ import { randomBytes } from 'node:crypto';
 import { readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { z } from 'zod';
+import { SUCCESSION_ID, successionIdSchema } from '../../shared/seat-context.js';
 import { ensurePrivateDirectory, PRIVATE_FILE_MODE } from '../store/publish.js';
 import { LOG_RETENTION_DAYS } from './log.js';
 
-export const SUCCESSION_ID = /^suc_[A-Za-z0-9_-]{16}$/;
 export const SUCCESSION_STEPS = ['requested', 'received', 'archived', 'created', 'completed', 'cancelled', 'failed'] as const;
 export const SUCCESSION_REASONS = ['context', 'contract', 'other'] as const;
 export type SuccessionStep = (typeof SUCCESSION_STEPS)[number];
@@ -24,7 +24,7 @@ export const TERMINAL_STEPS: readonly SuccessionStep[] = ['completed', 'cancelle
 
 const recordSchema = z.object({
   schema: z.literal(1),
-  id: z.string().regex(SUCCESSION_ID),
+  id: successionIdSchema,
   projectKey: z.string().min(1),
   root: z.string().min(1),
   name: z.string().min(1),

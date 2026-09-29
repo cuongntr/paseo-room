@@ -19,7 +19,7 @@
  * settled by Paseo no longer listing the workspace, plus whether its directory is gone; a lease
  * whose Peer died waits for an explicit reclaim. Nothing is settled by elapsed time.
  */
-import type { Controller, LoadedProject } from './controller.js';
+import { worktreeRequest, type Controller, type LoadedProject } from './controller.js';
 import type { AssignmentView } from './domain/state.js';
 import { recoverGate } from './gate.js';
 import { promptRequestedAt, settleEndedTurn, type TurnStarts } from './handlers/turns.js';
@@ -219,11 +219,7 @@ export class Recovery {
     if (record === undefined) return { assignmentId: view.id, intent: intentId, outcome: 'uncertain', detail: 'No worktree record.' };
     let snapshot: WorkspaceSnapshot;
     try {
-      snapshot = await this.controller.deps.paseo.createWorktreeWorkspace({
-        // A request recorded without its title was sent with the id-only title of that time.
-        workspaceId: record.workspaceId, idempotencyKey: record.idempotencyKey, title: record.title ?? `room ${view.id}`, cwd: loaded.store.meta.canonicalRoot,
-        baseCommit: record.baseCommit, branchName: record.branchName, worktreeSlug: record.worktreeSlug,
-      });
+      snapshot = await this.controller.deps.paseo.createWorktreeWorkspace(worktreeRequest(record, loaded.store.meta.canonicalRoot));
     } catch (error) {
       const reason = error instanceof Error ? error.message.slice(0, 1_000) || 'unknown' : 'unknown';
       if (error instanceof CreationConflictError) {

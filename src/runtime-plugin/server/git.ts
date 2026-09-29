@@ -48,15 +48,6 @@ export interface RepositoryIdentity {
   readonly gitCommonDir: string;
 }
 
-/** Where a directory sits in its repository, for display: which checkout, and what it has checked out. */
-export interface Checkout {
-  /** The checkout's canonical root. */
-  readonly root: string;
-  /** A linked worktree rather than the repository's main checkout. */
-  readonly linked: boolean;
-  /** The branch HEAD names; absent on a detached HEAD. */
-  readonly branch?: string;
-}
 
 export type CandidateDerivation =
   | { readonly ok: true; readonly candidate: CandidateRefV1; readonly noChange: boolean }
@@ -107,18 +98,10 @@ export class GitEvidence {
     return { canonicalRoot, gitCommonDir };
   }
 
-  /** The checkout `cwd` lies in; a linked worktree keeps its own Git directory beside the common one. */
-  async checkout(cwd: string): Promise<Checkout> {
-    const probe = await this.git(cwd, ['rev-parse', '--show-toplevel', '--absolute-git-dir', '--git-common-dir']);
-    if (probe.code !== 0) throw new GitEvidenceError(`${cwd} is not inside a Git working tree.`, 'not-a-repository');
-    const [top, gitDir, common] = probe.stdout.split('\n');
-    if (top === undefined || top === '' || gitDir === undefined || gitDir === '' || common === undefined || common === '') {
-      throw new GitEvidenceError('git rev-parse returned no repository paths.', 'unexpected-output');
-    }
-    const root = await realpath(top);
-    const [own, shared] = await Promise.all([realpath(gitDir), realpath(isAbsolute(common) ? common : resolve(cwd, common))]);
-    const branch = await this.branch(root);
-    return { root, linked: own !== shared, ...(branch === undefined ? {} : { branch }) };
+  /** Whether a checkout is a linked worktree: it keeps its own Git directory beside the common one. */
+  async isLinked(identity: RepositoryIdentity): Promise<boolean> {
+    const gitDir = (await this.read(identity.canonicalRoot, ['rev-parse', '--absolute-git-dir'])).trim();
+    return await realpath(gitDir).catch(() => gitDir) !== identity.gitCommonDir;
   }
 
   async head(root: string): Promise<string> {
@@ -198,10 +181,7 @@ export class GitEvidence {
     }
     const leadRoot = await realpath(expected.leadRoot).catch(() => expected.leadRoot);
     if (identity.canonicalRoot === leadRoot) return { ok: false, code: 'lead-directory', message: 'The workspace is Lead\'s own directory, not a new worktree.' };
-    const gitDir = (await this.read(identity.canonicalRoot, ['rev-parse', '--absolute-git-dir'])).trim();
-    if (await realpath(gitDir).catch(() => gitDir) === identity.gitCommonDir) {
-      return { ok: false, code: 'not-linked', message: `${identity.canonicalRoot} is a main checkout, not a linked worktree.` };
-    }
+    if (!await this.isLinked(identity)) return { ok: false, code: 'not-linked', message: `${identity.canonicalRoot} is a main checkout, not a linked worktree.` };
     const head = await this.head(identity.canonicalRoot);
     if (head !== expected.baseCommit) {
       return { ok: false, code: 'head-mismatch', message: `The worktree HEAD is ${head}, not the assignment base ${expected.baseCommit}.` };

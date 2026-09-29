@@ -494,6 +494,15 @@ describe('a Supervisor replacing its Lead (K-D9)', () => {
     expect(agent('lead-1').archivedAt).not.toBeNull();
   });
 
+  it('sends that answer with letters off and past the wake budget, since the Supervisor waits for it', async () => {
+    settings = { ...settings, letters: { ...settings.letters, enabled: false }, delivery: { ...settings.delivery, wakesPerHour: 0 } };
+    const id = await startedBySupervisor();
+    h.paseo.reply('lead-1', ['# Handoff']);
+    await succession.onTurnEnded('lead-1');
+    expect(agent('sup').prompts.map(prompt => prompt.text).join('\n')).toContain(`repo · Lead replacement ${id}: the handoff of repo — Lead (lead-1) arrived, `);
+    expect(engine.delivery.held('sup')).toEqual([]);
+  });
+
   it('tells the Supervisor when no usable handoff arrives', async () => {
     const id = await startedBySupervisor();
     h.paseo.reply('lead-1', ['']);

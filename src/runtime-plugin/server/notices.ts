@@ -35,7 +35,7 @@ export interface NoticeRequest {
 const plugin = { source: 'plugin' as const };
 
 /** Whether a notice waits for its recipient's turn to end rather than steer into it. */
-export function waitsForIdle(kind: string, noticeClass: NoticeClass): boolean {
+function waitsForIdle(kind: string, noticeClass: NoticeClass): boolean {
   return noticeClass === 'owner' && kind !== 'supervisor-message';
 }
 

@@ -48,21 +48,21 @@ describe('read-only Git evidence', () => {
     await expect(evidence.identity(outside)).rejects.toBeInstanceOf(GitEvidenceError);
   });
 
-  it('says which checkout a directory is in and the branch there', async () => {
+  it('tells a linked worktree from the main checkout, and names the branch each has out', async () => {
     const { root, base } = await repository();
     await mkdir(join(root, 'nested'));
-    expect(await evidence.checkout(join(root, 'nested'))).toEqual({ root, linked: false, branch: 'main' });
+    const main = await evidence.identity(join(root, 'nested'));
+    expect(await evidence.isLinked(main)).toBe(false);
+    expect(await evidence.branch(main.canonicalRoot)).toBe('main');
 
     const tree = join(root, '..', `${root.split('/').at(-1) ?? 'x'}-wt`);
     roots.push(tree);
     await git(root, 'worktree', 'add', '-q', tree, '-b', 'lane');
-    expect(await evidence.checkout(tree)).toEqual({ root: await realpath(tree), linked: true, branch: 'lane' });
+    const linked = await evidence.identity(tree);
+    expect(await evidence.isLinked(linked)).toBe(true);
+    expect(await evidence.branch(linked.canonicalRoot)).toBe('lane');
     await git(tree, 'checkout', '-q', '--detach', base);
-    expect(await evidence.checkout(tree)).toEqual({ root: await realpath(tree), linked: true });
-
-    const outside = await mkdtemp(join(tmpdir(), 'paseo-room-nogit-'));
-    roots.push(outside);
-    await expect(evidence.checkout(outside)).rejects.toBeInstanceOf(GitEvidenceError);
+    expect(await evidence.branch(linked.canonicalRoot)).toBeUndefined();
   });
 
   it('allows dispatch only from a clean workspace at the exact base', async () => {

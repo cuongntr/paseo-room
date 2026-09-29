@@ -56,16 +56,20 @@ export interface LedgerFacts {
   readonly unreadable?: string;
 }
 
-export type LedgerReader = (projectKey: string, leadAgentId: string) => Promise<LedgerFacts>;
+/** What a project with no runtime ledger has: nothing open, nothing waiting, nothing kept. */
+const NO_LEDGER: LedgerFacts = { open: [], notices: 0, retained: 0 };
+
+/** Undefined for a project with no runtime ledger, which has nothing to count rather than nothing open. */
+export type LedgerReader = (projectKey: string, leadAgentId: string) => Promise<LedgerFacts | undefined>;
 
 /** Reads a project's ledger, when it has one, inside that project's queue. */
 export function controllerLedger(controller: Pick<Controller, 'serial' | 'load' | 'deps'>): LedgerReader {
   return async (projectKey, leadAgentId) => {
     const store = (await ProjectStore.list(controller.deps.runtimeRoot, controller.deps.now)).find(entry => entry.meta.gitCommonDir === projectKey);
-    if (store === undefined) return { open: [], notices: 0, retained: 0 };
+    if (store === undefined) return undefined;
     return await controller.serial(store.meta.projectId, async () => {
       const loaded = await controller.load(store);
-      if (!loaded.ok) return { open: [], notices: 0, retained: 0, unreadable: loaded.message };
+      if (!loaded.ok) return { ...NO_LEDGER, unreadable: loaded.message };
       const { state, events } = loaded.value;
       const mine = [...state.assignments.values()].filter(view => view.leadAgentId === leadAgentId);
       const recipients = new Map(events.flatMap(event => (event.type === 'notice.pending' && event.data.recipientAgentId !== undefined
@@ -258,7 +262,7 @@ export class Succession {
     const blockers: Blocker[] = [];
     if (lead.state === 'running') blockers.push({ code: 'lead_busy', message: `${name} is running a turn; wait until it is idle.` });
     if (lead.state === 'permission') blockers.push({ code: 'lead_busy', message: `${name} waits on a permission; resolve it first.` });
-    const ledger = await this.deps.ledger(project.key, lead.agentId);
+    const ledger = await this.deps.ledger(project.key, lead.agentId) ?? NO_LEDGER;
     if (ledger.unreadable !== undefined) blockers.push({ code: 'assignments_open', message: `The project's runtime ledger cannot be read, so its assignments cannot be checked: ${ledger.unreadable}` });
     if (ledger.open.length > 0) {
       blockers.push({ code: 'assignments_open', message: `${String(ledger.open.length)} runtime assignment(s) it leads are not settled (${ledger.open.join(', ')}); have it close or abandon them, or abandon them from the project screen.` });
@@ -325,12 +329,20 @@ export class Succession {
 
   // ── Request and handoff ──────────────────────────────────────────────────────────────────────
 
-  /** Steps 1–2: refuses on any blocker, else records the succession and asks the Lead for its handoff. */
-  start(input: { readonly leadAgentId: string; readonly reason: SuccessionReason; readonly note?: string | undefined; readonly initiator?: SuccessionInitiator }): Promise<StartResult<{ readonly successionId: string }>> {
+  /**
+   * Steps 1–2: refuses on any blocker, else records the succession and asks the Lead for its handoff.
+   * `admit` may refuse on the preflight's fresh read of the Lead, inside the replacement's queue.
+   */
+  start(input: {
+    readonly leadAgentId: string; readonly reason: SuccessionReason; readonly note?: string | undefined; readonly initiator?: SuccessionInitiator;
+    readonly admit?: (found: SuccessionPreflight) => Blocker | undefined;
+  }): Promise<StartResult<{ readonly successionId: string }>> {
     return this.serial(async () => {
       const checked = await this.check(input.leadAgentId);
       if (!checked.ok) return checked;
       const found = checked.value;
+      const refused = input.admit?.(found);
+      if (refused !== undefined) return refuse(refused.code, refused.message);
       const [first] = found.blockers;
       if (first !== undefined) return refuse(first.code, found.blockers.map(blocker => blocker.message).join(' '));
       const at = this.stamp();
@@ -366,8 +378,6 @@ export class Succession {
    */
   async startForSupervisor(supervisorAgentId: string, projectKey: string, note?: string): Promise<StartResult<{ readonly successionId: string; readonly leadAgentId: string }>> {
     const attention = this.deps.attention;
-    // The mark is judged on the context Paseo reports now, not on the last sweep's figure.
-    if (!await attention.resync()) return refuse('paseo_unavailable', 'Paseo could not be read, so the Lead\'s context is unknown; try again.');
     if (attention.supervisorOf(projectKey).supervisorAgentId !== supervisorAgentId) {
       return refuse('unauthorized', 'Only the project\'s own Supervisor replaces its Lead.');
     }
@@ -378,11 +388,12 @@ export class Succession {
     }
     const mark = rotateMark(this.deps.contextSettings(), 'lead');
     if (mark === null) return refuse('rotation_off', 'Lead rotation is turned off in Settings › Room seats, so only Human replaces a Lead.');
-    const percent = lead.usage === null ? null : contextPercent(lead.usage.used, lead.usage.max);
-    if (percent === null || percent < mark) {
-      return refuse('rotation_not_reached', `${seatName(lead)} is ${percent === null ? 'at an unknown share of its context' : `at ${String(percent)}% of its context`}, not past its ${String(mark)}% rotation mark; replacing it earlier is Human's decision.`);
-    }
-    const started = await this.start({ leadAgentId: lead.agentId, reason: 'context', note, initiator: { role: 'supervisor', agentId: supervisorAgentId } });
+    // Judged on the context the preflight has just read from Paseo, not on the last sweep's figure.
+    const admit = ({ lead: { contextPercent: percent } }: SuccessionPreflight): Blocker | undefined => (percent !== null && percent >= mark ? undefined : {
+      code: 'rotation_not_reached',
+      message: `${seatName(lead)} is ${percent === null ? 'at an unknown share of its context' : `at ${String(percent)}% of its context`}, not past its ${String(mark)}% rotation mark; replacing it earlier is Human's decision.`,
+    });
+    const started = await this.start({ leadAgentId: lead.agentId, reason: 'context', note, initiator: { role: 'supervisor', agentId: supervisorAgentId }, admit });
     return started.ok ? { ok: true, value: { successionId: started.value.successionId, leadAgentId: lead.agentId } } : started;
   }
 
@@ -403,7 +414,7 @@ export class Succession {
       const line = next.step === 'received'
         ? `Lead replacement ${next.id}: the handoff of ${next.fromTitle ?? 'the Lead'} (${next.fromAgentId}) arrived, ${kb(next.receivedBytes ?? 0)}.`
         : `Lead replacement ${next.id} failed: ${next.failure?.message ?? 'no usable handoff arrived.'}`;
-      await this.deps.attention.told(next.projectKey, line, { level: 'now', recipient: record.initiator.agentId }).catch(() => undefined);
+      await this.deps.attention.told(next.projectKey, line, record.initiator.agentId).catch(() => undefined);
     }
     return next;
   }

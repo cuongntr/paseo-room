@@ -5,23 +5,24 @@
 import { z } from 'zod';
 import { boundedArray, boundedString, MAX_HANDOFF_BYTES } from '../../shared/limits.js';
 import type { LeadOperation, SupervisorOperation } from '../../shared/policy.js';
+import { successionIdSchema as successionId } from '../../shared/seat-context.js';
 import { assignmentCreateSchema } from './assignment.js';
 
 /** Runtime-minted assignment ids; never a Paseo agent id or a path. */
 export const assignmentIdSchema = z.string().regex(/^asg_[A-Za-z0-9_-]{8,64}$/);
 const reason = boundedString();
-const successionId = z.string().regex(/^suc_[A-Za-z0-9_-]{16}$/);
 const assignment = { assignmentId: assignmentIdSchema };
+// A project in the caller's portfolio: a runtime project id, the project key or the repository's
+// name. Omitted, it is the caller's own working project, or its only project.
+const project = z.string().min(1).max(4_096).optional();
 
 export const SUPERVISOR_ACTION_SCHEMAS = {
   room_status: z.strictObject({}),
   runtime_findings: z.strictObject({}),
-  // `project` names a project in the caller's portfolio: a runtime project id, the project key or
-  // the repository's name. Omitted, it is the caller's own working project, or its only project.
-  message_lead: z.strictObject({ message: boundedString(), project: z.string().min(1).max(4_096).optional() }),
+  message_lead: z.strictObject({ message: boundedString(), project }),
   attention_feedback: z.strictObject({ id: z.string().regex(/^att_[A-Za-z0-9_-]{8,32}$/), verdict: z.enum(['useful', 'noise', 'unknown']) }),
   // `note` reaches the Lead with the handoff request; `handoff` replaces the one that arrived.
-  lead_replace_start: z.strictObject({ project: z.string().min(1).max(4_096).optional(), note: boundedString().optional() }),
+  lead_replace_start: z.strictObject({ project, note: boundedString().optional() }),
   lead_replace_status: z.strictObject({ successionId }),
   lead_replace_confirm: z.strictObject({ successionId, handoff: boundedString(MAX_HANDOFF_BYTES).optional() }),
   lead_replace_cancel: z.strictObject({ successionId }),

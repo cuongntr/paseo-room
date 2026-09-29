@@ -43,6 +43,14 @@ function attentionFor(h: Harness, now: () => Date = () => new Date()): Attention
   });
 }
 
+function successionFor(h: Harness, attention: AttentionEngine): Succession {
+  return new Succession({
+    paseo: h.paseo, attention, ledger: controllerLedger(h.controller), store: SuccessionStore.at(h.runtimeRoot), text: { request: 'Hand over.', kickoff: 'Take over.' },
+    starter: new SeatStarter({ paseo: h.paseo, git: h.controller.deps.git, recognition: h.controller.deps.recognition, attention }),
+    contextSettings: () => DEFAULT_SEAT_CONTEXT_SETTINGS, now: () => new Date(),
+  });
+}
+
 async function room() {
   const h = await harness();
   open.push(h);
@@ -50,7 +58,7 @@ async function room() {
   const leadCorrelation = await bind(h, 'lead-1', 'codex-lead');
   const supervisorCorrelation = await bind(h, 'sup-1', 'codex-supervisor');
   const attention = attentionFor(h);
-  return { h, attention, lead: createLeadHandlers(h.controller), supervisor: createSupervisorHandlers(h.controller, attention), leadCorrelation, supervisorCorrelation };
+  return { h, attention, lead: createLeadHandlers(h.controller), supervisor: createSupervisorHandlers(h.controller, attention, successionFor(h, attention)), leadCorrelation, supervisorCorrelation };
 }
 
 describe('Lead action handlers', () => {
@@ -236,7 +244,7 @@ describe('Supervisor portfolio (attention delta §9.4)', () => {
     const attention = attentionFor(h, () => clock);
     const correlation = await bind(h, 'sup-p', 'claude-supervisor');
     const stranger = await bind(h, 'sup-q', 'codex-supervisor');
-    return { h, attention, supervisor: createSupervisorHandlers(h.controller, attention), correlation, stranger, advance: (ms: number) => { clock = new Date(clock.getTime() + ms); } };
+    return { h, attention, supervisor: createSupervisorHandlers(h.controller, attention, successionFor(h, attention)), correlation, stranger, advance: (ms: number) => { clock = new Date(clock.getTime() + ms); } };
   }
   const call = async (handlers: ReturnType<typeof createSupervisorHandlers>, correlation: string, name: string, payload: unknown) =>
     body(await handlers[name]?.(request(correlation, name, payload), { kind: 'action', role: 'supervisor' }) ?? { ok: false, result: {} });
@@ -289,14 +297,7 @@ describe('Supervisor portfolio (attention delta §9.4)', () => {
   });
 
   it('replaces a portfolio Lead past its rotation mark, and leaves the replacement to the Supervisor that started it', async () => {
-    const { h, attention, correlation, stranger } = await portfolioRoom();
-    const succession = new Succession({
-      paseo: h.paseo, attention, ledger: controllerLedger(h.controller), store: SuccessionStore.at(h.runtimeRoot), text: { request: 'Hand over.', kickoff: 'Take over.' },
-      starter: new SeatStarter({ paseo: h.paseo, git: h.controller.deps.git, recognition: h.controller.deps.recognition, attention }),
-      contextSettings: () => DEFAULT_SEAT_CONTEXT_SETTINGS, now: () => new Date(),
-    });
-    const supervisor = createSupervisorHandlers(h.controller, attention, succession);
-    expect(await call(createSupervisorHandlers(h.controller, attention), correlation, 'lead_replace_start', { project: 'billing' })).toMatchObject({ error: { code: 'succession_unavailable' } });
+    const { h, supervisor, correlation, stranger } = await portfolioRoom();
     expect(await call(supervisor, correlation, 'lead_replace_start', { project: 'billing' })).toMatchObject({ error: { code: 'rotation_not_reached' } });
     const lead = h.paseo.agents.get('lead-b');
     if (lead === undefined) throw new Error('no lead-b');

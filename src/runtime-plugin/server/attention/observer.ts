@@ -10,7 +10,7 @@ import { realpath } from 'node:fs/promises';
 import { basename, dirname, relative, resolve } from 'node:path';
 import type { PluginLifecycleEvents } from '@getpaseo/plugin/server';
 import type { RuntimeAgent, RuntimeRole } from '../../shared/policy.js';
-import type { Checkout, GitEvidence } from '../git.js';
+import type { GitEvidence } from '../git.js';
 import { toTimelineEntry, type AgentSnapshot, type PaseoPort, type SeatUsage, type TimelineEntry } from '../paseo-port.js';
 import type { Recognition } from '../recognition.js';
 import { leadMarkers, type Marker } from './triage.js';
@@ -40,6 +40,16 @@ export interface Project {
   readonly root: string;
   readonly name: string;
   readonly git: boolean;
+}
+
+/** Where a seat works in its repository, for display: which checkout, and what it has checked out. */
+export interface Checkout {
+  /** The checkout's canonical root. */
+  readonly root: string;
+  /** A linked worktree rather than the repository's main checkout. */
+  readonly linked: boolean;
+  /** The branch HEAD names; absent on a detached HEAD. */
+  readonly branch?: string;
 }
 
 export interface TurnFacts {
@@ -103,7 +113,7 @@ export interface Seat {
 export interface ObserverDependencies {
   readonly paseo: Pick<PaseoPort, 'listAgents' | 'getAgent' | 'recentTimeline'>;
   readonly recognition: Pick<Recognition, 'recognize'>;
-  readonly git: Pick<GitEvidence, 'identity' | 'checkout'>;
+  readonly git: Pick<GitEvidence, 'identity' | 'isLinked' | 'branch'>;
   readonly now: () => Date;
 }
 
@@ -136,7 +146,8 @@ function stateOf(snapshot: AgentSnapshot): SeatState {
 
 export class Observer {
   private readonly seatsById = new Map<string, Seat>();
-  private readonly identities = new Map<string, { readonly project: Project; readonly at: number }>();
+  /** Per working directory: its project and, in Git, its checkout; only the branch there changes. */
+  private readonly identities = new Map<string, { readonly project: Project; readonly checkout?: Omit<Checkout, 'branch'>; readonly at: number }>();
 
   constructor(private readonly deps: ObserverDependencies) {}
 
@@ -146,19 +157,25 @@ export class Observer {
 
   /** The project a working directory belongs to; linked worktrees share their repository's. */
   async projectOf(cwd: string): Promise<Project> {
+    return (await this.identify(cwd)).project;
+  }
+
+  private async identify(cwd: string): Promise<{ readonly project: Project; readonly checkout?: Omit<Checkout, 'branch'> }> {
     const cached = this.identities.get(cwd);
-    if (cached !== undefined && this.time - cached.at < IDENTITY_TTL_MS) return cached.project;
-    let project: Project;
+    if (cached !== undefined && this.time - cached.at < IDENTITY_TTL_MS) return cached;
+    let found: { readonly project: Project; readonly checkout?: Omit<Checkout, 'branch'> };
     try {
       const identity = await this.deps.git.identity(cwd);
       const root = basename(identity.gitCommonDir) === '.git' ? dirname(identity.gitCommonDir) : identity.canonicalRoot;
-      project = { key: identity.gitCommonDir, root, name: basename(root), git: true };
+      // For display only: a checkout Git cannot place leaves the project as it is.
+      const linked = await this.deps.git.isLinked(identity).catch(() => undefined);
+      found = { project: { key: identity.gitCommonDir, root, name: basename(root), git: true }, ...(linked === undefined ? {} : { checkout: { root: identity.canonicalRoot, linked } }) };
     } catch {
       const root = await realpath(cwd).catch(() => cwd);
-      project = { key: `dir:${root}`, root, name: basename(root), git: false };
+      found = { project: { key: `dir:${root}`, root, name: basename(root), git: false } };
     }
-    this.identities.set(cwd, { project, at: this.time });
-    return project;
+    this.identities.set(cwd, { ...found, at: this.time });
+    return found;
   }
 
   /** Rebuilds every seat from Paseo; facts only events carry are kept for seats still present. */
@@ -177,7 +194,7 @@ export class Observer {
     if (recognized === undefined) return undefined;
     const known = this.seatsById.get(snapshot.id);
     const project = known !== undefined && known.cwd === snapshot.cwd ? known.project : await this.projectOf(snapshot.cwd);
-    const checkout = await this.checkoutOf(snapshot.cwd, project);
+    const checkout = await this.checkoutOf(snapshot.cwd);
     const seat: Seat = known ?? {
       agentId: snapshot.id, role: recognized.role, agent: recognized.agent, provider: snapshot.provider, title: snapshot.title, model: snapshot.model, thinking: snapshot.thinking, cwd: snapshot.cwd, workspaceId: snapshot.workspaceId, project, checkout,
       parentAgentId: snapshot.parentAgentId, state: stateOf(snapshot), archivedAt: snapshot.archivedAt,
@@ -202,9 +219,12 @@ export class Observer {
     return seat;
   }
 
-  /** Where in its repository `cwd` lies; undefined outside Git, or when Git cannot say. */
-  private async checkoutOf(cwd: string, project: Project): Promise<Checkout | undefined> {
-    return project.git ? await this.deps.git.checkout(cwd).catch(() => undefined) : undefined;
+  /** Where in its repository `cwd` lies, with the branch read afresh; undefined outside Git, or when Git cannot say. */
+  private async checkoutOf(cwd: string): Promise<Checkout | undefined> {
+    const where = (await this.identify(cwd)).checkout;
+    if (where === undefined) return undefined;
+    const branch = await this.deps.git.branch(where.root).catch(() => undefined);
+    return { ...where, ...(branch === undefined ? {} : { branch }) };
   }
 
   /** Re-reads seats whose snapshot is older than `maxAgeMs`; a failed read changes nothing. */
@@ -252,7 +272,7 @@ export class Observer {
     // A seat first seen at this event was just read whole.
     const usage = seat.role !== 'peer' && !fresh ? this.deps.paseo.getAgent(agentId).then(snapshot => snapshot?.usage ?? null, () => null) : Promise.resolve(null);
     // A turn may have switched the seat's branch.
-    const checkout = fresh ? Promise.resolve(seat.checkout) : this.checkoutOf(seat.cwd, seat.project);
+    const checkout = fresh ? Promise.resolve(seat.checkout) : this.checkoutOf(seat.cwd);
     let entries: readonly TimelineEntry[] = [];
     if (turnId !== undefined && turnId !== null && turnId !== '') {
       entries = (await this.deps.paseo.recentTimeline(agentId, TURN_READ).catch(() => [])).filter(entry => entry.turnId === turnId);

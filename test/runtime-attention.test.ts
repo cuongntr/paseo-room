@@ -12,7 +12,6 @@ import { leadMarkers } from '../src/runtime-plugin/server/attention/triage.js';
 import { rolePills } from '../src/runtime-plugin/client/pills.js';
 import { GitEvidence } from '../src/runtime-plugin/server/git.js';
 import { Recognition } from '../src/runtime-plugin/server/recognition.js';
-import { ProjectStore } from '../src/runtime-plugin/server/store/project.js';
 import { FakePaseo, PARENT_AGENT_ID_LABEL } from './runtime-fake-paseo.js';
 
 let root: string;
@@ -218,19 +217,25 @@ describe('attention signals and letters', () => {
 
   it('says what the Lead left running: its Peers, and its open assignments when the ledger is read', async () => {
     engine.dispose();
-    let open: string[] = [];
-    // A runtime project for the repository: the ledger is read only for a project that has one.
-    await ProjectStore.create(runtimeRoot, await new GitEvidence().identity(repo));
+    let open: string[] | undefined;
     const recognition = new Recognition(join(root, 'plugin'));
     await recognition.load();
     engine = new AttentionEngine({
       paseo, recognition, git: new GitEvidence(), runtimeRoot, now: () => clock, settings: () => settings, log: () => undefined,
       ledger: (projectKey, leadAgentId) => {
         expect([projectKey, leadAgentId]).toEqual([join(repo, '.git'), 'lead']);
-        return Promise.resolve({ open, notices: 0, retained: 0 });
+        return Promise.resolve(open === undefined ? undefined : { open, notices: 0, retained: 0 });
       },
     });
     await settle();
+    // A project with no runtime ledger has nothing to count, rather than nothing open.
+    await engine.onTurnEnded('lead', { kind: 'completed' }, [{ type: 'assistant_message', text: 'Looked around.' }]);
+    advance(16 * MINUTE);
+    await settle();
+    expect(letters().at(-1)?.text).toContain('ended a turn (completed; no Peer running): "Looked around."');
+
+    await setIdle('sup');
+    open = [];
     // Says it will go on, with nothing running and nothing open: stopped, which its words hide.
     await engine.onTurnEnded('lead', { kind: 'completed' }, [{ type: 'assistant_message', text: 'I will dispatch step 1 next.' }]);
     advance(16 * MINUTE);

@@ -19,7 +19,9 @@ import type { CorrelationRegistry } from './correlations.js';
 import { evaluateAcceptance, rerunRedReason } from './domain/acceptance.js';
 import { sha256 } from './domain/receipts.js';
 import { normalizeScope, parseScope } from './domain/scope.js';
-import { activeLeases, applyEvent, checkEvent, leadWorkspaceWriter, leaseCollision, project, reclaimCheck, type AssignmentView, type ProjectState } from './domain/state.js';
+import {
+  activeLeases, applyEvent, checkEvent, leadWorkspaceWriter, leaseCollision, project, reclaimCheck, type AssignmentView, type ProjectState, type WorkspaceRecord,
+} from './domain/state.js';
 import { validateAssignmentCreate } from './domain/validate.js';
 import { EVENT_SCHEMA, type GateResultV1, type RuntimeEventV1 } from './events/schema.js';
 import { gateRequestedData, runGate, type GateEvent, type GateOutcome, type GateRequest } from './gate.js';
@@ -29,6 +31,7 @@ import { Notices } from './notices.js';
 import { checkLeadOwnership } from './ownership.js';
 import {
   ASSIGNMENT_LABEL, CreationConflictError, PARENT_AGENT_ID_LABEL, peerStopped, type AgentSnapshot, type PaseoPort, type PeerLaunch, type ThinkingOption, type WorkspaceSnapshot,
+  type WorktreeWorkspaceRequest,
 } from './paseo-port.js';
 import type { Recognition } from './recognition.js';
 import { ProjectStore, type NewEvent } from './store/project.js';
@@ -89,6 +92,17 @@ interface LeaseRequest {
 
 export const refuse = <T>(code: string, message: string, retryable = false): ControllerResult<T> => ({ ok: false, code, message, retryable });
 const done = <T>(value: T): ControllerResult<T> => ({ ok: true, value });
+
+/**
+ * The worktree request a record stands for (P2-D3). Paseo's receipt fingerprints the whole request,
+ * so the first call and recovery's reissue both build it here, from what was recorded.
+ */
+export function worktreeRequest(record: WorkspaceRecord, projectRoot: string): WorktreeWorkspaceRequest {
+  return {
+    workspaceId: record.workspaceId, idempotencyKey: record.idempotencyKey, title: record.title, cwd: projectRoot,
+    baseCommit: record.baseCommit, branchName: record.branchName, worktreeSlug: record.worktreeSlug,
+  };
+}
 
 function token(prefix: string): string {
   return `${prefix}_${randomBytes(9).toString('base64url')}`;
@@ -424,20 +438,18 @@ export class Controller {
     const view = loaded.state.assignments.get(assignmentId);
     if (lease === undefined || view === undefined) return refuse('lease_missing', `Assignment ${assignmentId} holds no lease.`);
     const intentId = token('wsc');
-    const request = {
-      workspaceId: lease.workspaceId, idempotencyKey: `ws-${assignmentId}-e${String(lease.epoch)}`, title: worktreeTitle(view),
-      cwd: loaded.store.meta.canonicalRoot, baseCommit: lease.baseCommit, branchName: lease.branch, worktreeSlug: assignmentId.toLowerCase(),
-    };
     await this.append(loaded, {
       type: 'workspace.create-requested', payloadVersion: 1, assignmentId, actor: this.plugin, idempotencyKey: intentId,
       data: {
-        intentId, workspaceId: request.workspaceId, idempotencyKey: request.idempotencyKey, baseCommit: request.baseCommit, branchName: request.branchName,
-        worktreeSlug: request.worktreeSlug, title: request.title,
+        intentId, workspaceId: lease.workspaceId, idempotencyKey: `ws-${assignmentId}-e${String(lease.epoch)}`, baseCommit: lease.baseCommit,
+        branchName: lease.branch, worktreeSlug: assignmentId.toLowerCase(), title: worktreeTitle(view),
       },
     });
+    const record = loaded.state.workspaces.get(assignmentId);
+    if (record === undefined) return refuse('lease_missing', `Assignment ${assignmentId} holds no worktree record.`);
     let snapshot: WorkspaceSnapshot;
     try {
-      snapshot = await this.deps.paseo.createWorktreeWorkspace(request);
+      snapshot = await this.deps.paseo.createWorktreeWorkspace(worktreeRequest(record, loaded.store.meta.canonicalRoot));
     } catch (error) {
       const reason = error instanceof Error ? error.message.slice(0, 1_000) || 'unknown' : 'unknown';
       if (error instanceof CreationConflictError) {
