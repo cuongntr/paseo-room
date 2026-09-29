@@ -393,6 +393,19 @@ Together these pins close Claude's documented
 [parallel-agent surfaces](https://code.claude.com/docs/en/agents) and
 [cross-session inbound channel](https://code.claude.com/docs/en/cross-session-messaging).
 
+Claude also fetches the signed-in account's claude.ai connectors into every session as MCP
+servers. They come with the account, not from any declaration, so `paseoMcpCheck` never sees
+them. They reach Peer, and one of them, Claude Docs, publishes outside this machine. A connector
+the account added but never authorised is worse than idle. Claude tells a non-interactive session
+to report it, so seats ended turns and handoffs asking Human to connect Canva: 151 Peer, 34 Lead
+and 10 Supervisor sessions by 2026-09-29. No seat had ever called a connector tool.
+
+Each generated `settings.json` therefore sets `disableClaudeAiConnectors: true`, which Claude
+honours from any settings source. `ENABLE_CLAUDEAI_MCP_SERVERS=0` is pinned in the provider and
+`settings.env` like the other launch closures. Both gate only auto-fetched connectors: Paseo's
+own MCP servers and the runtime's bridge are passed explicitly and are unaffected, and so are the
+operator's own Claude Code sessions, whose home is not a role home.
+
 Claude's file-backed credential path is `.credentials.json` (plural) on Linux/Windows and as
 a macOS fallback. Normal macOS login lives in Keychain. Current Claude runtimes expose a
 separate secure-storage location override, so each generated settings file and provider pins

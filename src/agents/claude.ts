@@ -40,6 +40,14 @@ const CONTROL_PLANE_ENV = {
   CLAUDE_CODE_DISABLE_AGENT_VIEW: '1',
   CLAUDE_CODE_DISABLE_WORKFLOWS: '1',
 } as const;
+/**
+ * Claude fetches the signed-in account's claude.ai connectors as MCP servers into every session.
+ * They would reach each seat, Peer included, without passing `paseoMcpCheck`, and one of them
+ * publishes outside this machine.
+ */
+const CONNECTOR_ENV = { ENABLE_CLAUDEAI_MCP_SERVERS: '0' } as const;
+/** Every launch closure: pinned in the provider, and repeated in each role's `settings.env`. */
+const LAUNCH_ENV = { ...CONTROL_PLANE_ENV, ...CONNECTOR_ENV } as const;
 /** One native-orchestration deny list, emitted into both Claude and Paseo enforcement surfaces. */
 const DISALLOWED_TOOLS = [
   'Task', 'Agent', 'Workflow', 'ListAgents', 'SendMessage', 'TeamCreate', 'TeamDelete',
@@ -72,7 +80,7 @@ export function renderRoleSettings(role: Role, secureStorageDir?: string): strin
   const settings = {
     // Claude applies settings.env after the launch environment, so repeat provider closures here.
     env: {
-      ...CONTROL_PLANE_ENV,
+      ...LAUNCH_ENV,
       PASEO_ROOM_ROLE: role,
       ...(secureStorageDir === undefined ? {} : { [SECURE_STORAGE_ENV]: secureStorageDir }),
     },
@@ -81,6 +89,7 @@ export function renderRoleSettings(role: Role, secureStorageDir?: string): strin
     // These restrictive settings cannot be weakened by another settings scope.
     disableAgentView: true,
     disableWorkflows: true,
+    disableClaudeAiConnectors: true,
     crossSessionInbound: 'refuse',
   };
   return JSON.stringify(settings, null, 2) + '\n';
@@ -159,8 +168,9 @@ export const claudeAgent: Agent = {
   id: 'claude',
   label: 'Claude Code',
   homeEnv: 'CLAUDE_CONFIG_DIR',
-  // Agent View and dynamic workflows have entry points beyond model tool calls.
-  providerEnv: CONTROL_PLANE_ENV,
+  // Agent View and dynamic workflows have entry points beyond model tool calls, and claude.ai
+  // connectors arrive with the account rather than from any declaration the room inspects.
+  providerEnv: LAUNCH_ENV,
   defaultModeId: 'bypassPermissions',
   // Keep the legacy Task name and block current native orchestration,
   // shared task/cron coordination, and cross-session paths. Paseo alone owns

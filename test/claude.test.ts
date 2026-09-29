@@ -14,12 +14,14 @@ describe('renderRoleSettings', () => {
       env: {
         CLAUDE_CODE_DISABLE_AGENT_VIEW: '1',
         CLAUDE_CODE_DISABLE_WORKFLOWS: '1',
+        ENABLE_CLAUDEAI_MCP_SERVERS: '0',
         PASEO_ROOM_ROLE: 'peer',
         CLAUDE_SECURESTORAGE_CONFIG_DIR: '/room/roles/claude/peer',
       },
       permissions: { deny: claudeAgent.pins.disallowedTools },
       disableAgentView: true,
       disableWorkflows: true,
+      disableClaudeAiConnectors: true,
       crossSessionInbound: 'refuse',
     });
   });
@@ -90,7 +92,7 @@ describe('claudeAgent.build', () => {
     expect(await readFile(join(peer, 'keybindings.json'), 'utf8')).toBe('{"bindings":[]}');
     const settings = JSON.parse(await readFile(join(peer, 'settings.json'), 'utf8')) as Record<string, unknown>;
     expect(Object.keys(settings).sort()).toEqual([
-      'crossSessionInbound', 'disableAgentView', 'disableWorkflows', 'env', 'permissions',
+      'crossSessionInbound', 'disableAgentView', 'disableClaudeAiConnectors', 'disableWorkflows', 'env', 'permissions',
     ]);
     expect(JSON.stringify(settings)).not.toContain('OPERATOR_ONLY');
     expect(JSON.stringify(settings)).not.toContain('operator-helper');

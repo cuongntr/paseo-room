@@ -311,6 +311,7 @@ still required where Paseo launch state outranks the agent's own configuration:
 | `disableAgentView: true` + `CLAUDE_CODE_DISABLE_AGENT_VIEW=1` | Claude | Disables Claude's separate background-agent control plane across settings scopes and at launch. |
 | `disableWorkflows: true` + `CLAUDE_CODE_DISABLE_WORKFLOWS=1` | Claude | Disables dynamic workflows through every entry point, beyond denying the `Workflow` tool. |
 | `crossSessionInbound: "refuse"` | Claude | Prevents another Claude session from injecting a turn into a room seat. |
+| `disableClaudeAiConnectors: true` + `ENABLE_CLAUDEAI_MCP_SERVERS=0` | Claude | Keeps the signed-in account's claude.ai connectors (Canva, Claude Docs, …) out of every seat. They bypass the room's MCP check and reach Peer, and one that needs authorising makes each seat ask you to connect it. Your own Claude Code sessions keep them. |
 | strict argv + `PI_MCP_CONFIG_MODE=exclusive` + additive runtime capsule | Pi | Disables extension discovery and project trust, and restricts adapter config to the role-home `mcp.json`; forbids a second agent control plane without claiming sandboxing. |
 | `paseoTools: {enabled}` | all | Room tools for Supervisor and Lead, never for Peer. |
 
@@ -353,10 +354,11 @@ list is written to both provider `disallowedTools` and every role's `settings.js
 `permissions.deny`. The role file is minimal, deterministic room policy: it does not copy operator
 env, hooks, permissions, or auth helpers. The room does not write `permissions.defaultMode`:
 Paseo passes the profile's mode as a command-line session setting, which outranks that file. The two
-Claude disable environment keys are likewise pinned in both the provider and generated
-`settings.json`, because Claude applies settings-file environment values after launch values.
-The generated top-level `disableAgentView` and `disableWorkflows` settings are also forced to
-`true`; their restrictive value cannot be weakened by another ordinary settings scope.
+Claude disable environment keys, `ENABLE_CLAUDEAI_MCP_SERVERS=0` among them, are likewise pinned in
+both the provider and generated `settings.json`, because Claude applies settings-file environment
+values after launch values. The generated top-level `disableAgentView`, `disableWorkflows` and
+`disableClaudeAiConnectors` settings are also forced to `true`; their restrictive value cannot be
+weakened by another ordinary settings scope.
 
 No default model is pinned. The profile schema supports `model`, but leaving it absent lets
 each provider use its current default and avoids silently choosing a cost/capability tier for

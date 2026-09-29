@@ -477,11 +477,12 @@ describe('Pi rooms', () => {
         env: Record<string, string>; permissions: { deny: string[] };
       };
       expect(Object.keys(settings).sort()).toEqual([
-        'crossSessionInbound', 'disableAgentView', 'disableWorkflows', 'env', 'permissions',
+        'crossSessionInbound', 'disableAgentView', 'disableClaudeAiConnectors', 'disableWorkflows', 'env', 'permissions',
       ]);
       expect(settings.env).toEqual({
         CLAUDE_CODE_DISABLE_AGENT_VIEW: '1',
         CLAUDE_CODE_DISABLE_WORKFLOWS: '1',
+        ENABLE_CLAUDEAI_MCP_SERVERS: '0',
         PASEO_ROOM_ROLE: role,
         CLAUDE_SECURESTORAGE_CONFIG_DIR: home,
       });
@@ -689,6 +690,7 @@ describe('runtime enforcement pins', () => {
         env: {
           CLAUDE_CODE_DISABLE_AGENT_VIEW: '1',
           CLAUDE_CODE_DISABLE_WORKFLOWS: '1',
+          ENABLE_CLAUDEAI_MCP_SERVERS: '0',
         },
         disallowedTools: denied,
       });
@@ -711,12 +713,12 @@ describe('runtime enforcement pins', () => {
     expect(verified.out).toContain('Paseo providers are missing or differ');
   });
 
-  it('verify fails when a Claude control-plane environment pin is removed', async () => {
+  it.each(['CLAUDE_CODE_DISABLE_WORKFLOWS', 'ENABLE_CLAUDEAI_MCP_SERVERS'])('verify fails when the Claude launch pin %s is removed', async name => {
     const fixture = await makeFixture();
     const daemon = emptyDaemon();
     await run(['setup', '--agent', 'claude', '--apply'], fixture.env, daemon);
     const live = daemon.providers['claude-lead'] as { env: Record<string, string> };
-    delete live.env.CLAUDE_CODE_DISABLE_WORKFLOWS;
+    live.env = Object.fromEntries(Object.entries(live.env).filter(([key]) => key !== name));
     const verified = await run(['verify'], fixture.env, daemon);
     expect(verified.code).toBe(1);
     expect(verified.out).toContain('Paseo providers are missing or differ');
@@ -754,6 +756,20 @@ describe('runtime enforcement pins', () => {
     const providerVerified = await run(['verify'], fixture.env, daemon);
     expect(providerVerified.code).toBe(1);
     expect(providerVerified.out).toContain('Paseo providers are missing or differ');
+  });
+
+  it('verify detects a role setting that lets claude.ai connectors back into a seat', async () => {
+    const fixture = await makeFixture();
+    const daemon = emptyDaemon();
+    await run(['setup', '--agent', 'claude', '--apply'], fixture.env, daemon);
+    const path = join(fixture.roomHome, 'roles/claude/peer/settings.json');
+    const settings = JSON.parse(await readFile(path, 'utf8')) as { env: Record<string, string>; disableClaudeAiConnectors?: boolean };
+    delete settings.disableClaudeAiConnectors;
+    settings.env.ENABLE_CLAUDEAI_MCP_SERVERS = '1';
+    await writeFile(path, JSON.stringify(settings, null, 2) + '\n');
+    const verified = await run(['verify'], fixture.env, daemon);
+    expect(verified.code).toBe(1);
+    expect(verified.out).toContain('managed role file is missing or outdated');
   });
 
   it('verify detects each vendor role-home environment drifting from its generated home', async () => {
