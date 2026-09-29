@@ -83,7 +83,7 @@ export async function harness(options: { readonly associationWaitMs?: number; re
     // A real daemon version is judged against the shipped qualified lines; otherwise `worktrees`
     // qualifies a fake one.
     ...(options.daemonVersion !== undefined ? { daemonVersion: () => options.daemonVersion }
-      : options.worktrees === true ? { daemonVersion: () => QUALIFIED_TEST_DAEMON, qualifiedLines: [{ from: QUALIFIED_TEST_DAEMON }] } : {}),
+      : options.worktrees === true ? { daemonVersion: () => QUALIFIED_TEST_DAEMON, worktreeFloor: QUALIFIED_TEST_DAEMON } : {}),
     ...(options.peerEffort === undefined ? {} : { peerEffort: () => options.peerEffort as PeerEffortSettings }),
   });
   const lead: Caller = { agentId: 'lead-1', providerId: 'codex-lead', role: 'lead', workspaceId: 'ws-1', cwd: repo };

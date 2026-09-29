@@ -73,9 +73,9 @@ starts, its exit code is preserved; a signal is returned using the conventional
 - A running Paseo daemon with CLI and daemon on the same version. Codex requires
   **0.8.0-beta.1 or newer**; any selection containing Claude or Pi requires **0.8.0 or newer**.
   Claude also requires Paseo plugins to be enabled explicitly: the generated trusted server plugin
-  is the strong contract carrier, and `paseo-room` never enables plugins for you. The plugin is
-  version-bounded to `>=0.8.0 <0.10.0`. `paseo-room` checks compatibility before touching anything,
-  and never installs or upgrades Paseo.
+  is the strong contract carrier, and `paseo-room` never enables plugins for you. The plugin
+  requires Paseo `>=0.8.0` and has no upper bound. `paseo-room` checks compatibility before
+  touching anything, and never installs or upgrades Paseo.
 - An initialised Codex home (`~/.codex/config.toml`) and/or Claude Code home (`~/.claude`).
   Codex must be new enough for `codex debug models` to print its JSON model catalog: the room
   seats Codex only if it can generate the scrubbed catalog copy.
@@ -98,7 +98,7 @@ starts, its exit code is preserved; a signal is returned using the conventional
     SKILL.md, references/         # procedure plus a scaffold loaded only when the skill runs
   room/skill-projections/<agent>/lead/     # exact Lead skill aggregate for each seated agent
   plugin/                         # Claude only: trusted creation-time system-prompt append carrier
-    paseo-plugin.json             # accepts Paseo >=0.8.0 <0.10.0
+    paseo-plugin.json             # accepts Paseo >=0.8.0
     index.server.ts, server/      # exact provider map + generated role contracts
   roles/codex/<role>/
     config.toml                   # your config.toml + the room's overrides
@@ -620,9 +620,10 @@ npx paseo-room verify
 - **Trust.** Like the carrier, the runtime is trusted, unsandboxed code running in your daemon.
   Enable Paseo plugins yourself; `paseo-room` never does. It is not an operating-system sandbox and
   cannot stop a process running as your user.
-- **Range.** Runtime requires Paseo `>=0.8.0 <0.10.0`. `0.8.0` and `0.9.1` are both live-qualified
-  points, so a daemon outside that range is refused for runtime while the baseline room keeps
-  working.
+- **Range.** Runtime requires Paseo `>=0.8.0`, with no upper bound: Paseo releases faster than each
+  release could be checked first, so a newer one is accepted unread. `0.8.0` and `0.9.1` are
+  live-qualified, and `0.10.1` was compared file by file with `0.9.2`. If a release breaks the
+  plugin, Paseo reports it `failed` and `verify` fails with the load error.
 - **Lead** gains room tools such as `assignment_create`, `assignment_dispatch`, `assignment_answer`,
   `assignment_accept`, `gate_run`, and for isolated writers `workspace_close` and `lease_reclaim`.
   `assignment_create` refuses a base that is not a commit of the repository (`base_unknown`).
@@ -774,7 +775,7 @@ and the refusal is final for that dispatch — narrow or sequence the work:
 
 | Code | Why |
 |---|---|
-| `worktree_unqualified` | the daemon is not on a Paseo line qualified for worktree dispatch: `0.9.1` or a later `0.9` release |
+| `worktree_unqualified` | the daemon is older than `0.9.1`, the first Paseo release worktree dispatch was qualified on, or runs a prerelease |
 | `worktree_setup_unobservable` | `paseo.json` at the base declares `worktree.setup`, which Paseo runs where the runtime cannot see it finish |
 | `scope_not_canonical` | a `writeScope` or `serialOnly` item is not a repository-relative path or `*`/`?`/`**` glob |
 | `writer_exclusive` | a writer is still active in Lead's workspace (or, the other way round, isolated writers are active) |
@@ -797,10 +798,9 @@ the same worktree at the next lease epoch; the old Peer's late reports are refus
 the Human form of both, only where the runtime would accept it, and asks twice before discarding
 work.
 
-Worktree dispatch is enabled per Paseo minor line, from the patch that passed the live
-qualification in the Phase 2 delta §9: `0.9.1` and every later `0.9` release. An earlier patch, a
-prerelease or build-stamped version, or another minor refuses `worktree_unqualified`, and dispatch
-without isolation still works.
+Worktree dispatch is enabled on every Paseo release the runtime accepts from `0.9.1`, the release
+that passed the live qualification in the Phase 2 delta §9. An earlier release, or a prerelease or
+build-stamped version, refuses `worktree_unqualified`, and dispatch without isolation still works.
 
 To stop using it, finish, close or abandon the recorded work, then run setup **without**
 `--runtime`. Setup refuses while anything is still active or uncertain — including an isolated

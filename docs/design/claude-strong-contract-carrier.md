@@ -14,7 +14,7 @@
 - **Triggered risks:** new required dependency on a preview Paseo API; trusted-plugin boundary; model-facing prompt carrier; generated-state and live-daemon compatibility; multi-session resume behaviour.
 - **Required artifacts/gates:** accepted delta-change, Technical Design (`design-ready`), Implementation Plan (`plan-ready-for-beads`), feature closure (`feature-done`). No PRD amendment: the accepted PRD stays frozen and the delta-change records the narrowing.
 - **Execution path:** plan → converter → implementation.
-- **Exceptions:** proceeding on the Paseo 0.8 preview plugin API rather than waiting for a stable API, accepted by the repository owner on 2026-09-18 and fenced by a manifest bound, then `>=0.8.0 <0.9.0` and now `>=0.8.0 <0.10.0`.
+- **Exceptions:** proceeding on the Paseo 0.8 preview plugin API rather than waiting for a stable API, accepted by the repository owner on 2026-09-18 and fenced by a manifest bound, then `>=0.8.0 <0.9.0` and `>=0.8.0 <0.10.0`, and since 2026-09-29 only the floor `>=0.8.0`.
 - **Decided:** 2026-09-18 — Repository owner.
 - **Supersedes:** the PRD Phase 2 plugin feasibility gate, for this carrier only.
 
@@ -24,7 +24,7 @@
 
 - a bundled, room-owned Paseo **server** plugin that appends the rendered role contract to
   `config.systemPrompt` in a `before('agent.create')` hook, for exact room Claude provider ids;
-- the plugin's manifest version bound `>=0.8.0 <0.10.0` and its generated source files as managed
+- the plugin's manifest version floor `>=0.8.0` and its generated source files as managed
   entries under `~/.paseo-room`;
 - daemon registration, status inspection, reload, and deregistration of that plugin through the Paseo
   API, plus the `pluginsEnabled` precondition check;
@@ -50,7 +50,7 @@
 paseo-room setup --apply  (selection contains claude)
   │
   ├─ managed entries under ~/.paseo-room/plugin/
-  │    paseo-plugin.json          id, requirements.paseo = ">=0.8.0 <0.10.0"
+  │    paseo-plugin.json          id, requirements.paseo = ">=0.8.0"
   │    package.json  tsconfig.json
   │    index.server.ts            before('agent.create') hook, no client entry
   │    server/carrier.ts          marker-delimited idempotent composition rule
@@ -126,9 +126,10 @@ Preview Paseo plugin contracts, consumed through the existing `@getpaseo/client`
 | `plugin.reload(id)` | write | Adopt regenerated source after `setup --apply` rewrote it. |
 | `plugin.remove(id)` | write | Deregister on `remove --apply`. Configuration only; the directory is deleted by the existing room-home removal. |
 
-Plugin manifest contract, consumed by the daemon: `requirements.paseo = ">=0.8.0 <0.10.0"`. The daemon
+Plugin manifest contract, consumed by the daemon: `requirements.paseo = ">=0.8.0"`. The daemon
 checks this before installing and again on startup, enable, and reload, and refuses an out-of-range
-plugin with a named diagnostic. That refusal is the intended behaviour on a future 0.9 daemon.
+plugin with a named diagnostic. The floor is the CLI's own compatibility floor for a Claude room, so
+the CLI refuses an older daemon before the plugin reaches it; there is no upper bound.
 
 No `paseo-room` public API, CLI flag, room path outside `~/.paseo-room`, provider field, or profile
 field changes.
@@ -215,7 +216,7 @@ marker, exactly as the current removal contract does.
 | `pluginsEnabled` false/absent | `CLAUDE.md` only | `verify` fails, names the operator action |
 | Plugin not registered / disabled / removed | `CLAUDE.md` only | `verify` fails, asks for `setup --apply` |
 | Plugin `status: failed` | `CLAUDE.md` only | `verify` fails and surfaces the load error |
-| Daemon outside `>=0.8.0 <0.10.0` | `CLAUDE.md` only | `verify` fails, naming the version bound |
+| Daemon older than `0.8.0` | `CLAUDE.md` only | the compatibility check fails, naming the floor |
 | Session resumed rather than created | The session runs with the prompt Paseo stored at creation, so it keeps that contract generation; on `0.9.2` a daemon-restart resume does not re-enter the hook, and only a new session receives a newer generation (Q-001); unprobed on `0.8.x` | `CLAUDE.md` still covers it |
 
 Every row above assumes the default, where `CLAUDE.md` still carries the contract. Under
@@ -236,7 +237,7 @@ repository patterns. No new framework, no new dependency.
   returned unchanged; exact room provider ids rewritten; a no-op composition returns the original
   object.
 - **Generated files (integration):** exact desired content for manifest, entries, and generated
-  contract; the manifest declares `>=0.8.0 <0.10.0`; the rendered contract equals
+  contract; the manifest declares `>=0.8.0`; the rendered contract equals
   `renderInstructions()` for that role, so the two Claude carriers cannot diverge; the plugin source
   contains no import of any package or SDK.
 - **Command behaviour (integration):** dry run writes nothing; `pluginsEnabled` false fails with the
@@ -311,3 +312,4 @@ No blocking question remains for this carrier.
 | 2026-09-23 | Bytes | Widened the manifest bound to `>=0.8.0 <0.10.0` for Paseo `0.9.1` and answered Q-003; added the `claude.paseo-range` check so an unsupported daemon fails as a room check rather than as a daemon refusal partway through `--apply`. Evidence is recorded in `docs/design/runtime-coordination.md` §14. |
 | 2026-09-23 | Bytes | Answered Q-001 for Paseo `0.9.1` with a disposable hook probe on an isolated daemon: the hook's prompt is persisted, reused by `agent reload`, and fed back into the hook on a daemon-restart resume, where the generation marker already prevents a second copy. No behaviour change; `CLAUDE.md` stays the default because model ingestion and `0.8.x` remain unobserved. |
 | 2026-09-26 | Bytes | Revisited Q-001 on Paseo `0.9.2` after a daemon restart left every live room seat on its stored generation: resume does not re-enter the creation hook, so a resumed Claude seat keeps the contract it was created with and a new generation needs a new seat (§8.5). No code change. |
+| 2026-09-29 | Repository owner / Bytes | Removed the manifest's upper bound, in step with the runtime plugin: `requirements.paseo` is `>=0.8.0`, and the `claude.paseo-range` check is gone, since the compatibility check already requires that floor for a Claude room. Paseo shipped five releases in a week, and `<0.10.0` would have dropped every Claude seat to `CLAUDE.md` on the current one. The plugin SDK and plugin host, `before('agent.create')` included, are identical from `0.9.2` to `0.10.1`, and the Claude provider changed only in reading a seat's settings and transcripts from its own `CLAUDE_CONFIG_DIR` ([runtime design](runtime-coordination.md) §14). |

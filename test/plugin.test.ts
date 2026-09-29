@@ -4,6 +4,7 @@ import { runInNewContext } from 'node:vm';
 import { describe, expect, it } from 'vitest';
 import { DiagnosticCategory, ModuleKind, ScriptTarget, transpileModule } from 'typescript';
 import { remove, setup, verify } from '../src/commands.js';
+import { minimumPaseoVersion, PI_MINIMUM_VERSION } from '../src/paseo.js';
 import {
   CLAUDE_CARRIER_PLUGIN_ID, renderClaudeCarrierContract, typescriptTemplateLiteral,
 } from '../src/plugin.js';
@@ -67,19 +68,23 @@ describe('Claude contract carrier hook', () => {
 });
 
 describe('Claude contract carrier lifecycle', () => {
-  it('states the supported Paseo range itself instead of letting apply hit the daemon refusal', async () => {
-    // Paseo refuses to install a plugin whose manifest range excludes the running daemon, so a
-    // Claude room on an unsupported Paseo must fail as a room check and write nothing.
-    const fixture = await makeFixture({ paseoStatus: { ...RUNNING_STATUS, cliVersion: '0.10.0', daemonVersion: '0.10.0' } });
+  it('installs on a Paseo release newer than any the room was compared with', async () => {
+    // The plugin range has no upper bound: a Claude room on a newer Paseo sets up like any other.
+    const fixture = await makeFixture({ paseoStatus: { ...RUNNING_STATUS, cliVersion: '1.4.0', daemonVersion: '1.4.0' } });
     const daemon = emptyDaemon();
     const result = await setup({ env: fixture.env, factory: fakeClient(daemon), agents: ['claude'], apply: true });
-    expect(result.outcome).toBe('failed');
-    expect(result.checks.filter(check => check.status === 'fail').map(check => check.id)).toEqual(['claude.paseo-range']);
-    expect(daemon.plugins).toEqual([]);
-    await expect(readFile(join(fixture.roomHome, 'plugin/paseo-plugin.json'), 'utf8')).rejects.toThrow();
+    expect(result.outcome).toBe('ok');
+    expect((daemon.plugins ?? []).map(plugin => plugin.id)).toEqual([CLAUDE_CARRIER_PLUGIN_ID]);
+  });
 
-    // A codex-only room needs no plugin, so the same daemon still sets up.
-    expect((await setup({ env: fixture.env, factory: fakeClient(daemon), agents: ['codex'], apply: true })).outcome).toBe('ok');
+  it('declares the compatibility floor as each plugin\'s Paseo range, so no separate range check is needed', async () => {
+    for (const manifest of ['src/plugin-assets/paseo-plugin.json', 'src/runtime-plugin/paseo-plugin.json']) {
+      const parsed = JSON.parse(await readFile(join(import.meta.dirname, '..', manifest), 'utf8')) as { requirements?: { paseo?: string } };
+      expect(parsed.requirements?.paseo, manifest).toBe(`>=${PI_MINIMUM_VERSION}`);
+    }
+    // Every selection that installs a plugin raises the compatibility check to that floor.
+    expect(minimumPaseoVersion(['claude'])).toBe(PI_MINIMUM_VERSION);
+    expect(minimumPaseoVersion(['codex'], true)).toBe(PI_MINIMUM_VERSION);
   });
 
   it('installs, verifies, reports drift, and removes the room-owned plugin', async () => {
@@ -99,7 +104,7 @@ describe('Claude contract carrier lifecycle', () => {
     const parsedManifest: unknown = JSON.parse(manifest);
     expect(parsedManifest).toEqual({
       id: CLAUDE_CARRIER_PLUGIN_ID,
-      requirements: { paseo: '>=0.8.0 <0.10.0' },
+      requirements: { paseo: '>=0.8.0' },
     });
     await expect(readFile(join(fixture.roomHome, 'plugin/server/contract.ts'), 'utf8'))
       .resolves.toContain(typescriptTemplateLiteral(renderInstructions('lead')));

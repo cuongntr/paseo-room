@@ -8,42 +8,27 @@
 export const RUNTIME_PLUGIN_ID = 'paseo-room-runtime';
 
 /**
- * `0.8.0` and `0.9.1` are the live-qualified points. `0.9.x` carries a byte-identical plugin
- * compiler, unchanged lifecycle hooks and an unchanged provider/profile config schema, so the
- * host contract this plugin depends on is the same one `0.8.0` was qualified against. `0.10.0`
- * is unqualified, so the bound stays exclusive.
+ * The manifest's `requirements.paseo`: the CLI's compatibility floor, and no upper bound. Paseo
+ * releases faster than each could be read before the room runs on it, so a new release is admitted
+ * unread (docs/design/runtime-coordination.md §14, 2026-09-29). `0.8.0` and `0.9.1` are the
+ * live-qualified points. Paseo still requires a range here: a plugin without one targets Paseo
+ * before `0.8`.
  */
-export const RUNTIME_PASEO_RANGE = '>=0.8.0 <0.10.0';
+export const RUNTIME_PASEO_RANGE = '>=0.8.0';
 
 /**
- * A qualified minor line: from the patch that passed live qualification up to, but excluding,
- * `below` — a later patch found to change a surface the qualification relied on.
+ * The first Paseo release worktree dispatch passed live qualification on
+ * (docs/design/runtime-coordination-phase2.md §8, §9.2); there is no upper bound (§9.4). An earlier
+ * release, a prerelease or build-stamped version, or a version the plugin cannot read refuses
+ * `isolation: 'worktree'` with `worktree_unqualified`.
  */
-export interface WorktreeLine {
-  readonly from: string;
-  readonly below?: string;
-}
+export const WORKTREE_PASEO_FLOOR = '0.9.1';
 
-/**
- * Minor lines on which worktree dispatch is qualified (docs/design/runtime-coordination-phase2.md
- * §8, §9). A daemon qualifies at a line's `from` patch or a later release of the same minor, below
- * its `below`; an earlier patch, a prerelease or build-stamped version, another minor, or a version
- * the plugin cannot read refuses `isolation: 'worktree'` with `worktree_unqualified`. It is a
- * runtime check, not a change of the plugin's range. `0.9.1`: delta §9.2, 2026-09-23; its line,
- * §9.3, 2026-09-28.
- */
-export const QUALIFIED_WORKTREE_LINES: readonly WorktreeLine[] = [{ from: '0.9.1' }];
-
-/** Whether worktree dispatch is qualified on the daemon `version`. A line it cannot read qualifies nothing. */
-export function worktreeQualified(version: string | undefined, lines: readonly WorktreeLine[] = QUALIFIED_WORKTREE_LINES): boolean {
+/** Whether worktree dispatch is qualified on the daemon `version`: a release at or above `floor`. */
+export function worktreeQualified(version: string | undefined, floor: string = WORKTREE_PASEO_FLOOR): boolean {
   const daemon = releaseVersion(version);
-  if (daemon === undefined) return false;
-  return lines.some(line => {
-    const from = releaseVersion(line.from);
-    const below = line.below === undefined ? undefined : releaseVersion(line.below);
-    if (from === undefined || (line.below !== undefined && below === undefined)) return false;
-    return from[0] === daemon[0] && from[1] === daemon[1] && !precedes(daemon, from) && (below === undefined || precedes(daemon, below));
-  });
+  const from = releaseVersion(floor);
+  return daemon !== undefined && from !== undefined && !precedes(daemon, from);
 }
 
 type Release = readonly [number, number, number];

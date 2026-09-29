@@ -56,15 +56,17 @@ describe('worktree dispatch refusals', () => {
     expect(await refusedQuietly(h, () => h.controller.dispatch(h.lead, isolated(id)))).toBe('worktree_unqualified');
   });
 
-  it('dispatches on a later patch of a qualified line, and refuses one before it or a prerelease', async () => {
+  it('dispatches on a release from the qualified one on, and refuses one before it or a prerelease', async () => {
     for (const version of ['0.9.0', '0.9.3-beta.1', '0.10.0-beta.1']) {
       const h = await room({ daemonVersion: version });
       const id = await assignment(h);
       expect(await refusedQuietly(h, () => h.controller.dispatch(h.lead, isolated(id))), version).toBe('worktree_unqualified');
     }
-    const h = await room({ daemonVersion: '0.9.2' });
-    const id = await assignment(h, { writeScope: ['src'] });
-    expect(await h.controller.dispatch(h.lead, isolated(id))).toMatchObject({ ok: true });
+    for (const version of ['0.9.2', '0.10.1']) {
+      const h = await room({ daemonVersion: version });
+      const id = await assignment(h, { writeScope: ['src'] });
+      expect(await h.controller.dispatch(h.lead, isolated(id)), version).toMatchObject({ ok: true });
+    }
   });
 
   it('refuses a repository whose base declares worktree setup, or whose base is not a commit', async () => {

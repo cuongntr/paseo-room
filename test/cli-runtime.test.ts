@@ -35,7 +35,7 @@ describe('setup --runtime', () => {
     const { fixture, daemon, options } = await room();
     const result = await setup(options({ runtime: true }));
     expect(result.outcome).toBe('changes-planned');
-    expect(checkIds(result, 'pass')).toEqual(expect.arrayContaining(['runtime.paseo-range', 'runtime.plugin.enabled']));
+    expect(checkIds(result, 'pass')).toEqual(expect.arrayContaining(['runtime.plugin.enabled']));
     expect(result.operations).toEqual(expect.arrayContaining([
       { action: 'create', kind: 'plugin', target: 'paseo-room-runtime' },
       expect.objectContaining({ action: 'create', target: join(pluginDir(fixture), 'generated', 'room-manifest.json') }),
@@ -74,18 +74,17 @@ describe('setup --runtime', () => {
     expect(checkIds(result, 'pass')).toEqual(expect.arrayContaining(['claude.plugin.runtime', 'runtime.plugin.runtime']));
   });
 
-  it('refuses when plugins are disabled or the daemon is outside the preview range', async () => {
+  it('refuses when plugins are disabled, and sets up on a Paseo release newer than any compared', async () => {
     const disabled = await room({ ...emptyDaemon(), pluginsEnabled: false });
     const refused = await setup(disabled.options({ runtime: true, apply: true }));
     expect(refused.outcome).toBe('failed');
     expect(checkIds(refused, 'fail')).toContain('runtime.plugin.enabled');
     await expect(stat(pluginDir(disabled.fixture))).rejects.toThrow();
 
-    const newer = await room(emptyDaemon(), { ...RUNNING_STATUS, cliVersion: '0.10.0', daemonVersion: '0.10.0' });
-    const outside = await setup(newer.options({ runtime: true }));
-    expect(checkIds(outside, 'fail')).toEqual(['runtime.paseo-range']);
-    // Without --runtime the same daemon still sets up the baseline room.
-    expect((await setup(newer.options())).outcome).toBe('changes-planned');
+    const newer = await room(emptyDaemon(), { ...RUNNING_STATUS, cliVersion: '1.4.0', daemonVersion: '1.4.0' });
+    const planned = await setup(newer.options({ runtime: true }));
+    expect(planned.outcome).toBe('changes-planned');
+    expect(checkIds(planned, 'fail')).toEqual([]);
   });
 });
 

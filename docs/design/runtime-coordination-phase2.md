@@ -326,15 +326,13 @@ Restart replays events and reruns only these bounded queries; there is still no 
 
 - Gated twice: the §3 amendment landed, and an explicit `isolation: 'worktree'` per dispatch.
   Without both, runtime behaviour is Phase 1 byte for byte. No new setup flag.
-- Paseo range stays `>=0.8.0 <0.10.0`, but worktree dispatch is **refused on any daemon outside a
-  qualified line**. A line is a minor version, qualified from the patch that passed §9 live: it
-  admits that patch and every later release of the same minor, and refuses an earlier patch, a
-  prerelease or build-stamped version, and another minor. `0.9.1` passed §9 (§9.2), so the `0.9`
-  line is qualified from it (§9.3). The refusal is a runtime check, not a range change. A new minor
-  needs its own §9 run, as it needs a range change before the plugin loads on it at all. A later
-  patch is admitted without being read: nothing refuses it automatically. A maintainer who finds
-  that one changes a surface §9.3 lists gives its line a `below` bound in a paseo-room release, and
-  until the operator installs that release a daemon on that patch is still admitted.
+- Worktree dispatch is **refused on any daemon below `0.9.1`**, the first release that passed §9
+  live (§9.2), and on a prerelease or build-stamped version. There is no upper bound, for dispatch
+  or for the plugin (§9.4): a later release is admitted without being read, and nothing refuses it
+  automatically. The refusal is a runtime check, not a range change. A maintainer who finds that a
+  release breaks a surface dispatch uses bounds it in a paseo-room release, and until the operator
+  installs that release a daemon on it is still admitted. Amended 2026-09-29; until then each minor
+  needed its own §9 run (§9.4).
 - Deselection (Phase 1 design §14) adds one step: no lease is non-released **and** no workspace
   create or close is unresolved before the plugin is unregistered. A retained worktree does not
   block it; its warning counts retained worktrees and left-behind directories apart and names a
@@ -351,7 +349,7 @@ Restart replays events and reruns only these bounded queries; there is still no 
 
 ## 9. Live Qualification — release blockers
 
-On a real daemon at the patch a qualified line starts `from` (§8), with the Claude carrier
+On a real daemon at the worktree floor (§8), with the Claude carrier
 installed:
 
 1. **L-1 Authority:** the plugin's IPC client may call `workspace.create.request` and
@@ -482,11 +480,43 @@ refuses and closes a workspace that is not the exact base in a clean checkout of
 outside Lead's directory, the Peer's placement is checked before its first prompt, recovery never
 adopts a workspace, and close reports `directoryRemoved` from disk. A patch that broke creation or
 close would show as refusals, retained worktrees or uncertain leases, not as a Peer writing in the
-wrong place. When Paseo ships a patch, compare the first two rows with the qualified patch; if
-either differs, or a change reaches a path dispatch uses, give the line a `below` bound at that
-patch in `src/runtime-plugin/shared/identity.ts`, and add a later patch back as a new line `from` it
-once it passes §9. A bound reaches an operator only with a paseo-room release. That comparison can
-bound a line; it never qualifies a new one.
+wrong place. When Paseo ships a release, compare the first two rows with the last one compared; if
+either differs, or a change reaches a path dispatch uses, bound it in a paseo-room release. A bound
+reaches an operator only with such a release. (Amended by §9.4: there are no lines any more, and the
+comparison is a review, not a gate.)
+
+### 9.4 Minor `0.10` — 2026-09-29
+
+Paseo published `0.10.0` and `0.10.1` on 2026-09-28, its fourth and fifth releases in six days
+counting from `0.9.0`. Under §8 as it then stood, worktree dispatch needed a §9 run on the new
+minor, and the plugin would not load on it at all before its range was widened. The published
+`0.9.2`, `0.10.0` and `0.10.1` packages were compared file by file:
+
+| Surface | `0.9.2` → `0.10.1` |
+|---|---|
+| `@getpaseo/plugin`: the plugin compiler and SDK | identical but for its version field |
+| Plugin host `S/server/plugins/`: compiler, lifecycle hooks, plugin process, manifest and its `requirements` check | identical |
+| Worktree creation, archive and recovery (`S/server/worktree-core.js`, `paseo-worktree-service.js`, `worktree-session.js`, `workspace-archive-service.js`, `S/server/session/`, `S/server/creation/`) and `S/server/session.js` | identical |
+| `@getpaseo/client`, `@getpaseo/protocol`, `S/server/websocket-server.js`, `S/server/auth.js` | the hello may carry a credential, and the daemon writes a local credential file its own CLI reads; a daemon with no password admits every local client as before, and a password sent as a bearer header is still accepted until 2027-03-24 |
+| `S/server/agent/agent-manager.js` | an imported session's history is read before the agent is published |
+| `S/server/agent/agent-prompt.js`, `S/server/agent/tools/paseo-tools.js` | a caller waiting on a child holds one finish notification, and arming it again replaces it; a background prompt returns once the child's turn has started; a foreground wait that times out notifies on finish instead |
+| Claude and Codex providers | a seat's settings, transcripts, prompts and skills are read from the `CLAUDE_CONFIG_DIR`/`CODEX_HOME` of its own launch environment — the role home — instead of the daemon's |
+| Pi provider | display adapters for known Pi extensions (subagents, ask-user, todo, `pi-mcp-adapter`) map the tool calls an installed extension makes; they install and load nothing, so the room's Pi closure is unchanged. A `pi-mcp-adapter` call is now titled `<server>.<tool>` |
+| OpenCode, web UI, daemon supervisor | not on a room path |
+
+`0.10.0` differs from `0.10.1` only in providers, `agent-manager.js` and `paseo-tools.js`; its plugin
+SDK, plugin host and worktree surfaces are the same. No change weakens a guarantee the runtime relies
+on.
+
+This was the second time in a week that the worktree gate refused a daemon on which nothing it
+depends on had changed (§9.3 was the first), and the plugin range would have refused the whole
+runtime on the same reading. Paseo releases faster than each release can be read before the
+operator runs it, so the repository owner removed both bounds: worktree dispatch keeps only the
+`0.9.1` floor, and the plugins declare only `>=0.8.0` ([runtime design](runtime-coordination.md)
+§14). `QUALIFIED_WORKTREE_LINES` became `WORKTREE_PASEO_FLOOR`. The Git proof and the checks listed
+above in §9.3 still bound an unread release. This is reading source, not a live run; the first
+dispatch on the operator's `0.10` daemon is to be recorded here.
+
 
 ## 10. Open Questions
 
@@ -502,6 +532,7 @@ bound a line; it never qualifies a new one.
 
 | Date | Author | Change |
 |---|---|---|
+| 2026-09-29 | Repository owner / Bytes | §8 and §9.4: worktree dispatch is refused only below `0.9.1` and on a prerelease, with no upper bound, as the plugins now have none. A file-by-file comparison of `0.10.0` and `0.10.1` with `0.9.2` found every worktree surface identical. `QUALIFIED_WORKTREE_LINES` became `WORKTREE_PASEO_FLOOR`. No event, authority or tool change. |
 | 2026-09-28 | Repository owner / Bytes | A worktree workspace is titled with the gist of its assignment's outcome instead of `room <id>`: Paseo's sidebar listed several `room asg_…` rows whose work could not be told apart. The branch keeps `paseo-room/<id>`. `workspace.create-requested` gains an optional `title`, which recovery reissues because Paseo's receipt fingerprints the whole request; a request recorded without one is reissued with `room <id>` (P2-D3, §4, §7). No authority or tool change. |
 | 2026-09-28 | Bytes | §9.3 records the first live worktree dispatch on the operator's `0.9.2` daemon: create and Git proof, parentage, handback, a gate in the worktree, acceptance and a clean close, then a second dispatch from the new base. No defect; no event, authority or tool change. |
 | 2026-09-28 | Repository owner / Bytes | §8 qualifies worktree dispatch per minor line from its live-qualified patch, instead of per exact patch; §9.3 records the `0.9.1` → `0.9.2` comparison that admits `0.9.2`, and how a later patch is bounded out. `QUALIFIED_WORKTREE_DAEMONS` became `QUALIFIED_WORKTREE_LINES`, whose lines carry a `from` patch and an optional `below` bound. No event, authority or tool change. |

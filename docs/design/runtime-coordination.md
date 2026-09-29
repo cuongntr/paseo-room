@@ -330,11 +330,12 @@ implementation plan, but its behavior is fixed here:
   is Paseo's choice for a seat a human is watching, and a dispatched Peer is not one. A Peer
   launched into a mode that asks before each tool stalls on its first call with nobody to answer,
   so omitting the mode would silently substitute an operator choice, not decline to make one;
-- the plugin requires Paseo `>=0.8.0 <0.10.0`. `0.8.0` and `0.9.1` are the live-tested points:
-  Q-003a proved reporter delivery and invocation on all three exact Peer providers on `0.8.0`, and
-  the `0.9.1` widening rests on the host contract being demonstrably the same one — see §14 — plus
-  a load and config round-trip proved on an isolated `0.9.1` daemon. The upper bound stays
-  exclusive because `0.10.0` behavior is unqualified. This remains a preview range under Q-005;
+- the plugin requires Paseo `>=0.8.0`, the CLI's compatibility floor, with no upper bound since
+  2026-09-29 (§14). `0.8.0` and `0.9.1` are the live-tested points: Q-003a proved reporter delivery
+  and invocation on all three exact Peer providers on `0.8.0`, and `0.9.1` rests on the host
+  contract being demonstrably the same one — see §14 — plus a load and config round-trip proved on
+  an isolated `0.9.1` daemon. A later release is admitted unread. This remains a preview range under
+  Q-005;
 - setup fails if plugins are globally disabled, the ID is registered from a foreign path, or the
   plugin cannot reach `running`;
 - verify compares plugin source, generated manifest, registration path/status, manifest generation
@@ -1457,8 +1458,8 @@ Phase 2 is authorized by its own design delta,
 amendment — granting only runtime-managed, worktree-isolated concurrency — the repository owner
 approved and landed on 2026-09-23. The delta governs; the list below is the original scope. It is
 implemented by the [Phase 2 plan](../plans/runtime-coordination-phase2-implementation-plan.md)
-and enabled per qualified Paseo minor line (delta §8, §9); `0.9.1` qualified live on 2026-09-23
-(delta §9.2), and the `0.9` line from it on 2026-09-28 (delta §9.3).
+and enabled from Paseo `0.9.1`, which qualified live on 2026-09-23 (delta §9.2), with no upper
+bound (delta §8, §9.4).
 
 - PRD REQ-010 and REQ-011;
 - multiple writable Peers;
@@ -1559,6 +1560,32 @@ with no `permission.awaiting` and a gate exiting `0`:
 | `claude-peer` | `claude-sonnet-5[1m]`, `bypassPermissions`, thinking `high` | The case that exposed the dropped `modeId`: this seat stalls on its first tool call without it. |
 | `pi-peer` | `openai-codex/gpt-5.6-sol`, thinking `medium`, `currentModeId: null` | No `pi-peer` model declares `isDefault`, so dispatch refuses unless the operator sets the profile model — the earlier `peer_model_unresolved` refusals. Pi has no per-tool approval gate, so carrying no mode is harmless here rather than an omission. |
 
+**Removing the upper bound — 2026-09-29.** Paseo published five releases in under a week, `0.9.0`
+on 2026-09-22 to `0.10.1` on 2026-09-28, and at `<0.10.0` it would have refused both room plugins,
+the Claude carrier included, on the release npm now serves as `latest`. Reading each release before
+the operator may run it cannot keep that pace, and an unread bound only ever refuses. The
+repository owner therefore removed it: both plugins declare `requirements.paseo = ">=0.8.0"`, the
+CLI's own compatibility floor for any selection that installs a plugin, so the separate
+`claude.paseo-range` and `runtime.paseo-range` checks were removed with it.
+
+What now catches a release that breaks the plugin host is Paseo itself: a plugin it cannot load is
+`failed`, `verify` fails and shows the load error, and Claude seats fall back to `CLAUDE.md`. A release
+that loads but behaves differently is bounded only by what the runtime proves for itself — delivery
+evidence in the recipient's timeline, the Git proof of a worktree, recovery that never adopts — and
+beyond that by the operator noticing. Comparing a release's packages remains the way to review one,
+no longer a gate. `0.10.1` was compared with `0.9.2` that way, and nothing the room depends on changed:
+
+| Surface this plugin depends on | `0.9.2` → `0.10.1` |
+|---|---|
+| `@getpaseo/plugin`, and the daemon's plugin host `@getpaseo/server/dist/server/server/plugins/` (compiler, lifecycle hooks, manifest and its `requirements` check) | identical but for the SDK's version field |
+| `session.js`, which carries `send` with `activeTurnBehavior`, and the creation receipts | identical |
+| `PaseoApi` calls in `server/paseo-port.ts`, provider and profile config | unchanged; the client may now also send a credential in its hello |
+| Daemon admission | a daemon with no password admits every local client as before, and still accepts a password sent as a bearer header |
+| `daemon status --json` (the CLI's `status` command) | identical |
+
+The [Phase 2 delta](runtime-coordination-phase2.md) §9.4 lists every change. This is reading source,
+not a live run.
+
 **Remaining R3 boundaries rehearsed live — 2026-09-23.** The three boundaries left above were
 rehearsed on a real `0.9.1` daemon started from an isolated home (`HOME`/`PASEO_HOME` in a scratch
 directory, listening on its own port), set up with `setup --agent codex --agent claude --agent pi
@@ -1638,7 +1665,7 @@ draft wording.
 | Q-003a | On each exact Codex, Claude and Pi room-provider path, can a runtime-managed Peer receive an injected reporting MCP server and invoke `ask` with schema-valid arguments? | Maintainer + Repository owner | resolved 2026-09-22 — a disposable probe on Paseo `0.8.0` delivered the reporter to exact `claude-peer`, `codex-peer` and `pi-peer`; each listed the tools and called `ask` with exactly the declared fields. Pi's `PI_MCP_CONFIG_MODE=exclusive` did not block delivery. Claude required an explicit permission approval naming `mcp__<server>__ask`; Codex and Pi did not |
 | Q-003b | Do the server's refusal, idempotency and recovery semantics hold on every exact provider path? | Maintainer | resolved 2026-09-22 on `claude-peer`, `codex-peer` and `pi-peer` across plugin reload and daemon restart (see Phase 1 release qualification). Original scope: open — Phase 1 exit criterion, not a Phase 0 blocker; `handoff`, wrong-kind, failed-precondition, malformed/unknown-field, stale-generation, duplicate-identical, reused-request-ID conflict, misattributed, no-call and durable receipt replay across reload/daemon restart require the real validating server and cannot be proven by a probe that always accepts |
 | Q-004 | Is an immutable clean commit an acceptable required handoff for runtime-managed writable work? | Repository owner | resolved 2026-09-22 — yes; every runtime-managed writable handoff requires a clean immutable Git commit, avoiding shadow source storage and candidate ambiguity |
-| Q-005 | What exact Paseo patch becomes the runtime minimum after reporting-call recovery and the remaining lifecycle/client surfaces are proven? | Maintainer | resolved 2026-09-22, widened 2026-09-23 — preview range `>=0.8.0 <0.10.0`. `0.8.0` carries the full exact-Peer qualification from Q-003a; `0.9.1` carries the same class of evidence: §14 records a full live cycle on it. The exclusive upper bound reflects that `0.10.0` is unqualified. Phase 4 decides whether runtime leaves preview |
+| Q-005 | What exact Paseo patch becomes the runtime minimum after reporting-call recovery and the remaining lifecycle/client surfaces are proven? | Maintainer | resolved 2026-09-22, widened 2026-09-23, upper bound removed 2026-09-29 — preview range `>=0.8.0`. `0.8.0` carries the full exact-Peer qualification from Q-003a; `0.9.1` carries the same class of evidence: §14 records a full live cycle on it. A later release is admitted unread (§14). Phase 4 decides whether runtime leaves preview |
 | Q-006 | Does the Phase 1 panel require a client version floor higher than the server floor? | Maintainer | resolved 2026-09-22 — no; a `0.8.0` app loaded the panel contribution and completed typed RPC against a `0.8.0` daemon |
 | Q-007 | Should runtime ship in the same npm package under a distinct plugin ID or as a separately versioned package? | Repository owner | decided 2026-09-22 on PRD acceptance — same npm package and release, separate plugin ID/directory |
 | Q-008 | Where does the exact gate command come from when a repository has no `WORKSPACE_PROTOCOL.md`? | Repository owner | decided 2026-09-22 on PRD acceptance — Lead must place it in the complete assignment brief; the runtime never invents one |
@@ -1660,6 +1687,7 @@ Q-011 do not block Phases 0–1 because those phases contain no sensor and no wo
 
 | Date | Author | Change |
 |---|---|---|
+| 2026-09-29 | Repository owner / Bytes | §3.1 range and §14: both room plugins accept Paseo `>=0.8.0` with no upper bound, and the CLI's separate plugin range checks are gone, since that floor is its compatibility check's. Paseo shipped five releases in a week and `<0.10.0` refused the carrier on the current one; a file-by-file comparison of `0.10.1` with `0.9.2` found the plugin SDK, plugin host, send path and worktree surfaces identical. §13 Phase 2: worktree dispatch keeps only its `0.9.1` floor ([Phase 2 delta](runtime-coordination-phase2.md) §8, §9.4). No event, authority or tool change. |
 | 2026-09-29 | Repository owner / Bytes | §4.4: notices one recipient can take at the same moment go as one message, whose first line lists them and is their delivery evidence. Since owner notices wait for Lead's turn to end, two or three held through the same turn went one per turn: in cmdb, a Peer question and a gate's end, then a handback and two gate ends, cost Lead three extra turns, and Lead's turn on the handback ran while a gate's end already waited for it. Delivery only: no event, payload or authority change. |
 | 2026-09-28 | Repository owner / Bytes | D4 Supervisor row and §3.4 gain the [seat context delta](runtime-coordination-seat-context.md)'s K-D9: the Supervisor of a project may replace its Lead, but only once the runtime reports that Lead past its rotation mark, and only through the runtime's succession flow with its quiet-point checks; it reviews and confirms the handoff itself. **Authority granted:** that one lifecycle action, which Human had been approving case by case while the Supervisor carried it out with raw Paseo tools. Every other reason to replace a Lead stays Human's. |
 | 2026-09-28 | Repository owner / Bytes | D9: an `owner` notice the runtime writes (handback, Peer question, gate end, missing report, retained worktree) now waits for Lead's turn to end instead of steering into it. In live use about one steer in sixteen reached a running Claude Lead as an interrupt, which cancelled its turn mid-work and made the Supervisor ask the Human who had stopped it. A Supervisor message and a page still steer. No seat gains or loses authority. |
