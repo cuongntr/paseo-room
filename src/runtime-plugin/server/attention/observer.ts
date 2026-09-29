@@ -121,7 +121,7 @@ export interface ObserverDependencies {
 export function triggerOf(text: string | undefined): TurnTrigger {
   if (text === undefined) return 'unknown';
   if (text.startsWith('<paseo-system>')) return 'envelope';
-  if (text.startsWith('[paseo-room notice ') || text.startsWith('[paseo-room attention ')) return 'runtime';
+  if (text.startsWith('[paseo-room notice ') || text.startsWith('[paseo-room notices ') || text.startsWith('[paseo-room attention ')) return 'runtime';
   if (text.startsWith(SUCCESSION_PREFIX)) return 'succession';
   return 'message';
 }

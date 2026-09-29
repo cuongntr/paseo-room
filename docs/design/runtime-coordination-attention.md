@@ -388,7 +388,9 @@ is not sent to at all — the notice stays pending and is retried on that agent'
 `permission_resolved` or `turn_ended`. Amended 2026-09-28: only a Supervisor message (`message_lead`)
 and a page steer into a running turn. Every other owner notice is the runtime's own fact, such as a
 handback, a Peer question or a gate's end, and it waits like a `now` letter: held while the recipient
-has an active turn, and sent when that turn ends. Paseo's typed client omits `activeTurnBehavior` from
+has an active turn, and sent when that turn ends. Amended 2026-09-29: whatever a recipient can take
+at that moment goes as one message ([runtime design](runtime-coordination.md) §4.4), so notices held
+through one turn cost it one turn, not one each. Paseo's typed client omits `activeTurnBehavior` from
 `PaseoAgentSendOptions`, but `agents.ref(id).send` passes its options to the daemon client unchanged
 (`C/index.js`), whose `SendMessageOptions` carries it; qualification Q-3 confirms the effect.
 
@@ -669,6 +671,7 @@ files under `runtime/v1/attention` stay until `remove --apply`.
 
 | Date | Author | Change |
 |---|---|---|
+| 2026-09-29 | Repository owner / Bytes | §7.4: notices held through one recipient turn are sent together when it ends, as one message ([runtime design](runtime-coordination.md) §4.4), instead of one per turn. |
 | 2026-09-28 | Bytes | §7.2: a reply to the Supervisor's own request goes even with letters off and outside the wake budget. K-D9 promised this, but only the enqueue honoured it; delivery still dropped the item with letters off, or moved it to the digest past the budget. |
 | 2026-09-28 | Repository owner / Bytes | §4, §9.4: the Observer reads each seat's checkout from Git — linked worktree or main checkout, and its branch — at each snapshot and turn end, and `room_status` shows it. The panel listed a worktree Peer with no sign of where it worked. Display only; no signal reads it. |
 | 2026-09-28 | Repository owner / Bytes | §7.4: a Lead turn's letter line states what the Lead left running, counted in code: its running Peers and its open runtime assignments. A Lead in live use said it would dispatch next and stopped with nothing running; the excerpt read as progress, and the Human noticed before the Supervisor did. Facts only; no advice, and the sensor's inputs are unchanged. |

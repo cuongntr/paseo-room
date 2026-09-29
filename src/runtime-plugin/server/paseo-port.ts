@@ -158,6 +158,14 @@ export interface TimelineEntry {
   readonly compaction?: { readonly trigger?: 'auto' | 'manual'; readonly preTokens?: number };
 }
 
+/** The prompts an agent's recent timeline holds, as delivery evidence. */
+export interface SentMessages {
+  /** Each prompt's message ids (Paseo's and the sender's) and text, oldest first. */
+  readonly messages: readonly { readonly ids: readonly string[]; readonly text: string }[];
+  /** Whether the read reached the start of the timeline, so an id it did not find was never delivered. */
+  readonly complete: boolean;
+}
+
 /** How Paseo launches a provider: its executable and the environment it sets. */
 export interface ProviderCommand {
   readonly binary: string;
@@ -210,6 +218,8 @@ export interface PaseoPort {
    * evidence is incomplete: recovery never infers delivery from a lifecycle notification.
    */
   promptDelivered(agentId: string, messageId: string): Promise<'delivered' | 'absent' | 'unknown'>;
+  /** The prompts in the agent's recent timeline, read once; undefined when Paseo cannot answer. */
+  sentMessages(agentId: string): Promise<SentMessages | undefined>;
 }
 
 /** Paseo's proof that an agent can no longer act: archived, with a closed live status. */
@@ -567,6 +577,19 @@ export function sdkPaseoPort(handle: PaseoHandle, waitMs = 10_000): PaseoPort {
         return page.hasOlder || page.gap || page.staleCursor ? 'unknown' : 'absent';
       } catch {
         return 'unknown';
+      }
+    },
+    async sentMessages(agentId) {
+      const paseo = await api();
+      try {
+        const page = await paseo.agents.ref(agentId).timeline.refetch({ limit: 500 });
+        if (page.error !== null) return undefined;
+        const messages = page.entries.flatMap(({ item }) => item.type === 'user_message'
+          ? [{ ids: [item.messageId, item.clientMessageId].filter((id): id is string => typeof id === 'string'), text: typeof item.text === 'string' ? item.text : '' }]
+          : []);
+        return { messages, complete: !(page.hasOlder || page.gap || page.staleCursor) };
+      } catch {
+        return undefined;
       }
     },
   };

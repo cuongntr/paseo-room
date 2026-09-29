@@ -859,7 +859,13 @@ interface IncidentV1 {
 }
 ```
 
-A stable notice ID appears in delivered text. A notice to Lead about an assignment names it by
+A stable notice ID appears in delivered text. Notices one recipient can take at the same moment go
+as one message: a first line `[paseo-room notices <id> <id> …]` lists them oldest first, and each
+follows as it would go alone. The message's id is the oldest notice's, and a retry finds each of its
+notices on the first line of the prompt that carries that id; nothing below that line is read as
+evidence, since a notice quotes what a Peer wrote. One message carries at most 24,000 characters
+of notice text, and the rest waits for the recipient's next turn end. A single notice goes as before.
+A notice to Lead about an assignment names it by
 disposition, a one-line gist of its outcome and its id — `Engineer "Add the feature" (asg_…)` — so it
 reads without recalling what the id was; a runtime Peer's seat title is built from the same parts,
 `Engineer · Add the feature · asg_…`, and stays unique per assignment. Delivery is at least once. If a crash occurs after
@@ -1654,6 +1660,7 @@ Q-011 do not block Phases 0–1 because those phases contain no sensor and no wo
 
 | Date | Author | Change |
 |---|---|---|
+| 2026-09-29 | Repository owner / Bytes | §4.4: notices one recipient can take at the same moment go as one message, whose first line lists them and is their delivery evidence. Since owner notices wait for Lead's turn to end, two or three held through the same turn went one per turn: in cmdb, a Peer question and a gate's end, then a handback and two gate ends, cost Lead three extra turns, and Lead's turn on the handback ran while a gate's end already waited for it. Delivery only: no event, payload or authority change. |
 | 2026-09-28 | Repository owner / Bytes | D4 Supervisor row and §3.4 gain the [seat context delta](runtime-coordination-seat-context.md)'s K-D9: the Supervisor of a project may replace its Lead, but only once the runtime reports that Lead past its rotation mark, and only through the runtime's succession flow with its quiet-point checks; it reviews and confirms the handoff itself. **Authority granted:** that one lifecycle action, which Human had been approving case by case while the Supervisor carried it out with raw Paseo tools. Every other reason to replace a Lead stays Human's. |
 | 2026-09-28 | Repository owner / Bytes | D9: an `owner` notice the runtime writes (handback, Peer question, gate end, missing report, retained worktree) now waits for Lead's turn to end instead of steering into it. In live use about one steer in sixteen reached a running Claude Lead as an interrupt, which cancelled its turn mid-work and made the Supervisor ask the Human who had stopped it. A Supervisor message and a page still steer. No seat gains or loses authority. |
 | 2026-09-28 | Repository owner / Bytes | §13 Phase 2: worktree dispatch is enabled per qualified Paseo minor line from its live-qualified patch ([Phase 2 delta](runtime-coordination-phase2.md) §8, §9.3), so `0.9.2` is admitted without its own live run. No event, authority or tool change. |

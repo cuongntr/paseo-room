@@ -181,6 +181,7 @@ describe('Room Observer', () => {
     expect(triggerOf(undefined)).toBe('unknown');
     expect(triggerOf('<paseo-system>\nAgent x finished.\n</paseo-system>')).toBe('envelope');
     expect(triggerOf('[paseo-room notice ntc_x] hi')).toBe('runtime');
+    expect(triggerOf('[paseo-room notices ntc_x ntc_y]\n\n[paseo-room notice ntc_x] hi')).toBe('runtime');
     expect(triggerOf('[paseo-room attention att_x] hi')).toBe('runtime');
     expect(triggerOf('Push')).toBe('message');
     expect(errorKey({ message: 'x', code: 'E_QUOTA' })).toBe('E_QUOTA');

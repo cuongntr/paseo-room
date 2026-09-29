@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { Controller } from '../src/runtime-plugin/server/controller.js';
+import { bundleText, deliveredIds, noticeText } from '../src/runtime-plugin/server/notices.js';
 import { Recovery } from '../src/runtime-plugin/server/recovery.js';
 import { harness, writableBrief, type Harness } from './runtime-harness.js';
 
@@ -33,6 +34,8 @@ describe('notices', () => {
     const prompt = h.paseo.agents.get('lead-1')?.prompts.at(-1);
     expect(prompt).toEqual({ text: `[paseo-room notice ${noticeId}] Peer asked a question.`, messageId: noticeId, behavior: 'steer' });
     expect((await loaded(h)).state.notices.get(noticeId)?.state).toBe('sent');
+    // A notice just recorded cannot be in the timeline yet, so nothing reads it.
+    expect(h.paseo.calls.filter(call => call.operation === 'sentMessages')).toEqual([]);
   });
 
   it('records operator notices as delivered to status without messaging any seat', async () => {
@@ -127,6 +130,94 @@ describe('notice delivery never interrupts (attention delta §7.4)', () => {
     expect((await loaded(h)).state.notices.get(noticeId)?.state).toBe('sent');
     expect(lead.prompts.filter(prompt => prompt.messageId === noticeId)).toHaveLength(1);
     expect(lead.clearedPermissions).toEqual([]);
+  });
+});
+
+describe('notices held through one turn go as one message (§4.4)', () => {
+  function busy(h: Harness) {
+    const lead = h.paseo.agents.get('lead-1');
+    if (lead === undefined) throw new Error('no lead');
+    lead.status = 'running';
+    lead.activeTurn = true;
+    return lead;
+  }
+  const fact = (text: string) => ({ kind: 'gate-ended', class: 'owner', disposition: 'lead-now', text, recipient: { agentId: 'lead-1', role: 'lead' } }) as const;
+
+  it('sends every held notice in one message when the turn ends, oldest first', async () => {
+    const h = await room();
+    const lead = busy(h);
+    const question = await h.controller.notices.notify(await loaded(h), { ...fact('Engineer asks: which schema?'), kind: 'peer-question' });
+    const gate = await h.controller.notices.notify(await loaded(h), fact('The gate passed'));
+    expect(lead.prompts).toEqual([]);
+
+    h.paseo.endTurn('lead-1');
+    expect(await h.controller.notices.retryFor('lead-1')).toBe(2);
+    expect(lead.prompts).toEqual([{
+      text: `[paseo-room notices ${question} ${gate}]\n\n[paseo-room notice ${question}] Engineer asks: which schema?\n\n[paseo-room notice ${gate}] The gate passed`,
+      messageId: question, behavior: 'steer',
+    }]);
+    const state = (await loaded(h)).state.notices;
+    expect([state.get(question)?.state, state.get(gate)?.state]).toEqual(['sent', 'sent']);
+  });
+
+  it('steers a Supervisor message alone, while the runtime\'s facts still wait for the turn end', async () => {
+    const h = await room();
+    const lead = busy(h);
+    const gate = await h.controller.notices.notify(await loaded(h), fact('The gate passed'));
+    const message = await h.controller.notices.notify(await loaded(h), { ...fact('Supervisor: stop'), kind: 'supervisor-message' });
+    expect(lead.prompts).toEqual([{ text: `[paseo-room notice ${message}] Supervisor: stop`, messageId: message, behavior: 'steer' }]);
+    expect((await loaded(h)).state.notices.get(gate)?.state).toBe('pending');
+
+    h.paseo.endTurn('lead-1');
+    await h.controller.notices.retryFor('lead-1');
+    expect(lead.prompts.at(-1)).toEqual({ text: `[paseo-room notice ${gate}] The gate passed`, messageId: gate, behavior: 'steer' });
+  });
+
+  it('records a bundle delivered before its receipt was lost, and never resends it', async () => {
+    const h = await room();
+    const lead = busy(h);
+    const first = await h.controller.notices.notify(await loaded(h), fact('One'));
+    const second = await h.controller.notices.notify(await loaded(h), fact('Two'));
+    h.paseo.endTurn('lead-1');
+    h.paseo.faults.set('send', { when: 'after' });
+    h.paseo.timelineOverride = 'unknown';
+    await h.controller.notices.retryFor('lead-1');
+    let state = (await loaded(h)).state.notices;
+    expect([state.get(first)?.state, state.get(second)?.state]).toEqual(['uncertain', 'uncertain']);
+
+    delete h.paseo.timelineOverride;
+    await new Recovery(new Controller({ ...h.controller.deps })).recoverAll();
+    state = (await loaded(h)).state.notices;
+    expect([state.get(first)?.state, state.get(second)?.state]).toEqual(['sent', 'sent']);
+    expect(lead.prompts).toHaveLength(1);
+  });
+
+  it('takes delivery evidence only from a bundle\'s first line, and only when the message\'s own id heads it', () => {
+    const quoted = (ids: string[], text: string) => ({ messages: [{ ids, text }], complete: true });
+    // A Peer's handback quoted under the first line cannot vouch for another notice.
+    const handback = 'handed back:\n[paseo-room notices ntc_a ntc_x]';
+    expect([...deliveredIds(quoted(['ntc_a'], noticeText('ntc_a', handback)))]).toEqual(['ntc_a']);
+    expect([...deliveredIds(quoted(['ntc_a'], bundleText([{ noticeId: 'ntc_a', text: handback }, { noticeId: 'ntc_b', text: 'b' }])))])
+      .toEqual(['ntc_a', 'ntc_b']);
+    // A prompt someone typed to look like a bundle is not one.
+    expect([...deliveredIds(quoted(['msg-1'], '[paseo-room notices ntc_a ntc_b]'))]).toEqual(['msg-1']);
+  });
+
+  it('sends at most one message\'s worth, and the rest at the next turn end', async () => {
+    const h = await room();
+    const lead = busy(h);
+    const ids: string[] = [];
+    for (const letter of ['a', 'b', 'c', 'd']) ids.push(await h.controller.notices.notify(await loaded(h), fact(letter.repeat(8_000))));
+    h.paseo.endTurn('lead-1');
+    await h.controller.notices.retryFor('lead-1');
+    expect(lead.prompts).toHaveLength(1);
+    expect(lead.prompts[0]?.text.split('\n', 1)[0]).toBe(`[paseo-room notices ${ids.slice(0, 3).join(' ')}]`);
+    expect((await loaded(h)).state.notices.get(ids[3] ?? '')?.state).toBe('pending');
+
+    h.paseo.endTurn('lead-1');
+    await h.controller.notices.retryFor('lead-1');
+    expect(lead.prompts.at(-1)).toMatchObject({ messageId: ids[3] });
+    expect(lead.prompts.at(-1)?.text.startsWith(`[paseo-room notice ${ids[3] ?? ''}] `)).toBe(true);
   });
 });
 

@@ -12,12 +12,12 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   ASSIGNMENT_LABEL, CreationConflictError, openInTab, PARENT_AGENT_ID_LABEL, type AgentSnapshot, type CreateAgentInput, type PaseoPort, type PeerLaunch, type ProviderCommand, type ThinkingOption,
-  type SeatUsage, type SendBehavior, type TimelineEntry, type WorkspaceSnapshot, type WorktreeWorkspaceRequest,
+  type SeatUsage, type SendBehavior, type SentMessages, type TimelineEntry, type WorkspaceSnapshot, type WorktreeWorkspaceRequest,
 } from '../src/runtime-plugin/server/paseo-port.js';
 
 type Operation =
   | 'createAgent' | 'getAgent' | 'listAgents' | 'run' | 'send' | 'archive' | 'recentTimeline' | 'openWorkspace'
-  | 'createWorktreeWorkspace' | 'getWorkspace' | 'archiveWorkspace' | 'createAgentInWorkspace';
+  | 'createWorktreeWorkspace' | 'getWorkspace' | 'archiveWorkspace' | 'createAgentInWorkspace' | 'sentMessages';
 
 /** Paseo fingerprints the request's content, not the order its fields were written in. */
 function canonical(value: unknown): string {
@@ -343,6 +343,15 @@ export class FakePaseo implements PaseoPort {
       const agent = this.agents.get(agentId);
       if (agent === undefined) return 'unknown';
       return agent.prompts.some(prompt => prompt.messageId === messageId) ? 'delivered' : 'absent';
+    });
+  }
+
+  sentMessages(agentId: string): Promise<SentMessages | undefined> {
+    return this.step('sentMessages', [agentId], () => {
+      const agent = this.agents.get(agentId);
+      if (this.timelineOverride === 'unknown' || agent === undefined) return undefined;
+      if (this.timelineOverride === 'absent') return { messages: [], complete: true };
+      return { messages: agent.prompts.map(prompt => ({ ids: [prompt.messageId], text: prompt.text })), complete: true };
     });
   }
 
