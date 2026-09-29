@@ -1,10 +1,13 @@
 /**
  * What the panel reads from `runtime.room` (docs/design/runtime-panel-ux.md §6), and the few
- * derivations every screen shares: a project's status, its headline, and the order of things.
+ * derivations every screen shares: a project's status, its summary line, and the order of things.
  */
 import { MAX_HANDOFF_BYTES, utf8Bytes } from '../shared/limits.js';
+import { outcomeGist } from '../shared/names.js';
+import type { LetterTally } from '../shared/panel.js';
+import { SETTLED_STATES } from '../shared/states.js';
 import { formatTokens } from '../shared/seat-context.js';
-import { ago, clockTime } from './time.js';
+import { ago, clockTime, dayLabel } from './time.js';
 import type { Tone } from './tone.js';
 
 export interface SeatView {
@@ -22,7 +25,15 @@ export interface IncidentView {
   readonly projectKey: string; readonly subjects: readonly string[]; readonly openedAt: string; readonly feedback?: string;
 }
 
-export interface RuntimeRecord { readonly projectId: string; readonly health: string; readonly assignments: number; readonly active: number; readonly findings: number }
+export interface RuntimeRecord {
+  readonly projectId: string; readonly health: string; readonly assignments: number; readonly active: number; readonly findings: number;
+  /** Assignments not yet decided, drafts included, as the project's *Open* tab counts them. */
+  readonly undecided?: number;
+  /** Open assignments waiting on their Lead: a handback, a question, or a Peer that stopped. */
+  readonly waiting?: number;
+  /** The ledger's latest event. */
+  readonly lastEventAt?: string;
+}
 
 /** A Lead replacement not yet finished (seat context delta §5.1). */
 export interface SuccessionSummary {
@@ -48,7 +59,11 @@ export interface RoomView {
   readonly providers: readonly { readonly providerId: string; readonly agent: string; readonly role: string }[];
 }
 
-export type ProjectStatus = 'attention' | 'working' | 'idle';
+/**
+ * Where a project stands: `asleep` when every live seat's session is closed (a message or opening it
+ * resumes it), `inactive` when it has no live seat at all.
+ */
+export type ProjectStatus = 'attention' | 'working' | 'idle' | 'asleep' | 'inactive';
 
 export const seatName = (seat: SeatView): string => seat.title ?? `${seat.role} ${seat.agentId.slice(0, 8)}`;
 
@@ -127,10 +142,21 @@ export const agentLabel = (agent: string): string => AGENT_LABELS[agent] ?? agen
 
 export function projectStatus(project: ProjectView): ProjectStatus {
   if (project.incidents.length > 0 || (project.runtime?.health ?? 'healthy') !== 'healthy' || waitsOnHuman(project.succession)) return 'attention';
-  return project.seats.some(seat => seat.state === 'running' || seat.state === 'permission') ? 'working' : 'idle';
+  if (project.seats.some(seat => seat.state === 'running' || seat.state === 'permission')) return 'working';
+  // A replacement in progress, or dispatched work still undecided, keeps a project whose seats are all archived in view.
+  if (project.seats.length === 0) return project.succession === undefined && (project.runtime?.active ?? 0) === 0 ? 'inactive' : 'idle';
+  return project.seats.every(seat => seat.state === 'closed') ? 'asleep' : 'idle';
 }
 
-export const STATUS_TONE: Readonly<Record<ProjectStatus, Tone>> = { attention: 'warning', working: 'success', idle: 'muted' };
+export const STATUS_TONE: Readonly<Record<ProjectStatus, Tone>> = { attention: 'warning', working: 'success', idle: 'muted', asleep: 'muted', inactive: 'muted' };
+export const STATUS_LABEL: Readonly<Record<ProjectStatus, string>> = { attention: 'needs a look', working: 'working', idle: 'idle', asleep: 'asleep', inactive: 'no live seats' };
+
+/** A project's undecided runtime assignments, drafts included. */
+export const openCount = (project: ProjectView): number => project.runtime?.undecided ?? project.runtime?.active ?? 0;
+
+/** Whether a project has work in flight: a seat working, something to look at, or an open assignment. */
+export const hasWork = (project: ProjectView): boolean =>
+  ['attention', 'working'].includes(projectStatus(project)) || (project.runtime?.active ?? 0) > 0;
 
 export function stateTone(state: string): Tone {
   if (state === 'running') return 'success';
@@ -139,35 +165,64 @@ export function stateTone(state: string): Tone {
   return 'neutral';
 }
 
-export const STATE_LABEL: Readonly<Record<string, string>> = { running: 'working', idle: 'idle', permission: 'needs permission', closed: 'not running', archived: 'archived' };
+export const STATE_LABEL: Readonly<Record<string, string>> = { running: 'working', idle: 'idle', permission: 'needs permission', closed: 'asleep', archived: 'archived' };
 
 /** "Claude" for `claude-lead/claude-opus-5`. */
 export const providerLabel = (provider: string): string => agentLabel(provider.split('/')[0]?.split('-')[0] ?? provider);
 
-/** "Lead idle · 2 Peers working · last turn 5 min ago". */
-export function projectHeadline(project: ProjectView): string {
-  const leads = project.seats.filter(seat => seat.role === 'lead');
-  const peers = project.seats.filter(seat => seat.role === 'peer');
-  const working = peers.filter(seat => seat.state === 'running' || seat.state === 'permission').length;
+/**
+ * A project in one line — `Lead idle · 1 of 2 Peers working · 3 open · 1 waiting on Lead` — naming a
+ * missing Supervisor only while nothing else would.
+ */
+export function projectSummary(project: ProjectView): string {
   const parts: string[] = [];
-  const [lead] = leads;
-  if (project.seats.length === 0) return project.runtime === undefined ? 'No live seats' : `No live seats · ${String(project.runtime.assignments)} recorded assignment${project.runtime.assignments === 1 ? '' : 's'}`;
-  parts.push(lead === undefined ? 'No Lead' : leads.length > 1 ? `${String(leads.length)} Leads` : `Lead ${STATE_LABEL[lead.state] ?? lead.state}`);
-  if (peers.length > 0) parts.push(working > 0 ? `${String(working)} of ${String(peers.length)} Peers working` : `${String(peers.length)} Peer${peers.length === 1 ? '' : 's'} idle`);
-  const waiting = project.seats.reduce((sum, seat) => sum + seat.pendingPermissions, 0);
-  if (waiting > 0) parts.push(`${String(waiting)} permission${waiting === 1 ? '' : 's'} waiting`);
+  if (project.seats.length === 0) {
+    parts.push('No live seats');
+  } else {
+    const leads = project.seats.filter(seat => seat.role === 'lead');
+    const peers = project.seats.filter(seat => seat.role === 'peer');
+    const working = peers.filter(seat => seat.state === 'running' || seat.state === 'permission').length;
+    const [lead] = leads;
+    parts.push(lead === undefined ? 'No Lead' : leads.length > 1 ? `${String(leads.length)} Leads` : `Lead ${STATE_LABEL[lead.state] ?? lead.state}`);
+    if (peers.length > 0) parts.push(working > 0 ? `${String(working)} of ${String(peers.length)} Peer${peers.length === 1 ? '' : 's'} working` : `${String(peers.length)} Peer${peers.length === 1 ? '' : 's'} idle`);
+  }
+  const open = openCount(project);
+  const waiting = project.runtime?.waiting ?? 0;
+  if (open > 0) parts.push(`${String(open)} open`);
+  if (waiting > 0) parts.push(`${String(waiting)} waiting on Lead`);
+  const permissions = project.seats.reduce((sum, seat) => sum + seat.pendingPermissions, 0);
+  if (permissions > 0) parts.push(`${String(permissions)} permission${permissions === 1 ? '' : 's'} waiting`);
+  if (project.seats.length === 0 && open === 0 && project.runtime !== undefined) parts.push(`${String(project.runtime.assignments)} assignment${project.runtime.assignments === 1 ? '' : 's'} recorded`);
+  if (project.seats.length > 0 && project.supervisor === undefined && !hasWork(project)) parts.push('no Supervisor');
   return parts.join(' · ');
 }
 
-/** The newest turn end among a project's seats, as ISO. */
+/** The newest thing a project did: a seat's turn end or a runtime event, as ISO. */
 export function lastActivity(project: ProjectView): string | undefined {
-  return project.seats.map(seat => seat.lastTurn?.endedAt).filter((value): value is string => value !== undefined).sort().at(-1);
+  return [...project.seats.map(seat => seat.lastTurn?.endedAt), project.runtime?.lastEventAt]
+    .filter((value): value is string => value !== undefined).sort().at(-1);
 }
 
-const STATUS_RANK: Readonly<Record<ProjectStatus, number>> = { attention: 0, working: 1, idle: 2 };
+const STATUS_RANK: Readonly<Record<ProjectStatus, number>> = { attention: 0, working: 1, idle: 2, asleep: 3, inactive: 4 };
+/** Projects needing a look, then working, idle, asleep and inactive; the most recently active first within each. */
 export function sortProjects(projects: readonly ProjectView[]): ProjectView[] {
-  return [...projects].sort((a, b) => STATUS_RANK[projectStatus(a)] - STATUS_RANK[projectStatus(b)] || a.name.localeCompare(b.name));
+  return projects.map(project => ({ project, rank: STATUS_RANK[projectStatus(project)], last: lastActivity(project) ?? '' }))
+    .sort((a, b) => a.rank - b.rank || b.last.localeCompare(a.last) || a.project.name.localeCompare(b.project.name))
+    .map(({ project }) => project);
 }
+
+/** The names of the projects a Supervisor watches, alphabetically. */
+export const watchedProjects = (room: Pick<RoomView, 'projects'>, supervisorAgentId: string): readonly string[] =>
+  room.projects.filter(project => project.supervisor?.agentId === supervisorAgentId).map(project => project.name).sort((a, b) => a.localeCompare(b));
+
+/** A short list: `a, b, c` or `a, b, c +2`. */
+export function shortList(names: readonly string[], shown = 3): string {
+  return names.length <= shown ? names.join(', ') : `${names.slice(0, shown).join(', ')} +${String(names.length - shown)}`;
+}
+
+/** Whether a seat's title already says its role as its last part, as `shop — Lead` does; `Fix peer reporting` does not. */
+export const titleNamesRole = (seat: Pick<SeatView, 'title' | 'role'>): boolean =>
+  seat.title?.split(/\s[—–·-]\s/).at(-1)?.trim().toLowerCase() === seat.role.toLowerCase();
 
 const LEVEL_RANK: Readonly<Record<string, number>> = { page: 0, now: 1, digest: 2 };
 export function sortIncidents(incidents: readonly IncidentView[]): IncidentView[] {
@@ -246,3 +301,119 @@ export function handoffSize(text: string): { readonly label: string; readonly ov
   const bytes = utf8Bytes(text);
   return { label: `${(bytes / 1024).toFixed(1)} KB of ${String(MAX_HANDOFF_BYTES / 1024)} KB`, over: bytes > MAX_HANDOFF_BYTES };
 }
+
+// ── Assignments (runtime-panel-ux.md §5) ─────────────────────────────────────────────────────────
+
+/** An assignment as `runtime.project` lists it, with the panel's times. */
+export interface AssignmentEntry {
+  readonly id: string; readonly kind: string; readonly mode: string; readonly outcome: string; readonly state: { readonly value: string };
+  readonly createdAt?: string; readonly updatedAt?: string; readonly settledAt?: string; readonly isolated?: boolean;
+}
+
+export const isFinished = (entry: Pick<AssignmentEntry, 'state'>): boolean => (SETTLED_STATES as readonly string[]).includes(entry.state.value);
+
+/** An assignment's name in a list: its outcome, cut to a phrase. */
+export const assignmentGist = (entry: Pick<AssignmentEntry, 'outcome'>): string => outcomeGist(entry.outcome);
+
+/**
+ * Where an assignment's Peer works: `read-only`, its own `worktree`, or the Lead's `main checkout`;
+ * `writable` while it is not dispatched, since dispatch decides.
+ */
+export function workplace(entry: Pick<AssignmentEntry, 'mode' | 'isolated'>): string {
+  if (entry.mode === 'read-only') return 'read-only';
+  if (entry.isolated === undefined) return 'writable';
+  return entry.isolated ? 'worktree' : 'main checkout';
+}
+
+/** Open assignments, the most recently updated first; drafts, not yet dispatched, last. */
+export function openAssignments(entries: readonly AssignmentEntry[]): AssignmentEntry[] {
+  const draft = (entry: AssignmentEntry): number => (entry.state.value === 'draft' ? 1 : 0);
+  return entries.filter(entry => !isFinished(entry)).map((entry, index) => ({ entry, index }))
+    .sort((a, b) => draft(a.entry) - draft(b.entry) || (b.entry.updatedAt ?? '').localeCompare(a.entry.updatedAt ?? '') || b.index - a.index)
+    .map(({ entry }) => entry);
+}
+
+/** Finished assignments, the most recently settled first; without times, the ledger's newest (its last) first. */
+export function finishedAssignments(entries: readonly AssignmentEntry[]): AssignmentEntry[] {
+  const settled = (entry: AssignmentEntry): string => entry.settledAt ?? entry.updatedAt ?? '';
+  return entries.filter(isFinished).map((entry, index) => ({ entry, index }))
+    .sort((a, b) => settled(b.entry).localeCompare(settled(a.entry)) || b.index - a.index)
+    .map(({ entry }) => entry);
+}
+
+/** Consecutive entries grouped under the local day `at` names; entries without a time go under `Earlier`. */
+export function byDay<T>(entries: readonly T[], at: (entry: T) => string | undefined, now = Date.now()): { readonly day: string; readonly entries: readonly T[] }[] {
+  const groups: { day: string; entries: T[] }[] = [];
+  for (const entry of entries) {
+    const when = at(entry);
+    const day = when === undefined ? 'Earlier' : dayLabel(when, now);
+    const last = groups.at(-1);
+    if (last?.day === day) last.entries.push(entry);
+    else groups.push({ day, entries: [entry] });
+  }
+  return groups;
+}
+
+// ── Accounts (Settings › Room seats) ─────────────────────────────────────────────────────────────
+
+export interface AccountView {
+  readonly providerId: string; readonly role: string; readonly status: string;
+  readonly method?: string; readonly email?: string; readonly plan?: string; readonly organization?: string; readonly note?: string;
+}
+
+/** A seat's account line: who, plan, and the organization unless it is only the personal one Claude names after the email. */
+export function accountLine(seat: AccountView): string {
+  if (seat.status === 'signed-out') return 'Not signed in';
+  if (seat.status === 'present') return 'Credential file present';
+  if (seat.status === 'unknown') return seat.note ?? 'Unknown';
+  const personal = seat.email !== undefined && /^(.+)['’]s Organization$/.exec(seat.organization ?? '')?.[1] === seat.email;
+  return [seat.email ?? seat.method ?? 'Signed in', seat.plan === undefined ? undefined : sentence(seat.plan), personal ? undefined : seat.organization]
+    .filter(part => part !== undefined).join(' · ');
+}
+
+const accountKey = (seat: AccountView): string | undefined => (seat.status === 'signed-in' ? seat.email ?? seat.method : undefined);
+
+/**
+ * When seats sign in as more than one account, a letter per account in order of first use, so the
+ * split is visible at a glance; empty when every seat shares one.
+ */
+export function accountLetters(seats: readonly AccountView[]): ReadonlyMap<string, string> {
+  const letters = new Map<string, string>();
+  for (const seat of seats) {
+    const key = accountKey(seat);
+    if (key !== undefined && !letters.has(key)) letters.set(key, String.fromCharCode(65 + letters.size));
+  }
+  if (letters.size < 2) return new Map();
+  return new Map(seats.flatMap(seat => {
+    const key = accountKey(seat);
+    const letter = key === undefined ? undefined : letters.get(key);
+    return letter === undefined ? [] : [[seat.providerId, letter] as const];
+  }));
+}
+
+// ── Letters (Settings › Room attention) ──────────────────────────────────────────────────────────
+
+const LEVEL_WORD: Readonly<Record<string, string>> = { page: 'urgent', now: 'now', digest: 'digest' };
+const TURN_WORD: Readonly<Record<string, string>> = { now: 'woke the Supervisor', digest: 'went to a digest', record: 'only recorded' };
+
+const plural = (count: number, word: string): string => `${String(count)} ${word}${count === 1 ? '' : 's'}`;
+
+/** `9 letters sent (1 urgent, 3 now, 5 digest) · 6 incidents · 12 Lead turns: 3 woke the Supervisor · 2 marked noise`. */
+export function lettersLine(tally: LetterTally): string {
+  const count = (counts: Readonly<Record<string, number>>): number => Object.values(counts).reduce((sum, value) => sum + value, 0);
+  // In the words' own order (urgent, now, digest), whatever order the log met them in.
+  const breakdown = (counts: Readonly<Record<string, number>>, words: Readonly<Record<string, string>>): string =>
+    [...new Set([...Object.keys(words), ...Object.keys(counts)])].filter(key => (counts[key] ?? 0) > 0)
+      .map(key => `${String(counts[key])} ${words[key] ?? key}`).join(', ');
+  const sent = count(tally.sent);
+  const turns = count(tally.leadTurns);
+  const parts = [
+    sent === 0 ? 'No letters sent' : `${plural(sent, 'letter')} sent (${breakdown(tally.sent, LEVEL_WORD)})`,
+    tally.failed === 0 ? undefined : `${String(tally.failed)} failed`,
+    tally.incidents === 0 ? undefined : plural(tally.incidents, 'incident'),
+    turns === 0 ? undefined : `${plural(turns, 'Lead turn')}: ${breakdown(tally.leadTurns, TURN_WORD)}`,
+    tally.noise + tally.useful === 0 ? undefined : `rated ${String(tally.useful)} useful, ${String(tally.noise)} noise`,
+  ];
+  return `${parts.filter(part => part !== undefined).join(' · ')}${tally.partial === true ? ' (partial: a log file was too large to read)' : ''}`;
+}
+

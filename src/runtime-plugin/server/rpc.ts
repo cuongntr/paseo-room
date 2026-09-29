@@ -21,6 +21,7 @@ import { egressRefusal, type AttentionSettings } from '../shared/attention.js';
 import type { AttentionKey } from './attention/key.js';
 import type { SystemOneSensor } from './attention/sensor.js';
 import { homeRelative, type AttentionEngine } from './attention/engine.js';
+import { TALLIED, tallyLetters } from './attention/log.js';
 import { SeatStarter, type StartResult } from './attention/seat-starter.js';
 import type { Succession } from './attention/succession.js';
 import type { RuntimeWarningV1 } from '../shared/rpc.js';
@@ -28,6 +29,7 @@ import { RUNTIME_PLUGIN_ID } from '../shared/identity.js';
 import type { Controller } from './controller.js';
 import { project, TERMINAL_STATES } from './domain/state.js';
 import { assignmentDetailView, projectStatusView, revision, type StatusInput } from './domain/views.js';
+import { assignmentTimes, milestones, recentActivity } from './panel.js';
 import { peerStopped, type PaseoApi, type PaseoHandle } from './paseo-port.js';
 import type { Recovery } from './recovery.js';
 import { lstatOrUndefined, readSeatAccounts, runStatus, type SeatDependencies } from './seats.js';
@@ -85,6 +87,12 @@ async function statusInput(runtime: RpcRuntime, store: ProjectStore): Promise<St
 }
 
 const LIVENESS_MS = 2_000;
+/** Major milestones a project view carries for its recent activity. */
+const ACTIVITY_ITEMS = 30;
+/** The window the settings screen's letter tally covers. */
+const TALLY_HOURS = 24;
+/** Open assignments that wait on their Lead: a handback, a question, or a Peer that stopped. */
+const WAITING_ON_LEAD = ['handed-back', 'questioned', 'blocked'];
 
 const missing = (projectId: string): Answer => error('project_unknown', `No runtime project ${projectId}.`, 'Refresh the project list.');
 
@@ -136,7 +144,13 @@ export function createRpcHandlers(runtime: RpcRuntime) {
         }
         return { ...lease, peer };
       }));
-      return answer(runtime, { ...view, leases, problems: status.replay.problems.map(problem => ({ file: problem.file, reason: problem.reason })) });
+      // When each assignment moved, and what happened lately: the panel's alone, never a seat's.
+      const times = assignmentTimes(status.events);
+      const assignments = view.assignments.map(summary => ({ ...summary, ...times.get(summary.id) }));
+      return answer(runtime, {
+        ...view, assignments, leases, activity: recentActivity(status.events, ACTIVITY_ITEMS),
+        problems: status.replay.problems.map(problem => ({ file: problem.file, reason: problem.reason })),
+      });
     },
 
     async assignment(input: z.infer<typeof runtimeAssignmentRpc.input>): Promise<Answer> {
@@ -144,7 +158,9 @@ export function createRpcHandlers(runtime: RpcRuntime) {
       if (store === undefined) return missing(input.projectId);
       const status = await statusInput(runtime, store);
       const detail = assignmentDetailView(status.state, input.assignmentId, 'operator', existsSync);
-      return detail === undefined ? error('assignment_unknown', `No assignment ${input.assignmentId}.`, 'Refresh the project view.') : answer(runtime, detail);
+      if (detail === undefined) return error('assignment_unknown', `No assignment ${input.assignmentId}.`, 'Refresh the project view.');
+      const own = status.events.filter(event => event.assignmentId === input.assignmentId);
+      return answer(runtime, { ...detail, ...assignmentTimes(own).get(input.assignmentId), timeline: milestones(own) });
     },
 
     recover: (input: z.infer<typeof runtimeRecoverRpc.input>): Promise<Answer> => once(input.idempotencyKey, async () => {
@@ -253,18 +269,25 @@ export function createRpcHandlers(runtime: RpcRuntime) {
       const manifest = controller.deps.recognition.current.manifest;
       const providers = Object.entries(manifest?.providers ?? {}).map(([providerId, entry]) => ({ providerId, agent: entry.agent, role: entry.role }));
       // The runtime record of each observed project, joined by Git common directory.
-      const records = new Map<string, { projectId: string; health: string; assignments: number; active: number; findings: number; root: string }>();
+      type RecordSummary = { projectId: string; health: string; assignments: number; active: number; undecided: number; waiting: number; findings: number; lastEventAt?: string };
+      const records = new Map<string, { readonly summary: RecordSummary; readonly root: string }>();
       for (const store of await ProjectStore.list(controller.deps.runtimeRoot, controller.deps.now)) {
-        const view = projectStatusView(await statusInput(runtime, store));
-        const active = view.assignments.filter(entry => entry.state.value !== 'draft' && !(TERMINAL_STATES as readonly string[]).includes(entry.state.value)).length;
-        records.set(store.meta.gitCommonDir, { projectId: view.projectId, health: view.health.value, assignments: view.assignments.length, active, findings: view.findings.length, root: store.meta.canonicalRoot });
+        const input = await statusInput(runtime, store);
+        const view = projectStatusView(input);
+        const undecided = view.assignments.filter(entry => !(TERMINAL_STATES as readonly string[]).includes(entry.state.value));
+        const open = undecided.filter(entry => entry.state.value !== 'draft');
+        const lastEventAt = input.events.at(-1)?.occurredAt;
+        records.set(store.meta.gitCommonDir, {
+          summary: {
+            projectId: view.projectId, health: view.health.value, assignments: view.assignments.length, active: open.length, undecided: undecided.length,
+            waiting: open.filter(entry => WAITING_ON_LEAD.includes(entry.state.value)).length, findings: view.findings.length,
+            ...(lastEventAt === undefined ? {} : { lastEventAt }),
+          },
+          root: store.meta.canonicalRoot,
+        });
       }
       const room = attention.roomView();
-      const record = (key: string) => {
-        const found = records.get(key);
-        return found === undefined ? undefined
-          : { projectId: found.projectId, health: found.health, assignments: found.assignments, active: found.active, findings: found.findings };
-      };
+      const record = (key: string): RecordSummary | undefined => records.get(key)?.summary;
       // A replacement that cannot be read never costs the room view.
       const successions = new Map((await runtime.succession?.summaries().catch(() => undefined) ?? []).map(summary => [summary.projectKey, summary]));
       const projects: Record<string, unknown>[] = room.projects.map(project => {
@@ -279,7 +302,7 @@ export function createRpcHandlers(runtime: RpcRuntime) {
         const succession = successions.get(key);
         projects.push({
           key, name: basename(found.root), root: found.root, displayRoot: homeRelative(found.root), git: true, decidedBy: 'none',
-          seats: [], incidents: [], runtime: { projectId: found.projectId, health: found.health, assignments: found.assignments, active: found.active, findings: found.findings },
+          seats: [], incidents: [], runtime: found.summary,
           ...(succession === undefined ? {} : { succession }),
         });
       }
@@ -363,6 +386,9 @@ export function createRpcHandlers(runtime: RpcRuntime) {
       const settings = attentionSettings.current.sensor;
       let host: string | null;
       try { host = new URL(settings.endpoint).hostname; } catch { host = null; }
+      // What reached Supervisors lately, read back from the attention log; a log that cannot be read costs only the tally.
+      const recent = await runtime.attention?.log.recent(TALLY_HOURS, TALLIED).catch(() => undefined);
+      const letters = recent === undefined ? undefined : tallyLetters(recent.records, TALLY_HOURS, recent.partial);
       return answer(runtime, {
         settingsAvailable: attentionSettings.available,
         lettersEnabled: attentionSettings.current.letters.enabled,
@@ -371,6 +397,7 @@ export function createRpcHandlers(runtime: RpcRuntime) {
         egress: egressRefusal(settings) ?? 'allowed',
         sending: (await sensor.refusal()) ?? 'ready',
         ...sensor.status(),
+        ...(letters === undefined ? {} : { letters }),
       });
     },
 

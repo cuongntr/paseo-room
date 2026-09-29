@@ -449,7 +449,10 @@ at `runtime/v1/secrets/attention-key` with mode `0600`. `PASEO_ROOM_ATTENTION_KE
 environment is an alternative, and the stored file wins. RPC `runtime.attention-status` returns:
 - mode, circuit state, and whether a key is configured;
 - calls, tokens and failures today;
-- the shadow agreement rate per question set.
+- the shadow agreement rate per question set;
+- for the settings screen, the last 24 hours of the attention log tallied: letters sent by level,
+  failed letters, incidents opened, Lead turns by decision, and rated items by latest verdict
+  ([panel UX](runtime-panel-ux.md) §6). Read back from the log's day files; no seat sees it.
 
 ### 8.4 Panel
 The runtime surface gains a **Room** view: one card per project with Supervisor → Lead → Peers, each
@@ -671,6 +674,7 @@ files under `runtime/v1/attention` stay until `remove --apply`.
 
 | Date | Author | Change |
 |---|---|---|
+| 2026-09-29 | Bytes | §8.3: `runtime.attention-status` adds a 24-hour tally of the attention log for the settings screen. Display only; letters, triage and authority are unchanged. |
 | 2026-09-29 | Repository owner / Bytes | §7.4: notices held through one recipient turn are sent together when it ends, as one message ([runtime design](runtime-coordination.md) §4.4), instead of one per turn. |
 | 2026-09-28 | Bytes | §7.2: a reply to the Supervisor's own request goes even with letters off and outside the wake budget. K-D9 promised this, but only the enqueue honoured it; delivery still dropped the item with letters off, or moved it to the digest past the budget. |
 | 2026-09-28 | Repository owner / Bytes | §4, §9.4: the Observer reads each seat's checkout from Git — linked worktree or main checkout, and its branch — at each snapshot and turn end, and `room_status` shows it. The panel listed a worktree Peer with no sign of where it worked. Display only; no signal reads it. |

@@ -670,18 +670,28 @@ npx paseo-room verify
   cleans or stashes, and releases a writer only after Paseo proves the Peer archived.
 - **State** lives under `~/.paseo-room/runtime/v1` as append-only event files. Setup never edits it.
 - **The Room runtime panel** (sidebar item, and a workspace panel that opens on its own project)
-  puts what needs you first. Below that come your projects, ordered by status, then your
-  Supervisors.
-  - A project shows its Supervisor, its Lead and Peer seats (each opens its agent in Paseo, and
-    shows the model and thinking option it runs with, and the worktree or main checkout it works in
-    with its branch) and its runtime record: assignments, isolated writers, findings and recovery.
+  puts what needs you first. Below that come your projects, then your Supervisors.
+  - Each project is one line: a status mark whose shape says it (needs a look, working, idle, or
+    asleep — its sessions closed, resumed by opening one or a message), then what it is doing, such
+    as *Lead idle · 1 of 2 Peers working · 3 open · 1 waiting on Lead*, and when it last did
+    something. Projects needing a look come first, then working, idle and asleep ones, the most
+    recently active first. Projects with no live seat fold into one *inactive* line, unless
+    dispatched work there is still undecided or a Lead replacement is in progress.
+  - A project shows who watches it, its Lead and Peer seats (each opens its agent in Paseo, and
+    shows the model and thinking option it runs with, the worktree or main checkout it works in, and
+    its context as a bar with a tick at its mark), recent activity (dispatches, handbacks, gates and
+    decisions, with who did them), and its assignments: open ones first, the most recently updated on
+    top, and finished ones by day with when they settled and how long they took, twenty at a time.
+    An assignment shows its brief, Peer, evidence and history.
   - Starting a Supervisor, adding a repository, starting a Lead for a project that has none, and
-    assigning a Supervisor are guided forms.
+    assigning a Supervisor are guided forms. The bell and people icons open the two settings
+    screens.
   - The design notes are in [docs/design/runtime-panel-ux.md](docs/design/runtime-panel-ux.md).
 - **Settings › Room seats** shows which account each seat is signed in to (email, plan and
   organization for Claude; login method for Codex; for Pi, only whether a credential file exists).
   It runs each seat's own `claude auth status` or `codex login status` when you open it or press
-  Refresh, and never reads a credential file. A seat linked to another home's login is flagged.
+  Refresh, and never reads a credential file. A seat linked to another home's login is flagged, and
+  when seats sign in as more than one account, each gets a letter (*account A*, *account B*).
 
 ### Room attention: what reaches a Supervisor
 
@@ -743,8 +753,11 @@ learn only when you ask it to check.
     repository, confirms it, and tells you which Lead now owns the project. The panel shows a
     replacement the Supervisor started, and you may cancel it until it completes. Any other reason to
     replace a Lead stays yours.
-- **Settings › Room attention.** Here you turn letters on or off, change their thresholds, and
-  configure the optional **attention sensor**.
+- **Settings › Room attention.** Here you turn letters on or off, see what reached Supervisors in
+  the last 24 hours (letters by level, incidents, Lead turns by what was decided, and the ratings you
+  or a Supervisor gave), change when a Supervisor is told and how often, and configure the optional
+  **attention sensor** in the order it is set up: mode and state, connection, privacy, then the
+  shadow evaluation beside the switch that lets it assist.
   - The sensor speaks the System One HTTP shape, with [TypeSafe Jev](https://docs.typesafe.ai/)
     first and any compatible or self-hosted endpoint after it. It is `off` by default.
   - Without a TypeSafe key, use Jev through OpenRouter: endpoint

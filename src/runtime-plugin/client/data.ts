@@ -52,6 +52,15 @@ export function usePolled<T>(load: () => Promise<unknown>, key: string): { reado
   return { ...(value === undefined ? {} : { value }), ...(failed === undefined ? {} : { failed }), reload: () => { revision.current = undefined; setTick(tick + 1); } };
 }
 
+/** Re-renders every `ms` while mounted, so a relative time (`5 min ago`) stays true when no data changes. */
+export function useClock(ms = 60_000): void {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(() => { setTick(tick => tick + 1); }, ms);
+    return () => { clearInterval(timer); };
+  }, [ms]);
+}
+
 export function useRuntimeRpcs() {
   return {
     health: useRpc(runtimeHealthRpc),

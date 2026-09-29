@@ -3,24 +3,13 @@
  * from Lead's fields, plus how this runtime expects the report. It restates no role authority;
  * the Peer's contract already carries that.
  */
+import { outcomeGist as gist } from '../shared/names.js';
 import type { AssignmentCreateInputV1 } from './contracts/assignment.js';
-
-/** Characters of an assignment's outcome kept where it names the assignment. */
-const GIST = 48;
 
 /** The part of an assignment that names it for a reader: its disposition and its outcome. */
 export interface Nameable {
   readonly id: string;
   readonly input: Pick<AssignmentCreateInputV1, 'kind' | 'outcome'>;
-}
-
-/** An assignment's outcome, cut to a short phrase on one line, at a word boundary where one is near. */
-function gist(outcome: string): string {
-  const flat = outcome.replace(/\s+/g, ' ').trim();
-  if (flat.length <= GIST) return flat;
-  const cut = flat.slice(0, GIST - 1);
-  const words = cut.replace(/\s+\S*$/, '');
-  return `${words.length >= GIST / 2 ? words : cut.trimEnd()}…`;
 }
 
 function disposition(kind: string): string {

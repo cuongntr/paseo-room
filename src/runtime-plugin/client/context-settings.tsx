@@ -1,17 +1,19 @@
 /**
  * Settings › Room seats › Seat context (docs/design/runtime-coordination-seat-context.md K-D2,
  * §8.4): per role, the share of its context window past which a Lead's Supervisor is told, and at
- * which a Claude seat compacts. Marks are percent; the hint shows what they come to in tokens.
- * Every change saves at once.
+ * which a Claude seat compacts. Marks are percent; the hint shows what they come to in tokens, and
+ * a bar shows the Lead's two marks as zones of its context. Every change saves at once.
  */
 import { useSettings } from '@getpaseo/plugin/client';
 import { useToast } from '@getpaseo/plugin/client/react-native';
 import { SettingsRow, SettingsSection, SettingsSelect } from '@getpaseo/plugin/client/ui';
 import { useState } from 'react';
+import { Text, View } from 'react-native';
 import {
   DEFAULT_SEAT_CONTEXT_SETTINGS, MAX_MARK_PERCENT, MIN_COMPACT_WINDOW, MIN_MARK_PERCENT, SEAT_CONTEXT_SETTINGS, compactWindow, formatTokens,
   type SeatContextSettings,
 } from '../shared/seat-context.js';
+import { tint, type Theme } from './kit.js';
 
 type Budgets = SeatContextSettings['budgets'];
 
@@ -38,7 +40,27 @@ function compactHint(percent: number | null): string {
   return `Claude compacts at ${on.join(', ')}.`;
 }
 
-export function SeatContextSection() {
+/** A window as zones: calm below the report mark, amber to the compact mark, red past it. */
+function MarkScale(props: { readonly theme: Theme; readonly report: number | null; readonly compact: number | null }) {
+  const { colors } = props.theme;
+  const width = 180;
+  const at = (percent: number): number => Math.round((width * percent) / 100);
+  const report = props.report ?? props.compact ?? 100;
+  const compact = props.compact ?? 100;
+  const zone = (from: number, to: number, color: string) => (to <= from ? null : <View style={{ position: 'absolute', left: at(from), width: at(to) - at(from), top: 0, bottom: 0, backgroundColor: color }} />);
+  const label = [props.report === null ? undefined : `report ${String(props.report)}%`, props.compact === null ? undefined : `compact ${String(props.compact)}%`].filter(part => part !== undefined).join(' · ');
+  return (
+    <View accessibilityLabel={`Lead marks: ${label === '' ? 'none' : label}`} style={{ alignItems: 'flex-end', gap: 4 }}>
+      <View style={{ width, height: 8, borderRadius: 4, overflow: 'hidden', backgroundColor: colors.surface2, borderWidth: 1, borderColor: colors.border }}>
+        {zone(report, compact, tint(colors.statusWarning, 0.55))}
+        {zone(compact, 100, tint(colors.statusDanger, 0.55))}
+      </View>
+      <Text style={{ color: colors.foregroundMuted, fontSize: 11 }}>{label === '' ? 'No marks' : label}</Text>
+    </View>
+  );
+}
+
+export function SeatContextSection(props: { readonly theme: Theme }) {
   const settings = useSettings(SEAT_CONTEXT_SETTINGS);
   const toast = useToast();
   // One save at a time: each save sends the whole document at the revision it read.
@@ -76,6 +98,9 @@ export function SeatContextSection() {
   );
   return (
     <SettingsSection title="Seat context" info="A share of each seat's own context window, applied to the model it runs.">
+      <SettingsRow label="Lead" hint="Past the report mark its Supervisor is told and the panel shows it; at the compact mark Claude compacts.">
+        <MarkScale theme={props.theme} report={lead.rotateAtPercent} compact={lead.compactAtPercent} />
+      </SettingsRow>
       {markRow('Lead · report at', lead.rotateAtPercent,
         'Past it, the Lead\'s Supervisor is told once and the panel shows it, so you can start a fresh Lead. Applies at once.',
         (budgets, rotateAtPercent) => ({ ...budgets, lead: { ...budgets.lead, rotateAtPercent } }))}

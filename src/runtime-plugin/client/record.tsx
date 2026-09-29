@@ -1,6 +1,7 @@
 /**
- * A project's runtime record (docs/design/runtime-panel-ux.md §4): health, the writer, assignments,
- * isolated writers and findings, with the Human's recovery forms; and one assignment in detail.
+ * A project's runtime record (docs/design/runtime-panel-ux.md §4–§5): the writer in the Lead's
+ * checkout and findings only when there are any, recent activity, assignments by day, and isolated
+ * writers, with the Human's recovery forms; and one assignment in detail with its history.
  * Destructive actions ask for a reason in a confirmation modal.
  */
 import { useToast } from '@getpaseo/plugin/client/react-native';
@@ -8,8 +9,12 @@ import { useState } from 'react';
 import { Text, View } from 'react-native';
 import { idempotencyKey, unwrap, usePolled, useRuntimeRpcs } from './data.js';
 import { ConfirmModal } from './forms.js';
-import { Button, Callout, Card, Empty, Facts, Glyph, Loading, Pill, Row, SPACE, SectionLabel, type Theme, type Tone } from './kit.js';
-import { sentence } from './model.js';
+import type { Milestone } from '../shared/panel.js';
+import { Button, Callout, Card, Empty, Facts, Glyph, GroupLabel, Loading, MutedText, Pill, Row, SPACE, SectionLabel, Segmented, Title, type Theme, type Tone } from './kit.js';
+import {
+  assignmentGist, byDay, finishedAssignments, isFinished, openAssignments, providerLabel, sentence, workplace, type AssignmentEntry,
+} from './model.js';
+import { ago, duration, hourMinute, whenLabel } from './time.js';
 
 interface Claim { readonly value: string; readonly evidence: string }
 interface Finding { readonly kind: string; readonly message: string; readonly recoveryAction: string; readonly evidence: string }
@@ -21,12 +26,12 @@ interface Worktree {
   readonly assignmentId: string; readonly path?: string; readonly branch: string; readonly create: Claim; readonly close: Claim;
   readonly disposition: 'unresolved' | 'active' | 'retained' | 'leftover' | 'gone';
 }
-interface Summary { readonly id: string; readonly kind: string; readonly mode: string; readonly outcome: string; readonly state: Claim }
 interface ProjectRecord {
   readonly canonicalRoot: string; readonly health: Claim; readonly liveFacts: string;
   readonly writer?: { readonly assignmentId: string; readonly state: Claim };
   readonly leases: readonly Lease[]; readonly worktrees: readonly Worktree[]; readonly scopeStatement: string;
-  readonly assignments: readonly Summary[]; readonly findings: readonly Finding[];
+  readonly assignments: readonly (AssignmentEntry & { readonly state: Claim })[]; readonly findings: readonly Finding[];
+  readonly activity?: readonly Milestone[];
   readonly problems: readonly { readonly file: string; readonly reason: string }[];
 }
 
@@ -40,14 +45,26 @@ export function assignmentTone(state: string): Tone {
 
 export const healthTone = (health: string): Tone => (health === 'healthy' ? 'success' : health === 'paused' ? 'danger' : 'warning');
 
+/** An assignment's state as a reader says it. */
+const STATE_WORDS: Readonly<Record<string, string>> = {
+  draft: 'not dispatched', dispatching: 'starting', active: 'working', questioned: 'asked a question', blocked: 'stopped', 'handed-back': 'handed back',
+  rework: 'reworking', 'awaiting-permission': 'waits on a permission', accepted: 'accepted', rejected: 'rejected', abandoned: 'abandoned', uncertain: 'uncertain',
+};
+const stateWord = (state: string): string => STATE_WORDS[state] ?? state;
+
+const TONE_ICON: Readonly<Record<string, string>> = { success: 'CircleCheck', danger: 'CircleX', warning: 'TriangleAlert', accent: 'CircleDot', muted: 'Circle', neutral: 'Circle' };
+const BY: Readonly<Record<Milestone['by'], string>> = { human: 'you', lead: 'Lead', peer: 'Peer', supervisor: 'Supervisor', runtime: 'runtime' };
+
 const FINDING_LABEL: Readonly<Record<string, string>> = {
   'project-paused': 'Project paused', 'ownership-conflict': 'Two Leads claim this project', 'report-missing': 'A Peer ended without reporting',
   'awaiting-permission': 'A Peer waits for a permission', 'uncertain-effect': 'An action\'s outcome is uncertain', 'notice-failed': 'A notice was not delivered',
   'scope-exceeded': 'Changes outside the write scope', 'worktree-retained': 'Worktree kept with unrecorded work', 'worktree-cleanup': 'Worktree directory left behind',
 };
 const findingLabel = (kind: string): string => FINDING_LABEL[kind] ?? sentence(kind.replace(/-/g, ' '));
-const FINISHED = ['accepted', 'rejected', 'abandoned'];
-const SHOWN_FINISHED = 5;
+/** Finished assignments listed at first, and added per press. */
+const PAGE = 20;
+/** Recent milestones shown before *Show more*. */
+const RECENT = 6;
 
 type Pending = { readonly title: string; readonly body: string; readonly actionLabel: string; readonly reasonRequired: boolean; readonly run: (reason: string) => Promise<unknown> };
 
@@ -62,31 +79,75 @@ function useAction(reload: () => void) {
   }, (failure: unknown) => { toast.error(String(failure)); return false; });
 }
 
+/** How long a finished assignment took, from creation to decision. */
+function took(entry: AssignmentEntry): string | undefined {
+  if (entry.createdAt === undefined || entry.settledAt === undefined) return undefined;
+  const spent = duration(Date.parse(entry.settledAt) - Date.parse(entry.createdAt));
+  return spent === '' ? undefined : `took ${spent}`;
+}
+
+function AssignmentRow(props: { readonly theme: Theme; readonly entry: AssignmentEntry; readonly first: boolean; readonly onPress: () => void }) {
+  const { theme, entry } = props;
+  const finished = isFinished(entry);
+  const tone = assignmentTone(entry.state.value);
+  const when = finished
+    ? [entry.settledAt === undefined ? undefined : hourMinute(entry.settledAt), took(entry)]
+    : [entry.updatedAt === undefined ? undefined : `updated ${ago(entry.updatedAt)}`];
+  return (
+    <Row theme={theme} first={props.first} onPress={props.onPress} accessibilityLabel={`Open assignment ${assignmentGist(entry)}`}
+      leading={<Glyph theme={theme} name={TONE_ICON[tone] ?? 'Circle'} tone={finished && entry.state.value === 'accepted' ? 'muted' : tone} size={15} />}
+      title={assignmentGist(entry)}
+      meta={[entry.kind, workplace(entry), ...when].filter(part => part !== undefined).join(' · ')}
+      trailing={(
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: SPACE.sm }}>
+          {finished && entry.state.value === 'accepted' ? null : <Pill theme={theme} tone={tone}>{stateWord(entry.state.value)}</Pill>}
+          <Glyph theme={theme} name="ChevronRight" size={15} />
+        </View>
+      )} />
+  );
+}
+
 export function RuntimeRecord(props: { readonly theme: Theme; readonly projectId: string; readonly openAssignment: (assignmentId: string) => void }) {
   const rpc = useRuntimeRpcs();
   const polled = usePolled<ProjectRecord>(() => rpc.project({ projectId: props.projectId }), `project:${props.projectId}`);
   const act = useAction(polled.reload);
   const [pending, setPending] = useState<Pending>();
-  const [allFinished, setAllFinished] = useState(false);
+  const [chosenTab, setTab] = useState<'open' | 'finished'>();
+  const [shown, setShown] = useState(PAGE);
+  const [allActivity, setAllActivity] = useState(false);
   const { theme } = props;
   const record = polled.value?.data;
   if (record === undefined) return <Card theme={theme}><Loading theme={theme} label={polled.value?.error?.message ?? 'Loading the runtime record…'} /></Card>;
-  const shown = record.worktrees.filter(worktree => worktree.disposition === 'retained' || worktree.disposition === 'leftover');
-  const open = record.assignments.filter(entry => !FINISHED.includes(entry.state.value)).sort((a, b) => (a.state.value === 'draft' ? 1 : 0) - (b.state.value === 'draft' ? 1 : 0));
-  const finished = record.assignments.filter(entry => FINISHED.includes(entry.state.value));
-  const listed = [...open, ...(allFinished ? finished : finished.slice(0, SHOWN_FINISHED))];
+  const gist = new Map(record.assignments.map(entry => [entry.id, assignmentGist(entry)]));
+  const nameOf = (assignmentId: string): string => gist.get(assignmentId) ?? assignmentId;
+  const kept = record.worktrees.filter(worktree => worktree.disposition === 'retained' || worktree.disposition === 'leftover');
+  const open = openAssignments(record.assignments);
+  const finished = finishedAssignments(record.assignments);
+  const tab = chosenTab ?? (open.length > 0 ? 'open' : 'finished');
+  const activity = record.activity ?? [];
+  const listedActivity = allActivity ? activity : activity.slice(0, RECENT);
+  const page = finished.slice(0, shown);
   return (
     <View>
-      <Card theme={theme}>
-        <Row theme={theme} first title="Health" subtitle={record.liveFacts === 'fresh' ? 'Live facts are fresh' : 'Paseo not reached yet — live facts may be stale'}
-          trailing={<Pill theme={theme} tone={healthTone(record.health.value)}>{record.health.value}</Pill>} />
-        <Row theme={theme} title="Writer in the Lead's workspace"
-          subtitle={record.writer === undefined ? 'None — the workspace is free for one writer' : `${record.writer.assignmentId} · ${record.writer.state.value}`} />
-      </Card>
+      {record.liveFacts === 'fresh' ? null : (
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: SPACE.sm, marginTop: SPACE.md }}>
+          <Glyph theme={theme} name="CloudOff" size={14} />
+          <MutedText theme={theme}>Paseo not reached yet — live facts may be stale.</MutedText>
+        </View>
+      )}
+
+      {record.writer === undefined ? null : (
+        <View style={{ marginTop: SPACE.lg }}>
+          <Callout theme={theme} tone="accent" icon="PenLine" title={`${nameOf(record.writer.assignmentId)} writes in the Lead's checkout`}
+            action={<Button theme={theme} small label="Open assignment" icon="ArrowRight" onPress={() => { if (record.writer !== undefined) props.openAssignment(record.writer.assignmentId); }} />}>
+            {`${sentence(stateWord(record.writer.state.value))}. Other writable work waits for it, or runs in its own worktree.`}
+          </Callout>
+        </View>
+      )}
 
       {record.findings.length + record.problems.length === 0 ? null : (
         <View>
-          <SectionLabel theme={theme}>Findings</SectionLabel>
+          <SectionLabel theme={theme}>{`Findings · runtime ${record.health.value}`}</SectionLabel>
           {record.findings.map((finding, index) => (
             <Callout key={`${finding.kind}-${String(index)}`} theme={theme} tone={finding.kind === 'project-paused' ? 'danger' : 'warning'} icon="TriangleAlert" title={findingLabel(finding.kind)}>
               {`${finding.message}\n${finding.recoveryAction}`}
@@ -105,45 +166,72 @@ export function RuntimeRecord(props: { readonly theme: Theme; readonly projectId
         </View>
       )}
 
-      <SectionLabel theme={theme}>{`Assignments${record.assignments.length === 0 ? '' : ` · ${String(open.length)} open, ${String(finished.length)} finished`}`}</SectionLabel>
+      {activity.length === 0 ? null : (
+        <View>
+          <SectionLabel theme={theme}>Recent activity</SectionLabel>
+          <Card theme={theme}>
+            {listedActivity.map((entry, index) => (
+              <Row key={`${entry.at}-${String(index)}`} theme={theme} first={index === 0}
+                {...(entry.assignmentId === undefined ? {} : { onPress: () => { if (entry.assignmentId !== undefined) props.openAssignment(entry.assignmentId); } })}
+                leading={<Glyph theme={theme} name={TONE_ICON[entry.tone] ?? 'Circle'} tone={entry.tone} size={15} />}
+                title={entry.label}
+                {...(entry.assignmentId === undefined ? {} : { subtitle: nameOf(entry.assignmentId) })}
+                trailing={<MutedText theme={theme}>{`${whenLabel(entry.at)} · ${BY[entry.by]}`}</MutedText>} />
+            ))}
+            {activity.length > RECENT ? (
+              <Row theme={theme} onPress={() => { setAllActivity(!allActivity); }} accessibilityLabel="Toggle recent activity"
+                leading={<Glyph theme={theme} name={allActivity ? 'ChevronUp' : 'ChevronDown'} size={15} />}
+                title={allActivity ? 'Show less' : `Show ${String(activity.length - RECENT)} more`} />
+            ) : null}
+          </Card>
+        </View>
+      )}
+
+      <SectionLabel theme={theme}
+        trailing={record.assignments.length === 0 ? undefined : (
+          <Segmented theme={theme} value={tab} onChange={next => { setTab(next); setShown(PAGE); }}
+            options={[{ value: 'open', label: `Open ${String(open.length)}` }, { value: 'finished', label: `Finished ${String(finished.length)}` }]} />
+        )}>Assignments</SectionLabel>
       <Card theme={theme}>
         {record.assignments.length === 0
           ? <Empty theme={theme} icon="ClipboardList" title="No runtime assignments">A Lead that delegates with assignment_create and assignment_dispatch records its work here.</Empty>
-          : listed.map((assignment, index) => (
-            <Row key={assignment.id} theme={theme} first={index === 0} onPress={() => { props.openAssignment(assignment.id); }} accessibilityLabel={`Assignment ${assignment.id}`}
-              title={assignment.outcome} meta={`${assignment.kind} · ${assignment.mode} · ${assignment.id}`}
-              trailing={(
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: SPACE.sm }}>
-                  <Pill theme={theme} tone={assignmentTone(assignment.state.value)}>{assignment.state.value}</Pill>
-                  <Glyph theme={theme} name="ChevronRight" size={15} />
+          : tab === 'open'
+            ? (open.length === 0
+              ? <Empty theme={theme} icon="CircleCheck" title="Nothing open">Every assignment has been decided. Finished work is under Finished.</Empty>
+              : open.map((entry, index) => <AssignmentRow key={entry.id} theme={theme} entry={entry} first={index === 0} onPress={() => { props.openAssignment(entry.id); }} />))
+            : (finished.length === 0
+              ? <Empty theme={theme} icon="ClipboardList" title="Nothing finished yet" />
+              : byDay(page, entry => entry.settledAt).map((group, groupIndex) => (
+                <View key={group.day}>
+                  <GroupLabel theme={theme} first={groupIndex === 0}>{group.day}</GroupLabel>
+                  {group.entries.map(entry => <AssignmentRow key={entry.id} theme={theme} entry={entry} first={false} onPress={() => { props.openAssignment(entry.id); }} />)}
                 </View>
-              )} />
-          ))}
-        {finished.length > SHOWN_FINISHED ? (
-          <Row theme={theme} onPress={() => { setAllFinished(!allFinished); }} accessibilityLabel="Toggle finished assignments"
-            leading={<Glyph theme={theme} name={allFinished ? 'ChevronUp' : 'ChevronDown'} size={15} />}
-            title={allFinished ? 'Show fewer' : `Show all ${String(finished.length)} finished`} />
+              )))}
+        {tab === 'finished' && finished.length > shown ? (
+          <Row theme={theme} onPress={() => { setShown(shown + PAGE); }} accessibilityLabel="Show more finished assignments"
+            leading={<Glyph theme={theme} name="ChevronDown" size={15} />}
+            title={`Show ${String(Math.min(PAGE, finished.length - shown))} more`} subtitle={`${String(finished.length - shown)} older not shown`} />
         ) : null}
       </Card>
 
-      {record.leases.length + shown.length === 0 ? null : (
+      {record.leases.length + kept.length === 0 ? null : (
         <View>
           <SectionLabel theme={theme}>Isolated writers</SectionLabel>
           <Card theme={theme}>
             {record.leases.map((lease, index) => (
-              <Row key={lease.assignmentId} theme={theme} first={index === 0} title={`${lease.assignmentId} · ${lease.branch}`}
-                subtitle={`Scope ${lease.scopes.length === 0 ? 'whole repository' : lease.scopes.join(', ')}${lease.serialOnly.length === 0 ? '' : ` · serial-only ${lease.serialOnly.join(', ')}`}`}
-                meta={`lease ${lease.state.value} · epoch ${String(lease.epoch)} · Peer ${lease.peer}`}
+              <Row key={lease.assignmentId} theme={theme} first={index === 0} title={nameOf(lease.assignmentId)}
+                subtitle={`${lease.branch} · scope ${lease.scopes.length === 0 ? 'whole repository' : lease.scopes.join(', ')}${lease.serialOnly.length === 0 ? '' : ` · one at a time: ${lease.serialOnly.join(', ')}`}`}
+                meta={`Peer ${lease.peer} · lease ${lease.state.value}${lease.epoch > 1 ? ` · taken over ${String(lease.epoch - 1)}×` : ''}`}
                 trailing={lease.reclaimable && (lease.peer === 'archived' || lease.peer === 'gone')
                   ? <Button theme={theme} small label="Reclaim" icon="RefreshCcw" onPress={() => {
-                    setPending({ title: `Reclaim ${lease.assignmentId}`, body: 'A new Peer is dispatched into the same worktree at the next lease epoch. The old Peer is proven archived; its late reports will be refused.', actionLabel: 'Reclaim', reasonRequired: true,
+                    setPending({ title: `Reclaim ${nameOf(lease.assignmentId)}`, body: 'A new Peer is dispatched into the same worktree at the next lease epoch. The old Peer is proven archived; its late reports will be refused.', actionLabel: 'Reclaim', reasonRequired: true,
                       run: reason => act(rpc.leaseReclaim({ projectId: props.projectId, assignmentId: lease.assignmentId, reason, idempotencyKey: idempotencyKey() }), 'Lease reclaimed') });
                   }} />
                   : undefined} />
             ))}
-            {shown.map((worktree, index) => (
-              <Row key={worktree.assignmentId} theme={theme} first={record.leases.length === 0 && index === 0} title={`${worktree.assignmentId} · ${worktree.branch}`}
-                subtitle={worktree.disposition === 'retained' ? 'Worktree kept: it holds work no handoff recorded' : 'Closed, but its directory was left behind — remove it by hand'}
+            {kept.map((worktree, index) => (
+              <Row key={worktree.assignmentId} theme={theme} first={record.leases.length === 0 && index === 0} title={nameOf(worktree.assignmentId)}
+                subtitle={worktree.disposition === 'retained' ? `${worktree.branch} · kept: it holds work no handoff recorded` : `${worktree.branch} · closed, but its directory was left behind — remove it by hand`}
                 {...(worktree.path === undefined ? {} : { meta: worktree.path })}
                 trailing={worktree.disposition === 'retained' ? (
                   <View style={{ flexDirection: 'row', gap: SPACE.sm }}>
@@ -181,9 +269,20 @@ interface AssignmentDetail {
   readonly scopeExceeded?: { readonly value: { readonly candidateCommit: string; readonly paths: readonly string[] } };
   readonly lease?: { readonly branch: string; readonly epoch: number };
   readonly history: readonly string[];
+  readonly createdAt?: string; readonly updatedAt?: string; readonly settledAt?: string; readonly isolated?: boolean;
+  readonly timeline?: readonly Milestone[];
 }
 
 const list = (items: readonly string[] | undefined, empty: string): string => (items === undefined || items.length === 0 ? empty : items.join(', '));
+
+/** A runtime gate run: passed on exit 0, failed on any other end, else running or uncertain. */
+function GatePill(props: { readonly theme: Theme; readonly status: string; readonly exitCode?: number }) {
+  if (props.status !== 'finished') return <Pill theme={props.theme} tone={props.status === 'running' ? 'accent' : 'warning'}>{props.status}</Pill>;
+  return props.exitCode === 0 ? <Pill theme={props.theme} tone="success">passed</Pill> : <Pill theme={props.theme} tone="danger">failed</Pill>;
+}
+
+/** Where the Peer's session stands once the assignment is decided. */
+const CLOSURE: Readonly<Record<string, string>> = { open: 'session open', closing: 'being archived', closed: 'archived', uncertain: 'archive uncertain' };
 
 export function AssignmentDetailView(props: { readonly theme: Theme; readonly projectId: string; readonly assignmentId: string; readonly openAgent?: (agentId: string) => void }) {
   const rpc = useRuntimeRpcs();
@@ -193,43 +292,69 @@ export function AssignmentDetailView(props: { readonly theme: Theme; readonly pr
   const { theme } = props;
   const detail = polled.value?.data;
   if (detail === undefined) return <Card theme={theme}><Loading theme={theme} label={polled.value?.error?.message ?? 'Loading the assignment…'} /></Card>;
-  const terminal = ['accepted', 'rejected', 'abandoned'].includes(detail.state.value);
+  const terminal = isFinished(detail);
+  const spent = took(detail);
+  const gateCommand = detail.brief.gate?.command;
+  const timeline = detail.timeline ?? [];
   return (
     <View>
+      <Title theme={theme} subtitle={`${sentence(detail.kind)} · ${workplace(detail)}`}
+        trailing={<Pill theme={theme} tone={assignmentTone(detail.state.value)}>{stateWord(detail.state.value)}</Pill>}>{assignmentGist(detail)}</Title>
       <Card theme={theme}>
         <Facts theme={theme} items={[
           ['Outcome', detail.outcome],
-          ['Kind', `${detail.kind} · ${detail.mode}`],
+          ['Assignment', detail.id],
           ['Write scope', list(detail.brief.writeScope, detail.mode === 'read-only' ? 'read-only' : 'whole repository')],
           ['Excluded', list(detail.brief.exclusions, 'nothing named')],
           ['Acceptance', list(detail.brief.acceptanceEvidence, '—')],
-          ['Gate', detail.brief.gate?.command ?? 'none'],
+          ['Gate', gateCommand ?? 'none'],
           ['Base commit', detail.brief.baseCommit?.slice(0, 12) ?? '—'],
+          ...(detail.createdAt === undefined ? [] : [['Created', whenLabel(detail.createdAt)] as const]),
+          ...(detail.settledAt === undefined ? [] : [[sentence(stateWord(detail.state.value)), `${whenLabel(detail.settledAt)}${spent === undefined ? '' : ` · ${spent}`}`] as const]),
         ]} />
       </Card>
       <SectionLabel theme={theme}>Peer</SectionLabel>
       <Card theme={theme}>
-        <Row theme={theme} first title={detail.peerProviderId ?? 'Not dispatched'} subtitle={detail.observedModel === undefined ? `Report generation ${String(detail.reportingGeneration)}` : `Model ${detail.observedModel} · report generation ${String(detail.reportingGeneration)}`}
+        <Row theme={theme} first title={detail.peerProviderId === undefined ? 'Not dispatched' : `${providerLabel(detail.peerProviderId)} Peer`}
+          subtitle={[detail.observedModel, detail.reportingGeneration > 1 ? `turn ${String(detail.reportingGeneration)}` : undefined, detail.peerAgentId === undefined ? undefined : CLOSURE[detail.closure.value] ?? detail.closure.value]
+            .filter(part => part !== undefined).join(' · ') || 'No Peer yet'}
           trailing={detail.peerAgentId !== undefined && props.openAgent !== undefined
             ? <Button theme={theme} small label="Open Peer" icon="ExternalLink" onPress={() => { if (detail.peerAgentId !== undefined) props.openAgent?.(detail.peerAgentId); }} /> : undefined} />
         {detail.thinking === undefined ? null : <Row theme={theme} title={`Thinking ${detail.thinking.observed ?? detail.thinking.chosen ?? ''}`} subtitle={thinkingLine(detail.thinking)} />}
-        {detail.lease === undefined ? null : <Row theme={theme} title={`Worktree ${detail.lease.branch}`} subtitle={`Lease epoch ${String(detail.lease.epoch)}`} />}
+        {detail.lease === undefined ? null : (
+          <Row theme={theme} title={`Worktree on ${detail.lease.branch}`}
+            subtitle={detail.lease.epoch > 1 ? `Taken over by a new Peer ${String(detail.lease.epoch - 1)}×` : 'Its own worktree, separate from the Lead\'s checkout'} />
+        )}
       </Card>
       <SectionLabel theme={theme}>Evidence</SectionLabel>
       <Card theme={theme}>
         <Row theme={theme} first title="Candidate" subtitle={detail.candidate === undefined ? 'No handoff yet' : `Commit ${detail.candidate.value.slice(0, 12)}`} />
         {detail.peerVerification.map((entry, index) => (
-          <Row key={`v${String(index)}`} theme={theme} title={entry.value.command} subtitle="Peer's own check (reported, not re-run)"
+          <Row key={`v${String(index)}`} theme={theme} title={entry.value.command} subtitle="The Peer's own check — reported, not re-run"
             trailing={<Pill theme={theme} tone={entry.value.outcome === 'pass' ? 'success' : 'danger'}>{entry.value.outcome}</Pill>} />
         ))}
         {detail.runtimeGates.map(gate => (
-          <Row key={gate.value.gateRunId} theme={theme} title={`Runtime gate ${gate.value.gateRunId}`} subtitle={gate.value.exitCode === undefined ? gate.value.status : `exit ${String(gate.value.exitCode)}`}
-            trailing={<Pill theme={theme} tone={gate.value.status === 'finished' && gate.value.exitCode === 0 ? 'success' : gate.value.status === 'running' ? 'accent' : 'warning'}>{gate.value.status}</Pill>} />
+          <Row key={gate.value.gateRunId} theme={theme} title={gateCommand ?? 'Runtime gate'}
+            subtitle={`Run by the runtime${gate.value.exitCode === undefined ? '' : ` · exit ${String(gate.value.exitCode)}`}`}
+            trailing={<GatePill theme={theme} status={gate.value.status} {...(gate.value.exitCode === undefined ? {} : { exitCode: gate.value.exitCode })} />} />
         ))}
       </Card>
       {detail.scopeExceeded === undefined ? null : (
         <View style={{ marginTop: SPACE.md }}>
           <Callout theme={theme} tone="warning" icon="TriangleAlert" title="Changes outside the write scope">{detail.scopeExceeded.value.paths.join(', ')} — accepting it needs an override.</Callout>
+        </View>
+      )}
+      {timeline.length === 0 ? null : (
+        <View>
+          <SectionLabel theme={theme}>History</SectionLabel>
+          <Card theme={theme}>
+            {timeline.map((entry, index) => (
+              <Row key={`${entry.at}-${String(index)}`} theme={theme} first={index === 0}
+                leading={<Glyph theme={theme} name={TONE_ICON[entry.tone] ?? 'Circle'} tone={entry.tone} size={15} />}
+                title={entry.label}
+                trailing={<MutedText theme={theme}>{`${whenLabel(entry.at)} · ${BY[entry.by]}`}</MutedText>} />
+            ))}
+          </Card>
         </View>
       )}
       {terminal ? null : (
@@ -241,8 +366,8 @@ export function AssignmentDetailView(props: { readonly theme: Theme; readonly pr
           </Card>
         </View>
       )}
-      <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12, marginTop: SPACE.md }}>{`${String(detail.history.length)} recorded events · closure ${detail.closure.value}`}</Text>
-      <ConfirmModal theme={theme} open={confirming} title={`Abandon ${detail.id}`} body="The assignment ends as abandoned. Its Peer is not archived by this; do that in Paseo if it should stop." actionLabel="Abandon" reasonRequired
+      <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12, marginTop: SPACE.md }}>{`${String(detail.history.length)} events recorded`}</Text>
+      <ConfirmModal theme={theme} open={confirming} title={`Abandon ${assignmentGist(detail)}`} body="The assignment ends as abandoned. Its Peer is not archived by this; do that in Paseo if it should stop." actionLabel="Abandon" reasonRequired
         onClose={() => { setConfirming(false); }}
         onConfirm={reason => act(rpc.abandon({ projectId: props.projectId, assignmentId: props.assignmentId, reason, idempotencyKey: idempotencyKey() }), 'Assignment abandoned')} />
     </View>

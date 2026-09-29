@@ -13,6 +13,7 @@
  * other writer. Replay re-checks those rules, so a ledger can never hold two colliding writers.
  */
 import { MAX_WORKTREE_LEASES } from '../../shared/limits.js';
+import { SETTLED_STATES } from '../../shared/states.js';
 import type { AssignmentCreateInputV1, CandidateRefV1 } from '../contracts/assignment.js';
 import type { PeerReportReceiptV1 } from '../contracts/peer.js';
 import type { GateResultV1, RuntimeEventOf, RuntimeEventV1 } from '../events/schema.js';
@@ -25,7 +26,7 @@ export type ReportingState = 'closed' | 'open' | 'consumed' | 'uncertain';
 export type Closure = 'open' | 'closing' | 'closed' | 'uncertain';
 export type OwnershipState = 'reserved' | 'held' | 'releasing' | 'released' | 'uncertain';
 
-export const TERMINAL_STATES: readonly AssignmentState[] = ['accepted', 'rejected', 'abandoned'];
+export const TERMINAL_STATES: readonly AssignmentState[] = SETTLED_STATES;
 
 /** Decided, with its Peer archived or never placed. */
 export function settled(view: AssignmentView): boolean {

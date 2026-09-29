@@ -7,18 +7,19 @@
  */
 import { useWorkspace, type PluginSurfaceProps, type PluginWorkspacePanelProps } from '@getpaseo/plugin/client';
 import { ScrollView } from '@getpaseo/plugin/client/react-native';
-import { SettingsAction, SettingsRow, SettingsSection } from '@getpaseo/plugin/client/ui';
+import { SettingsRow, SettingsSection } from '@getpaseo/plugin/client/ui';
 import { useEffect, useState } from 'react';
-import { Text, View } from 'react-native';
+import { View } from 'react-native';
 import { SeatContextSection } from './context-settings.js';
 import { unwrap, usePolled, useRuntimeRpcs, type Unwrapped } from './data.js';
 import { PeerThinkingSection } from './effort-settings.js';
 import { AssignSupervisorModal, NewProjectModal, NewSupervisorModal, StartLeadModal } from './forms.js';
-import { Button, Callout, Card, Loading, Page, Pill, SPACE, Title, type Theme } from './kit.js';
-import { agentLabel, sentence, type RoomView } from './model.js';
+import { Button, Callout, Loading, Page, Pill, SPACE, Title, type Theme } from './kit.js';
+import { accountLetters, accountLine, agentLabel, sentence, type AccountView, type RoomView } from './model.js';
 import { AssignmentDetailView } from './record.js';
 import { ProjectScreen, RoomScreen, type RoomActions } from './room.js';
 import { ReplaceLeadModal } from './succession.js';
+import { whenLabel } from './time.js';
 
 type Route =
   | { readonly screen: 'room' }
@@ -90,7 +91,6 @@ function Runtime(props: { readonly theme: Theme; readonly compact: boolean; read
           <View style={{ alignSelf: 'flex-start', marginBottom: SPACE.md }}>
             <Button theme={theme} small variant="ghost" label={project.name} icon="ArrowLeft" onPress={() => { setRoute({ screen: 'project', key: project.key }); }} />
           </View>
-          <Title theme={theme} subtitle={`Runtime assignment in ${project.name}`}>{route.assignmentId}</Title>
           <AssignmentDetailView theme={theme} projectId={route.projectId} assignmentId={route.assignmentId} {...(actions.openAgent === undefined ? {} : { openAgent: actions.openAgent })} />
         </View>
       );
@@ -129,27 +129,30 @@ export function RuntimeWorkspacePanel(props: PluginWorkspacePanelProps) {
   return <Runtime theme={props.theme} compact={props.layout.compact} navigation={props.navigation} focusRoot={root} />;
 }
 
-interface SeatAccount {
-  readonly providerId: string; readonly agent: string; readonly role: string;
+interface SeatAccount extends AccountView {
+  readonly agent: string;
   readonly status: 'signed-in' | 'signed-out' | 'present' | 'unknown';
-  readonly method?: string; readonly email?: string; readonly plan?: string; readonly organization?: string;
-  readonly shared?: true; readonly note?: string;
-}
-
-function account(seat: SeatAccount): string {
-  if (seat.status === 'signed-out') return 'Not signed in';
-  if (seat.status === 'present') return 'Credential file present';
-  if (seat.status === 'unknown') return seat.note ?? 'Unknown';
-  const who = seat.email ?? seat.method ?? 'Signed in';
-  return [who, seat.plan, seat.organization].filter(part => part !== undefined).join(' · ');
+  readonly shared?: true;
 }
 
 const SEAT_TONE = { 'signed-in': 'success', 'signed-out': 'danger', present: 'muted', unknown: 'warning' } as const;
 const SEAT_WORD = { 'signed-in': 'signed in', 'signed-out': 'signed out', present: 'file present', unknown: 'unknown' } as const;
+const ROLE_ORDER = ['supervisor', 'lead', 'peer'];
+
+/** `A: Supervisor, Lead · B: Peer` — which seats share which account, when they do not all share one. */
+function accountSplit(seats: readonly SeatAccount[], letters: ReadonlyMap<string, string>): string {
+  const groups = new Map<string, string[]>();
+  for (const seat of seats) {
+    const letter = letters.get(seat.providerId);
+    if (letter !== undefined) groups.set(letter, [...(groups.get(letter) ?? []), `${agentLabel(seat.agent)} ${sentence(seat.role)}`]);
+  }
+  return [...groups].map(([letter, names]) => `${letter}: ${names.join(', ')}`).join(' · ');
+}
 
 /**
- * Settings › Room seats: which account each room seat is signed in to. Loaded on open and on
- * Refresh only, never polled, because each load runs every seat's vendor status command.
+ * Settings › Room seats: which account each room seat is signed in to, the thinking Lead may choose
+ * for a Peer, and the context marks. Accounts load on open and on Refresh only, never polled,
+ * because each load runs every seat's vendor status command.
  */
 export function RoomSeatsSettings(props: PluginSurfaceProps) {
   const rpc = useRuntimeRpcs();
@@ -174,28 +177,34 @@ export function RoomSeatsSettings(props: PluginSurfaceProps) {
   }, [tick]);
   const { theme } = props;
   const data = loaded?.data;
-  const roles = ['supervisor', 'lead', 'peer'];
-  const seats = [...(data?.seats ?? [])].sort((a, b) => a.agent.localeCompare(b.agent) || roles.indexOf(a.role) - roles.indexOf(b.role));
+  const seats = [...(data?.seats ?? [])].sort((a, b) => a.agent.localeCompare(b.agent) || ROLE_ORDER.indexOf(a.role) - ROLE_ORDER.indexOf(b.role));
+  const letters = accountLetters(seats);
+  const refresh = busy ? 'Checking…' : data === undefined ? 'Check' : `Checked ${whenLabel(data.checkedAt)}`;
   return (
     <ScrollView style={{ flex: 1, backgroundColor: theme.colors.surface0 }}>
       <Page theme={theme} compact={props.layout.compact}>
-        <Title theme={theme} subtitle="The account each seat's own CLI reports for its role home. The room never reads a credential file.">Room seats</Title>
+        <Title theme={theme} subtitle="Who each seat signs in as, which thinking Lead may choose for a Peer, and when seats report or compact their context.">Room seats</Title>
         {failed === undefined ? null : <Callout theme={theme} tone="danger" icon="CircleX" title="The runtime is unavailable">{failed}</Callout>}
         {loaded?.error === undefined ? null : <Callout theme={theme} tone="danger" icon="CircleX" title={loaded.error.message}>{loaded.error.recoveryAction}</Callout>}
-        <SettingsSection title="Seats" trailing={<Button theme={theme} small variant="ghost" label={busy ? 'Checking…' : 'Refresh'} icon="RotateCcw" busy={busy} onPress={() => { setTick(tick + 1); }} />}>
+        <SettingsSection title="Accounts" info="What each seat's own CLI reports for its role home. The room never reads a credential file."
+          trailing={<Button theme={theme} small variant="ghost" label={refresh} icon="RotateCcw" busy={busy} onPress={() => { setTick(tick + 1); }} />}>
           {data === undefined
             ? <SettingsRow label={busy ? 'Checking every seat…' : 'No answer yet'} />
-            : seats.map(seat => (
-              <SettingsRow key={seat.providerId} label={`${agentLabel(seat.agent)} · ${sentence(seat.role)}`}
-                hint={seat.shared === undefined ? account(seat) : `${account(seat)} — linked to another home's login; run paseo-room verify`}>
-                <Pill theme={theme} tone={SEAT_TONE[seat.status]}>{SEAT_WORD[seat.status]}</Pill>
-              </SettingsRow>
-            ))}
-          {data === undefined ? null : <SettingsAction label="Checked" hint={new Date(data.checkedAt).toLocaleString()} actionLabel="Check again" disabled={busy} onPress={() => { setTick(tick + 1); }} />}
+            : seats.map(seat => {
+              const letter = letters.get(seat.providerId);
+              const line = `${accountLine(seat)}${letter === undefined ? '' : ` · account ${letter}`}`;
+              return (
+                <SettingsRow key={seat.providerId} label={`${sentence(seat.role)} · ${agentLabel(seat.agent)}`}
+                  hint={seat.shared === undefined ? line : `${line} — linked to another home's login; run paseo-room verify`}>
+                  <Pill theme={theme} tone={SEAT_TONE[seat.status]}>{SEAT_WORD[seat.status]}</Pill>
+                </SettingsRow>
+              );
+            })}
+          {letters.size === 0 ? null : <SettingsRow label={`${String(new Set(letters.values()).size)} accounts`} hint={accountSplit(seats, letters)} />}
+          {data === undefined || data.seats.length > 0 ? null : <SettingsRow label="No seats" hint="The room manifest lists no seats." />}
         </SettingsSection>
-        {data === undefined || data.seats.length > 0 ? null : <Card theme={theme}><Text style={{ color: theme.colors.foregroundMuted, padding: SPACE.lg }}>The room manifest lists no seats.</Text></Card>}
-        <PeerThinkingSection />
-        <SeatContextSection />
+        <PeerThinkingSection theme={theme} />
+        <SeatContextSection theme={theme} />
       </Page>
     </ScrollView>
   );

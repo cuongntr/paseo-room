@@ -121,9 +121,9 @@ export function Pill(props: { readonly theme: Theme; readonly tone?: Tone; reado
   );
 }
 
-export function Dot(props: { readonly theme: Theme; readonly tone: Tone; readonly size?: number }) {
-  const size = props.size ?? 8;
-  return <View style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: toneColor(props.theme, props.tone) }} />;
+/** One line of small muted text, for a row's time or a quiet note. */
+export function MutedText(props: { readonly theme: Theme; readonly children: string }) {
+  return <Text numberOfLines={1} style={{ color: props.theme.colors.foregroundMuted, fontSize: 11.5 }}>{props.children}</Text>;
 }
 
 export function Glyph(props: { readonly theme: Theme; readonly name: string; readonly tone?: Tone; readonly size?: number; readonly boxed?: boolean }) {
@@ -287,5 +287,87 @@ export function Facts(props: { readonly theme: Theme; readonly items: readonly (
         </View>
       ))}
     </View>
+  );
+}
+
+/**
+ * A project's status as a mark whose shape carries it, not only its colour: a triangle needs a
+ * look, a haloed dot works, a dot is idle, a ring is asleep or has no live seat.
+ */
+export function StatusMark(props: { readonly theme: Theme; readonly status: 'attention' | 'working' | 'idle' | 'asleep' | 'inactive' }) {
+  const { colors } = props.theme;
+  let mark: ReactNode;
+  if (props.status === 'attention') mark = <Icon name="TriangleAlert" size={13} color={colors.statusWarning} />;
+  else if (props.status === 'working') {
+    mark = (
+      <View style={{ width: 15, height: 15, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: tint(colors.statusSuccess, 0.25) }}>
+        <View style={{ width: 9, height: 9, borderRadius: 5, backgroundColor: colors.statusSuccess }} />
+      </View>
+    );
+  }
+  else if (props.status === 'idle') mark = <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: colors.foregroundMuted }} />;
+  else mark = <View style={{ width: 9, height: 9, borderRadius: 5, borderWidth: 1.5, borderColor: colors.foregroundMuted, opacity: props.status === 'inactive' ? 0.6 : 1 }} />;
+  return <View accessibilityLabel={props.status} style={{ width: 15, height: 15, alignItems: 'center', justifyContent: 'center' }}>{mark}</View>;
+}
+
+/**
+ * How full a seat's context is, as a short bar with its percent, and a tick at the mark that
+ * matters for it (rotation, else compaction). Toned like the context line.
+ */
+export function Meter(props: { readonly theme: Theme; readonly percent: number; readonly mark?: number | null; readonly tone: Tone; readonly width?: number }) {
+  const { colors } = props.theme;
+  const width = props.width ?? 56;
+  const fill = props.tone === 'neutral' ? colors.foregroundMuted : toneColor(props.theme, props.tone);
+  const at = (value: number): number => Math.round((width * Math.max(0, Math.min(100, value))) / 100);
+  const mark = props.mark ?? null;
+  return (
+    <View accessibilityLabel={`context ${String(props.percent)}%${mark === null ? '' : `, mark ${String(mark)}%`}`} style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+      <View style={{ width: width + 2, height: 5, borderRadius: 3, backgroundColor: colors.surface2, borderWidth: 1, borderColor: colors.border }}>
+        <View style={{ width: at(props.percent), height: 3, borderRadius: 2, backgroundColor: fill }} />
+        {mark === null ? null : <View style={{ position: 'absolute', left: at(mark) - 1, top: -3, width: 1.5, height: 9, backgroundColor: colors.foreground, opacity: 0.55 }} />}
+      </View>
+      <Text style={{ color: props.tone === 'neutral' ? colors.foregroundMuted : fill, fontSize: 11.5, fontVariant: ['tabular-nums'], minWidth: 30 }}>{`${String(props.percent)}%`}</Text>
+    </View>
+  );
+}
+
+/** A toggle as a pill: lit when on, fixed when it cannot be changed. */
+export function Chip(props: { readonly theme: Theme; readonly label: string; readonly on: boolean; readonly onPress?: () => void; readonly fixed?: boolean; readonly tone?: Tone; readonly note?: string }) {
+  const { colors } = props.theme;
+  const color = toneColor(props.theme, props.tone ?? 'accent');
+  const inactive = props.fixed === true || props.onPress === undefined;
+  return (
+    <Pressable onPress={inactive ? undefined : props.onPress} accessibilityRole="switch" accessibilityLabel={props.label} accessibilityState={{ checked: props.on, disabled: inactive }}
+      style={state => ({
+        flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, borderWidth: 1,
+        borderColor: props.on ? tint(color, 0.55) : colors.border,
+        backgroundColor: props.on ? tint(color, props.fixed === true ? 0.1 : 0.16) : (state.pressed || hovered(state)) && !inactive ? colors.surface2 : 'transparent',
+      })}>
+      {props.on ? <Icon name={props.fixed === true ? 'Lock' : 'Check'} size={11} color={color} /> : null}
+      <Text style={{ color: props.on ? color : colors.foregroundMuted, fontSize: 12.5, fontWeight: '500' }}>{props.label}</Text>
+      {props.note === undefined ? null : <Text style={{ color: colors.foregroundMuted, fontSize: 11 }}>{props.note}</Text>}
+    </Pressable>
+  );
+}
+
+/** A small heading inside a card, above the rows it groups. */
+export function GroupLabel(props: { readonly theme: Theme; readonly children: ReactNode; readonly first?: boolean }) {
+  const { colors } = props.theme;
+  return (
+    <View style={{ paddingHorizontal: SPACE.lg, paddingTop: props.first === true ? SPACE.sm : SPACE.md, paddingBottom: 4, borderTopWidth: props.first === true ? 0 : 1, borderColor: colors.border, backgroundColor: tint(colors.surface2, 0.4) }}>
+      <Text style={{ color: colors.foregroundMuted, fontSize: 11.5, fontWeight: '600', letterSpacing: 0.3 }}>{props.children}</Text>
+    </View>
+  );
+}
+
+/** Quiet pressable text, for a secondary way in such as *How it works*. */
+export function TextLink(props: { readonly theme: Theme; readonly label: string; readonly icon?: string; readonly onPress: () => void }) {
+  const { colors } = props.theme;
+  return (
+    <Pressable onPress={props.onPress} accessibilityRole="link" accessibilityLabel={props.label}
+      style={state => ({ flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-start', paddingVertical: 4, opacity: state.pressed || hovered(state) ? 1 : 0.8 })}>
+      {props.icon === undefined ? null : <Icon name={props.icon} size={13} color={colors.foregroundMuted} />}
+      <Text style={{ color: colors.foregroundMuted, fontSize: 12.5 }}>{props.label}</Text>
+    </Pressable>
   );
 }
