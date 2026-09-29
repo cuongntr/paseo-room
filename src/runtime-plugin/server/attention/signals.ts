@@ -7,7 +7,7 @@
  * a model. A fact the Observer does not have never makes a condition true.
  */
 import type { AttentionSettings } from '../../shared/attention.js';
-import { contextPercent, formatTokens, type SeatContextSettings } from '../../shared/seat-context.js';
+import { appliedMark, contextPercent, formatTokens, type SeatContextSettings } from '../../shared/seat-context.js';
 import type { Observer, Seat } from './observer.js';
 
 export type SignalKind =
@@ -237,17 +237,17 @@ function projectQuiet(ctx: SignalContext): Condition[] {
 /**
  * A live Lead whose context has reached its rotation mark (seat context delta K-D6). A fact, not
  * advice. The evidence is the mark, not the figure, so a context that keeps growing restates the
- * open incident rather than counting a new one.
+ * open incident rather than counting a new one. A Lead whose window the mark does not apply on is
+ * never reported (K-D2).
  */
 function contextHigh(ctx: SignalContext): Condition[] {
-  const mark = ctx.budgets.lead.rotateAtPercent;
-  if (mark === null) return [];
   const found: Condition[] = [];
   for (const lead of ctx.observer.seats()) {
     if (lead.role !== 'lead' || lead.state === 'archived' || lead.usage === null) continue;
     const { used, max } = lead.usage;
+    const mark = appliedMark(ctx.budgets.lead.rotateAtPercent, max);
     const percent = contextPercent(used, max);
-    if (percent < mark) continue;
+    if (mark === null || percent < mark) continue;
     found.push({
       key: `context-high:${lead.agentId}`, kind: 'context-high', level: 'digest', projectKey: lead.project.key, subjects: [lead.agentId],
       ...both(label => `${label(lead)} has used ${String(percent)}% of its context (${formatTokens(used)} of ${formatTokens(max)}), past the ${String(mark)}% rotation mark.`),

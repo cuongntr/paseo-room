@@ -14,7 +14,7 @@
  * session, which the creation hook never sees.
  */
 import type { PluginBeforeRequests, PluginSessionOpenRequest } from '@getpaseo/plugin/server';
-import { COMPACT_WINDOW_ENV, compactMarkFor, compactWindow, type SeatContextSettings } from '../shared/seat-context.js';
+import { COMPACT_WINDOW_ENV, compactMarkFor, markTokens, type SeatContextSettings } from '../shared/seat-context.js';
 import type { CorrelationRegistry } from './correlations.js';
 import type { PaseoPort } from './paseo-port.js';
 import type { Recognition } from './recognition.js';
@@ -115,7 +115,7 @@ async function markedEnv(provider: string, env: Readonly<Record<string, string>>
     const percent = compactMarkFor(deps.settings(), seat);
     if (percent === null) return undefined;
     const chosen = (await model()) ?? (await deps.paseo.resolveLaunch(provider))?.model;
-    return chosen === undefined ? undefined : compactWindow(percent, await deps.paseo.modelWindow(provider, chosen));
+    return chosen === undefined ? undefined : markTokens(percent, await deps.paseo.modelWindow(provider, chosen));
   };
   const limit = deps.lookupMs ?? LOOKUP_MS;
   try {

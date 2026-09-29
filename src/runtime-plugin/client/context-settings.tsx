@@ -10,7 +10,7 @@ import { SettingsRow, SettingsSection, SettingsSelect } from '@getpaseo/plugin/c
 import { useState } from 'react';
 import { Text, View } from 'react-native';
 import {
-  DEFAULT_SEAT_CONTEXT_SETTINGS, MAX_MARK_PERCENT, MIN_COMPACT_WINDOW, MIN_MARK_PERCENT, SEAT_CONTEXT_SETTINGS, compactWindow, formatTokens,
+  DEFAULT_SEAT_CONTEXT_SETTINGS, MAX_MARK_PERCENT, MIN_MARK_PERCENT, MIN_MARK_TOKENS, SEAT_CONTEXT_SETTINGS, formatTokens, markTokens,
   type SeatContextSettings,
 } from '../shared/seat-context.js';
 import { tint, type Theme } from './kit.js';
@@ -20,7 +20,9 @@ type Budgets = SeatContextSettings['budgets'];
 const OFF = 'off';
 const PRESETS = Array.from({ length: (MAX_MARK_PERCENT - MIN_MARK_PERCENT) / 5 + 1 }, (_, index) => MIN_MARK_PERCENT + index * 5);
 /** The window sizes room Claude models come in. */
-const WINDOWS = [1_000_000, 200_000];
+const CLAUDE_WINDOWS = [1_000_000, 200_000];
+/** The Lead's report mark reaches every agent, and Codex and Pi models run 272k. */
+const LEAD_WINDOWS = [1_000_000, 272_000, 200_000];
 
 function options(current: number | null): { label: string; value: string }[] {
   const marks = [...new Set([...PRESETS, ...(current === null ? [] : [current])])].sort((a, b) => a - b);
@@ -29,15 +31,27 @@ function options(current: number | null): { label: string; value: string }[] {
 
 const parse = (value: string): number | null => (value === OFF ? null : Number(value));
 
+/** What a mark comes to on each window: `400k on a 1M model; not applied on a 272k or 200k model (below 150k)`. */
+function onWindows(percent: number, windows: readonly number[]): string {
+  const applied: string[] = [];
+  const not: string[] = [];
+  for (const size of windows) {
+    const tokens = markTokens(percent, size);
+    if (tokens === undefined) not.push(formatTokens(size));
+    else applied.push(`${formatTokens(tokens)} on a ${formatTokens(size)} model`);
+  }
+  const skipped = not.length === 0 ? [] : [`not applied on a ${not.join(' or ')} model (below ${formatTokens(MIN_MARK_TOKENS)})`];
+  return [applied.join(', '), ...skipped].filter(part => part !== '').join('; ');
+}
+
+function reportHint(percent: number | null): string {
+  if (percent === null) return 'Off: no Lead is reported, and only you replace one.';
+  return `Past it, the Lead's Supervisor is told once and the panel shows it, so you can start a fresh Lead. Applies at once: ${onWindows(percent, LEAD_WINDOWS)}.`;
+}
+
 function compactHint(percent: number | null): string {
   if (percent === null) return 'Off: the agent compacts at its own default.';
-  const on = WINDOWS.map(window => {
-    const tokens = compactWindow(percent, window);
-    return tokens === undefined
-      ? `not applied on a ${formatTokens(window)} model (below ${formatTokens(MIN_COMPACT_WINDOW)})`
-      : `${formatTokens(tokens)} on a ${formatTokens(window)} model`;
-  });
-  return `Claude compacts at ${on.join(', ')}.`;
+  return `Claude compacts at ${onWindows(percent, CLAUDE_WINDOWS)}.`;
 }
 
 /** A window as zones: calm below the report mark, amber to the compact mark, red past it. */
@@ -97,12 +111,11 @@ export function SeatContextSection(props: { readonly theme: Theme }) {
       onValueChange={value => { save(budgets => set(budgets, parse(value))); }} />
   );
   return (
-    <SettingsSection title="Seat context" info="A share of each seat's own context window, applied to the model it runs.">
+    <SettingsSection title="Seat context" info={`A share of each seat's own context window, applied to the model it runs. A mark that comes to less than ${formatTokens(MIN_MARK_TOKENS)} there does not apply: the seat keeps its agent's own compaction, and a Lead is not reported.`}>
       <SettingsRow label="Lead" hint="Past the report mark its Supervisor is told and the panel shows it; at the compact mark Claude compacts.">
         <MarkScale theme={props.theme} report={lead.rotateAtPercent} compact={lead.compactAtPercent} />
       </SettingsRow>
-      {markRow('Lead · report at', lead.rotateAtPercent,
-        'Past it, the Lead\'s Supervisor is told once and the panel shows it, so you can start a fresh Lead. Applies at once.',
+      {markRow('Lead · report at', lead.rotateAtPercent, reportHint(lead.rotateAtPercent),
         (budgets, rotateAtPercent) => ({ ...budgets, lead: { ...budgets.lead, rotateAtPercent } }))}
       {markRow('Lead · compact at', lead.compactAtPercent, compactHint(lead.compactAtPercent),
         (budgets, compactAtPercent) => ({ ...budgets, lead: { ...budgets.lead, compactAtPercent } }))}

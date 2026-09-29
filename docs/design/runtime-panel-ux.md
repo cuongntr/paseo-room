@@ -252,9 +252,11 @@ belongs to an observed project, and falls back to Room otherwise. Row order:
     hint says it is never offered.
   - *Seat context*: a bar showing the Lead's marks as zones of its context — calm below *report at*,
     amber to *compact at*, red past it — then one select per mark: Lead *report at* and *compact at*,
-    Supervisor and Peer *compact at*, each *Off* or 10–95% in 5-point steps. Each compact hint gives
-    the mark in tokens on a 1M and a 200k model, and a notice row says a compact mark reaches a
-    Claude seat when its session next opens, while Codex and Pi keep their own compaction.
+    Supervisor and Peer *compact at*, each *Off* or 10–95% in 5-point steps. Each hint gives the mark
+    in tokens per window: *report at* on a 1M, 272k and 200k model, *compact at* on a 1M and a 200k
+    Claude model, and *not applied* where it comes to less than 150k. A notice row says a compact
+    mark reaches a Claude seat when its session next opens, while Codex and Pi keep their own
+    compaction.
 - **Role pill (every seat's composer).** Paseo 0.9 draws a tab icon only for a built-in or
   plugin-registered provider, so a room seat's tab shows the generic agent icon, and a plugin cannot
   decorate tabs. Instead, each live seat gets a composer pill that names its role: *Supervisor*
@@ -346,3 +348,4 @@ also titles its Peer and worktree.
 | 2026-09-27 | Bytes | Seat context K2: **Replace Lead…** in the Seats header and on a `context-high` item, a three-step modal (why and preflight, the handoff to review, confirm), a progress callout on the project and a *replacing Lead* pill on its row, and **Finish replacing Lead** in place of *Start Lead* while a replacement waits. |
 | 2026-09-28 | Bytes | Seat rows and role pills say which checkout each Lead and Peer works in — a linked worktree with its branch and path, or the main checkout with its branch — so a worktree Peer can be told apart from one in the Lead's folder. |
 | 2026-09-29 | Bytes | Review in live use (§2): one-line project rows with shape-coded status marks and an *asleep* state, inactive projects folded, colour only for exceptions; a Supervisor line in the project header; the runtime record shown only when something is wrong; recent activity; assignments newest first with times, *Open / Finished* and finished ones by day; an assignment screen titled by its gist with its history; context bars; Room attention reordered by setup with a 24-hour letter tally; Room seats with account letters and thinking chips, reachable from the panel. Panel-only read fields (§6). |
+| 2026-09-29 | Bytes | *Seat context* hints give *report at* in tokens too, and say *not applied* where a mark comes to less than 150k on a window (seat context delta K-D2, amended). |

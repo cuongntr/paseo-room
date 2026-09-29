@@ -467,6 +467,14 @@ describe('a Supervisor replacing its Lead (K-D9)', () => {
     expect(agent('lead-1').prompts).toEqual([]);
 
     context = DEFAULT_SEAT_CONTEXT_SETTINGS;
+    // On a 272k window the 30% mark comes to 81k, below the 150k floor, so it does not apply.
+    agent('lead-1').usage = { used: 200_000, max: 272_000 };
+    await engine.resync(['lead-1']);
+    const small = await succession.startForSupervisor('sup', projectKey());
+    expect(small).toMatchObject({ ok: false, code: 'rotation_off' });
+    expect(small.ok ? '' : small.message).toContain('does not apply');
+    expect(agent('lead-1').prompts).toEqual([]);
+
     const id = await startedBySupervisor('Keep the chart finding.');
     expect(agent('lead-1').prompts.at(-1)?.text).toBe(`[paseo-room succession ${id}]\n\n${TEXT.request}\n\nSupervisor's note: Keep the chart finding.`);
     expect(await succession.startedBy(id, 'sup')).toBe(true);

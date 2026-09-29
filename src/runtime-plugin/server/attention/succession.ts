@@ -16,7 +16,7 @@
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { MAX_HANDOFF_BYTES, utf8Bytes } from '../../shared/limits.js';
-import { compactMarkFor, contextPercent, rotateMark, type SeatContextSettings } from '../../shared/seat-context.js';
+import { MIN_MARK_TOKENS, appliedMark, compactMarkFor, contextPercent, formatTokens, rotateMark, type SeatContextSettings } from '../../shared/seat-context.js';
 import type { Controller } from '../controller.js';
 import { settled } from '../domain/state.js';
 import { quietlySettled } from '../domain/views.js';
@@ -278,7 +278,7 @@ export class Succession {
     const notes: string[] = [];
     if (ledger.retained > 0) notes.push(`${String(ledger.retained)} settled assignment(s) keep a worktree; close each from its assignment view once its work is no longer needed.`);
     const percent = lead.usage === null ? null : contextPercent(lead.usage.used, lead.usage.max);
-    const mark = compactMarkFor(this.deps.contextSettings(), lead);
+    const mark = appliedMark(compactMarkFor(this.deps.contextSettings(), lead), lead.usage?.max);
     if (percent !== null && mark !== null && percent >= mark - NEAR_COMPACT_POINTS) {
       notes.push(`Its context is at ${String(percent)}%, near its ${String(mark)}% compact mark: it may compact while writing the handoff.`);
     }
@@ -389,10 +389,19 @@ export class Succession {
     const mark = rotateMark(this.deps.contextSettings(), 'lead');
     if (mark === null) return refuse('rotation_off', 'Lead rotation is turned off in Settings › Room seats, so only Human replaces a Lead.');
     // Judged on the context the preflight has just read from Paseo, not on the last sweep's figure.
-    const admit = ({ lead: { contextPercent: percent } }: SuccessionPreflight): Blocker | undefined => (percent !== null && percent >= mark ? undefined : {
-      code: 'rotation_not_reached',
-      message: `${seatName(lead)} is ${percent === null ? 'at an unknown share of its context' : `at ${String(percent)}% of its context`}, not past its ${String(mark)}% rotation mark; replacing it earlier is Human's decision.`,
-    });
+    const admit = ({ lead: { contextPercent: percent } }: SuccessionPreflight): Blocker | undefined => {
+      const max = attention.observer.seat(lead.agentId)?.usage?.max;
+      if (percent !== null && max !== undefined && appliedMark(mark, max) === null) {
+        return {
+          code: 'rotation_off',
+          message: `On ${seatName(lead)}'s ${formatTokens(max)} window the ${String(mark)}% rotation mark comes to less than ${formatTokens(MIN_MARK_TOKENS)} and does not apply, so only Human replaces it.`,
+        };
+      }
+      return percent !== null && percent >= mark ? undefined : {
+        code: 'rotation_not_reached',
+        message: `${seatName(lead)} is ${percent === null ? 'at an unknown share of its context' : `at ${String(percent)}% of its context`}, not past its ${String(mark)}% rotation mark; replacing it earlier is Human's decision.`,
+      };
+    };
     const started = await this.start({ leadAgentId: lead.agentId, reason: 'context', note, initiator: { role: 'supervisor', agentId: supervisorAgentId }, admit });
     return started.ok ? { ok: true, value: { successionId: started.value.successionId, leadAgentId: lead.agentId } } : started;
   }

@@ -8,7 +8,7 @@ import { ROLES } from '../src/roles.js';
 import { renderRuntimeManifestFile } from '../src/runtime.js';
 import { DEFAULT_ATTENTION_SETTINGS, type AttentionSettings } from '../src/runtime-plugin/shared/attention.js';
 import {
-  COMPACT_WINDOW_ENV, DEFAULT_SEAT_CONTEXT_SETTINGS, compactWindow, contextPercent, formatTokens, seatContextSettingsSchema, type SeatContextSettings,
+  COMPACT_WINDOW_ENV, DEFAULT_SEAT_CONTEXT_SETTINGS, appliedMark, contextPercent, formatTokens, markTokens, seatContextSettingsSchema, type SeatContextSettings,
 } from '../src/runtime-plugin/shared/seat-context.js';
 import { AttentionEngine } from '../src/runtime-plugin/server/attention/engine.js';
 import { Observer } from '../src/runtime-plugin/server/attention/observer.js';
@@ -78,17 +78,27 @@ describe('seat context settings', () => {
     expect(seatContextSettingsSchema.safeParse({ budgets: { supervisor: { compactAtPercent: 5 } } }).success).toBe(false);
   });
 
-  it('converts a mark to tokens against the model window, rounded down, never below 100k', () => {
-    expect(compactWindow(50, 1_000_000)).toBe(500_000);
-    expect(compactWindow(29, 1_000_000)).toBe(290_000);
-    expect(compactWindow(55, 200_000)).toBe(110_000);
-    expect(compactWindow(50, 200_000)).toBe(100_000);
-    expect(compactWindow(45, 200_000)).toBeUndefined();
-    expect(compactWindow(50, 199_999)).toBeUndefined();
-    expect(compactWindow(33, 333_333)).toBe(109_000);
-    expect(compactWindow(50, undefined)).toBeUndefined();
-    expect(compactWindow(50, 0)).toBeUndefined();
-    expect(compactWindow(50, Number.NaN)).toBeUndefined();
+  it('converts a mark to tokens against the model window, rounded down, never below 150k', () => {
+    expect(markTokens(50, 1_000_000)).toBe(500_000);
+    expect(markTokens(29, 1_000_000)).toBe(290_000);
+    expect(markTokens(15, 1_000_000)).toBe(150_000);
+    expect(markTokens(14, 1_000_000)).toBeUndefined();
+    expect(markTokens(60, 272_000)).toBe(163_000);
+    expect(markTokens(40, 272_000)).toBeUndefined();
+    expect(markTokens(75, 200_000)).toBe(150_000);
+    expect(markTokens(50, 200_000)).toBeUndefined();
+    expect(markTokens(75, 199_999)).toBeUndefined();
+    expect(markTokens(50, 333_333)).toBe(166_000);
+    expect(markTokens(50, undefined)).toBeUndefined();
+    expect(markTokens(50, 0)).toBeUndefined();
+    expect(markTokens(50, Number.NaN)).toBeUndefined();
+  });
+
+  it('keeps a mark only on a window it applies on', () => {
+    expect(appliedMark(30, 1_000_000)).toBe(30);
+    expect(appliedMark(30, 272_000)).toBeNull();
+    expect(appliedMark(null, 1_000_000)).toBeNull();
+    expect(appliedMark(30, undefined)).toBeNull();
   });
 
   it('shows a percent that has reached a mark only once it has, and tokens as people say them', () => {
@@ -128,8 +138,10 @@ describe('Claude compact mark at session open', () => {
     paseo.peerModels['claude-lead'] = 'claude-sonnet-5';
     expect(await compactMarkEnv(open('claude-lead', 'create'), deps())).toBeUndefined();
     expect(paseo.calls).toEqual([]);
-    expect((await compactMarkEnv(open('claude-lead', 'refresh'), deps()))?.env[COMPACT_WINDOW_ENV]).toBe('100000');
-    expect((await compactMarkEnv(open('claude-lead', 'import'), deps()))?.env[COMPACT_WINDOW_ENV]).toBe('100000');
+    // The profile's 200k model: 80% of it is 160k.
+    const settings = budgets(draft => { draft.lead.compactAtPercent = 80; });
+    expect((await compactMarkEnv(open('claude-lead', 'refresh'), deps(settings)))?.env[COMPACT_WINDOW_ENV]).toBe('160000');
+    expect((await compactMarkEnv(open('claude-lead', 'import'), deps(settings)))?.env[COMPACT_WINDOW_ENV]).toBe('160000');
   });
 
   it('leaves every other session exactly as it is', async () => {
@@ -141,9 +153,10 @@ describe('Claude compact mark at session open', () => {
     expect(await compactMarkEnv(open('claude-lead', 'resume', { purpose: 'history' }), deps())).toBeUndefined();
     expect(await compactMarkEnv(open('claude-lead', 'resume', { env: { [COMPACT_WINDOW_ENV]: '300000' } }), deps())).toBeUndefined();
     expect(await compactMarkEnv(open('claude-lead'), deps(budgets(draft => { draft.lead.compactAtPercent = null; })))).toBeUndefined();
-    // A mark below 100k on this model, and a model Paseo lists no window for.
+    // A mark below 150k on this model (the default 50% of 200k is 100k, 70% is 140k), and a model Paseo lists no window for.
     agent.model = 'claude-sonnet-5';
-    expect(await compactMarkEnv(open('claude-lead'), deps(budgets(draft => { draft.lead.rotateAtPercent = 20; draft.lead.compactAtPercent = 45; })))).toBeUndefined();
+    expect(await compactMarkEnv(open('claude-lead'), deps())).toBeUndefined();
+    expect(await compactMarkEnv(open('claude-lead'), deps(budgets(draft => { draft.lead.compactAtPercent = 70; })))).toBeUndefined();
     agent.model = 'claude-unlisted';
     expect(await compactMarkEnv(open('claude-lead'), deps())).toBeUndefined();
   });
@@ -177,7 +190,9 @@ describe('Claude compact mark at session open', () => {
     });
     // Chosen in Paseo over the profile's 200k model: its own 1M window counts.
     expect((await compactMarkOnCreate(create('claude-opus-5-5', { KEEP: '1' }), deps()))?.env).toEqual({ KEEP: '1', [COMPACT_WINDOW_ENV]: '500000' });
-    expect((await compactMarkOnCreate(create(), deps()))?.env).toEqual({ [COMPACT_WINDOW_ENV]: '100000' });
+    // The profile's 200k model: the default 50% comes to 100k, below the floor, and 80% to 160k.
+    expect(await compactMarkOnCreate(create(), deps())).toBeUndefined();
+    expect((await compactMarkOnCreate(create(), deps(budgets(draft => { draft.lead.compactAtPercent = 80; }))))?.env).toEqual({ [COMPACT_WINDOW_ENV]: '160000' });
     expect(await compactMarkOnCreate(create('claude-opus-5-5', { [COMPACT_WINDOW_ENV]: '300000' }), deps())).toBeUndefined();
     expect(await compactMarkOnCreate({ config: { provider: 'claude-lead', cwd: '/repo', model: 'claude-opus-5-5', internal: true } }, deps())).toBeUndefined();
     expect(await compactMarkOnCreate({ config: { provider: 'codex-lead', cwd: '/repo', model: 'gpt-5' } }, deps())).toBeUndefined();
@@ -306,16 +321,27 @@ describe('context-high', () => {
     expect(view?.compaction).toEqual({ lastAt: clock.toISOString(), lastAgo: '0 min', lastTrigger: 'auto', lastPreTokens: 498_000, seen: 1 });
   });
 
-  it('shows a compact mark only on a seat it reaches', async () => {
-    paseo.addAgent({ id: 'codex', provider: 'codex-lead', cwd: join(root, 'desk'), usage: { used: 220_000, max: 400_000 } });
-    paseo.addAgent({ id: 'small', provider: 'claude-lead', cwd: join(root, 'desk'), usage: { used: 90_000, max: 150_000 } });
+  it('shows a mark only on a seat it reaches and whose window it applies on', async () => {
+    paseo.addAgent({ id: 'codex', provider: 'codex-lead', cwd: join(root, 'desk'), usage: { used: 330_000, max: 600_000 } });
+    paseo.addAgent({ id: 'small', provider: 'claude-lead', cwd: join(root, 'desk'), usage: { used: 120_000, max: 200_000 } });
     await settle();
     const seats = engine.roomView().projects.flatMap(project => project.seats);
     const marks = (agentId: string) => seats.find(seat => seat.agentId === agentId)?.context;
     expect(marks('lead')).toMatchObject({ rotateAtPercent: 30, compactAtPercent: 50 });
-    // Codex keeps its own compaction; 50% of a 150k window is below the 100k floor.
+    // Codex keeps its own compaction; on a 200k window 30% and 50% come to 60k and 100k, below the 150k floor.
     expect(marks('codex')).toMatchObject({ percent: 55, rotateAtPercent: 30, compactAtPercent: null });
-    expect(marks('small')).toMatchObject({ percent: 60, compactAtPercent: null });
+    expect(marks('small')).toMatchObject({ percent: 60, rotateAtPercent: null, compactAtPercent: null });
+  });
+
+  it('never reports a Lead on a window its mark does not apply on', async () => {
+    paseo.addAgent({ id: 'small', provider: 'codex-lead', cwd: join(root, 'desk'), title: 'desk — Lead', usage: { used: 200_000, max: 272_000 } });
+    await engine.onCreated('small');
+    await settle();
+    expect(open()).toEqual([]);
+    // Raised to 60%, the mark comes to 163k there and applies.
+    context = seatContextSettingsSchema.parse({ budgets: { lead: { rotateAtPercent: 60, compactAtPercent: null } } });
+    await settle();
+    expect(open()).toMatchObject([{ subjects: ['small'] }]);
   });
 
   it('closes when the Lead is archived, tells the panel when there is no Supervisor, and stays silent with no mark', async () => {

@@ -15,8 +15,13 @@ export const successionIdSchema = z.string().regex(SUCCESSION_ID);
 /** Claude Code's variable for the window its auto-compaction works against, in tokens. */
 export const COMPACT_WINDOW_ENV = 'CLAUDE_CODE_AUTO_COMPACT_WINDOW';
 
-/** The smallest compact window applied: the documented values of `autoCompactWindow` start here. */
-export const MIN_COMPACT_WINDOW = 100_000;
+/**
+ * The smallest mark applied, in tokens (K-D2, amended 2026-09-29). A mark that comes to less on a
+ * seat's window does not apply to that seat: it keeps its agent's own compaction and is not
+ * reported. 150k is above where a Lead starts (25–50k fresh, 88k for a successor that checked its
+ * handoff) with room left to work, and above the 100k where Claude's `autoCompactWindow` values start.
+ */
+export const MIN_MARK_TOKENS = 150_000;
 
 export const MIN_MARK_PERCENT = 10;
 export const MAX_MARK_PERCENT = 95;
@@ -47,26 +52,31 @@ export const DEFAULT_SEAT_CONTEXT_SETTINGS: SeatContextSettings = seatContextSet
 /**
  * The compact mark that reaches a seat, in percent: its role's, for a Claude seat, whose agent reads
  * `COMPACT_WINDOW_ENV`; null for any other agent, which keeps its own compaction (K-D3, §4.3).
- * Whether it fits the seat's window is `compactWindow`'s to say.
+ * Whether it applies on the seat's window is `markTokens`'s to say.
  */
 export function compactMarkFor(settings: SeatContextSettings, seat: { readonly agent: RuntimeAgent; readonly role: RuntimeRole }): number | null {
   return seat.agent === 'claude' ? settings.budgets[seat.role].compactAtPercent : null;
 }
 
-/** A role's rotation mark in percent; only a Lead has one. */
+/** A role's rotation mark in percent; only a Lead has one. Whether it applies on its window is `appliedMark`'s to say. */
 export function rotateMark(settings: SeatContextSettings, role: RuntimeRole): number | null {
   return role === 'lead' ? settings.budgets.lead.rotateAtPercent : null;
 }
 
 /**
- * A compact mark as a window in tokens, rounded down to a thousand; undefined when the model's
- * window is unknown or the result falls below the smallest window applied.
+ * A mark in tokens on a window, rounded down to a thousand; undefined when the window is unknown or
+ * the mark comes to less than `MIN_MARK_TOKENS` on it.
  */
-export function compactWindow(percent: number, windowTokens: number | undefined): number | undefined {
+export function markTokens(percent: number, windowTokens: number | undefined): number | undefined {
   if (windowTokens === undefined || !Number.isFinite(windowTokens) || windowTokens <= 0) return undefined;
   // Integer arithmetic first: (29 / 100) * 1,000,000 is 289,999.99… in floating point.
   const tokens = Math.floor((percent * windowTokens) / 100_000) * 1_000;
-  return tokens < MIN_COMPACT_WINDOW ? undefined : tokens;
+  return tokens < MIN_MARK_TOKENS ? undefined : tokens;
+}
+
+/** `mark` where it applies on a window of `windowTokens`, and null where it does not. */
+export function appliedMark(mark: number | null, windowTokens: number | undefined): number | null {
+  return mark !== null && markTokens(mark, windowTokens) !== undefined ? mark : null;
 }
 
 /** Used context as a whole percent, rounded down so a figure shown at a mark has reached it. */

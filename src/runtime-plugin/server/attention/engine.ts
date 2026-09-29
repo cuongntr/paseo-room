@@ -8,7 +8,7 @@
  */
 import { homedir } from 'node:os';
 import type { AttentionSettings, SensorMode } from '../../shared/attention.js';
-import { DEFAULT_SEAT_CONTEXT_SETTINGS, compactMarkFor, compactWindow, contextPercent, rotateMark, type SeatContextSettings } from '../../shared/seat-context.js';
+import { DEFAULT_SEAT_CONTEXT_SETTINGS, appliedMark, compactMarkFor, contextPercent, rotateMark, type SeatContextSettings } from '../../shared/seat-context.js';
 import type { GitEvidence } from '../git.js';
 import type { PaseoPort } from '../paseo-port.js';
 import type { Recognition } from '../recognition.js';
@@ -485,11 +485,6 @@ export class AttentionEngine {
   roomView(only?: readonly string[]): RoomView {
     const now = this.time;
     const budgets = this.contextSettings();
-    // A compact mark is shown only where it reaches the seat and fits its window, as the hooks apply it.
-    const applied = (seat: Seat, max: number): number | null => {
-      const mark = compactMarkFor(budgets, seat);
-      return mark !== null && compactWindow(mark, max) !== undefined ? mark : null;
-    };
     const seatView = (seat: Seat): SeatView => ({
       agentId: seat.agentId, role: seat.role, provider: seat.provider, title: seat.title, model: seat.model, thinking: seat.thinking, state: seat.state, cwd: seat.cwd,
       displayCwd: homeRelative(seat.cwd), workspaceId: seat.workspaceId, parentAgentId: seat.parentAgentId, pendingPermissions: seat.pending.size,
@@ -500,7 +495,9 @@ export class AttentionEngine {
       ...(seat.usage === null ? {} : {
         context: {
           used: seat.usage.used, max: seat.usage.max, percent: contextPercent(seat.usage.used, seat.usage.max),
-          rotateAtPercent: rotateMark(budgets, seat.role), compactAtPercent: applied(seat, seat.usage.max),
+          // A mark is shown only where it reaches the seat and applies on its window, as hooks and signals apply it.
+          rotateAtPercent: appliedMark(rotateMark(budgets, seat.role), seat.usage.max),
+          compactAtPercent: appliedMark(compactMarkFor(budgets, seat), seat.usage.max),
         },
       }),
       ...(seat.compaction === undefined ? {} : {

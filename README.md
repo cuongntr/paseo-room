@@ -656,6 +656,10 @@ npx paseo-room verify
     daemon restart, so Claude compacts at that share instead of near the end of a 1M window. An open
     session keeps what it opened with. Codex and Pi seats show their context and keep their own
     compaction.
+  - A mark applies to a seat only where it comes to at least 150k tokens on its window: at 30%, a
+    Lead on a 1M model is reported at 300k, but one on a 272k Codex or Pi model, or a 200k Claude
+    model, is not reported and keeps its agent's own compaction. The hints show what each mark comes
+    to per window.
 - **A runtime-dispatched Peer** is titled `<Disposition> · <outcome gist> · <assignment id>` (for
   example `Reviewer · Review the Docker Compose dev env… · asg_…`), and the runtime's notices to Lead
   name the assignment the same way. It gets exactly two tools, `ask` and `handoff`, for its own

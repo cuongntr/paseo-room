@@ -131,6 +131,23 @@ such as after a daemon restart. A live seat keeps the mark it opened with until 
 past a new compact mark compacts at its first turn after it reopens, and the settings screen says so
 before saving. The rotate mark applies at once, since it only reads Paseo's usage figure.
 
+**A mark applies only where it comes to at least 150k tokens** (amended 2026-09-29, on the owner's
+review of smaller windows). One percentage cannot suit every window. The defaults were measured on
+Opus 1M (§0), but what a Lead needs to start does not shrink with its window: a fresh Lead starts at
+25–50k, and the 2026-09-26 successor at 88k. So:
+- 30% of a 272k Codex or Pi window (81k) or of a 200k Claude window (60k) would report a Lead as
+  soon as it starts, and let its Supervisor replace each successor on arrival (K-D9);
+- 50% of a 200k window was exactly the old 100k compact floor, so it compacted a seat far earlier
+  than 45%, which fell below the floor and left the agent's own compaction.
+
+Where a mark comes to less, it does not apply to that seat:
+- the seat keeps its agent's own compaction;
+- its Lead is not reported (K-D6);
+- its Supervisor may not replace it (K-D9); Human still may.
+
+The panel shows only the marks that apply to a seat. On a 1M window nothing changes above 15%. A
+policy of its own for smaller windows waits for measured Codex and Pi Leads, with Q-K04's delta.
+
 ### K-D3 — Claude's compact mark is injected at session open by the runtime
 Claude Code reads `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, the same as the `autoCompactWindow` setting: the
 window, in tokens, that auto-compaction works against
@@ -257,7 +274,8 @@ Lead, at level `digest`:
   1M), past the 30% rotation mark`;
 - no advice, per attention §7.4.
 
-It closes when the context falls below the mark (after a compaction) or the Lead is archived.
+It closes when the context falls below the mark (after a compaction) or the Lead is archived. A Lead
+on a window where the mark comes to less than 150k is never reported (K-D2).
 Incidents live in memory, as for every attention signal, so a runtime restart reports a Lead still
 past its mark once more.
 `rotateAtPercent: null` turns the signal off; *Replace Lead* stays available either way, since it is
@@ -304,7 +322,8 @@ But none of that was enforced, and the handoffs left this machine's control. K-D
 Supervisor the guarded flow instead:
 - **Who and when.** Only the project's own Supervisor (A-D3), and only for its single live Lead
   once that Lead's context, read afresh from Paseo, is at or past its rotation mark. Below the
-  mark the runtime refuses `rotation_not_reached`; with the mark off, `rotation_off`. Any other
+  mark the runtime refuses `rotation_not_reached`; with the mark off, or on a window where it does
+  not apply (K-D2), `rotation_off`. Any other
   reason to replace a Lead remains Human's, so "never open another Lead for freshness or
   convenience" still holds.
 - **Same flow.** K-D5 unchanged: the preflight's quiet point, the fixed request, the handoff stored
@@ -447,8 +466,8 @@ In the host settings store, beside `attention` and `peer-effort`:
 Validation:
 - percent is an integer in 10–95;
 - `rotateAtPercent` is below `compactAtPercent` when both are set;
-- a compact mark converted to fewer than 100k tokens is refused, because the documented values of
-  `autoCompactWindow` start at 100k. Q-C2 confirms the floor.
+- a mark that comes to fewer than 150k tokens on a seat's window is not applied to that seat
+  (K-D2). The documented values of Claude's `autoCompactWindow` start at 100k, below that floor.
 
 Without a settings store, the defaults apply, as for attention.
 
@@ -651,7 +670,7 @@ cure.
 
 ### 11.1 Automated
 - **Unit:**
-  - percent-to-token conversion and settings validation (bounds, ordering, the 100k floor);
+  - percent-to-token conversion and settings validation (bounds, ordering, the 150k floor);
   - the `session_open` hook: only exact room Claude providers with a mark, nothing otherwise;
   - `context-high` raised once per crossing and closed on a fall or an archive;
   - each K-D5 step's refusal codes, idempotency and resume after a simulated reload;
@@ -739,6 +758,7 @@ cure.
 
 | Date | Author | Change |
 |---|---|---|
+| 2026-09-29 | Repository owner / Bytes | K-D2 amended after the owner's review of smaller windows: a mark applies only where it comes to at least 150k tokens on a seat's window. This replaces the compact mark's 100k floor and now covers the rotation mark too. A Lead on a 272k Codex or Pi window, or a 200k Claude one, is therefore not reported at the default marks and keeps its agent's own compaction. K-D6, K-D9, §5.3 and §11.1 follow. **Authority removed from Supervisor:** replacing a Lead whose window its rotation mark does not apply on; Human still may. |
 | 2026-09-28 | Repository owner / Bytes | Added K-D9 and phase K2S, approved by the repository owner after the live audit of 2026-09-28. The Supervisor had rotated the cmdb Lead five times by hand, with handoffs committed into the repository. A project's Supervisor may now run the K-D5 flow for its Lead once the runtime reports it past its rotation mark, and reviews the handoff itself. It is told when the handoff arrives, and sees only replacements it started. K-D4, K-D6, §5.2, §6, §10 and §13 amended; `supervisor.md` gains *Lead Succession*; the handoff request and kickoff name Human or the Supervisor. **Authority granted to Supervisor:** that one replacement, nothing else. |
 | 2026-09-27 | Bytes | Code review of K2:<br>• a successor that cannot take its kickoff no longer strands the project: cancel is accepted until completion, and a successor archived first is refused as `successor_gone`;<br>• a timeline that could not be read no longer fails a handoff, since only Paseo's answer that the request is absent does; the read covers 1,000 entries;<br>• a handoff request steered into a running turn is also kept out of letters and the sensor;<br>• a failed replacement stays on its project for a day;<br>• the runtime archives the seats it showed as archived with the Lead, since Paseo cascades nothing from a Lead that is not loaded;<br>• a room that could not be read afresh refuses as `paseo_unavailable`;<br>• turn ends no longer wait on the succession lane, nor does the room view;<br>• a kickoff whose delivery Paseo cannot confirm is not resent. |
 | 2026-09-27 | Bytes | Fresh-eyes review of K2. §8.2: *Replace Lead…* sits in the Seats header, since pressing a row opens its agent. At confirmation, a Lead that Human archived in Paseo after reading its handoff counts as archived. An unreadable succession record is skipped instead of failing the room view. |
