@@ -721,9 +721,12 @@ learn only when you ask it to check.
     incident on one beginning `INCIDENT:`. The first wakes the Supervisor and the second pages it,
     even for a turn it prompted, once per line, and the letter quotes those lines rather than the
     message's end.
+  - A Lead turn that read the Supervisor's `message_lead` answers it. The answer goes to the
+    Supervisor as soon as it is idle, with up to 1,500 characters of the Lead's message, even with
+    letters off, and no later turn replaces it.
   - Letters are held until the Supervisor is idle, batched into digests, and limited to a few wakes
-    an hour. They are never sent while the Supervisor holds a permission, because a send would
-    deny it.
+    an hour; a `NEEDS-HUMAN` line and an answer are never held back by that limit. Letters are never
+    sent while the Supervisor holds a permission or a question to you, because a send would deny it.
   - Each item has an id for `attention_feedback`, and a letter's own id rates every item in it. A
     letter is evidence, not an instruction: the Supervisor contract has it ask or nudge the Lead, or
     relay a question to you, and never direct a Peer.

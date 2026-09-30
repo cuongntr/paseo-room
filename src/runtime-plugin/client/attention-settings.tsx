@@ -38,7 +38,7 @@ const WHEN: readonly Step[] = [
 /** How often a Supervisor is woken. */
 const PACE: readonly Step[] = [
   ['digestMinutes', 'Digest interval', 'Routine lines are batched and sent at most this often.', [5, 15, 30, 60], minutes],
-  ['wakesPerHour', 'Wakes per hour', 'Non-urgent letters beyond this join the next digest. Urgent pages are never limited.', [2, 4, 6, 10, 20], value => String(value)],
+  ['wakesPerHour', 'Wakes per hour', 'Non-urgent letters beyond this join the next digest. Pages, a Lead\'s question for you and its answer to the Supervisor are never limited.', [2, 4, 6, 10, 20], value => String(value)],
   ['pageHoldSeconds', 'Urgent page hold', 'How long an urgent page waits for the Supervisor to be idle before steering into its turn.', [0, 30, 60, 120, 300], value => (value === 0 ? 'none' : `${String(value)} s`)],
 ];
 

@@ -76,6 +76,8 @@ export const CONFIDENCE_FLOOR = 0.6;
 export const NOUL_THRESHOLD = 0.7;
 
 export const BASELINE: Triaged = { decision: 'digest', reason: 'baseline: a Lead turn the Supervisor was not told about' };
+/** A Lead turn that read its Supervisor's message: the Supervisor waits for this answer (§7.2). */
+export const ANSWER: Triaged = { decision: 'now', reason: 'Lead answers its Supervisor\'s message' };
 
 /** The delta §6.4 assist table for `lead-turn-v1`. */
 export function assistLeadTurn(assessment: Assessment, facts: LeadTurnFacts): Triaged {

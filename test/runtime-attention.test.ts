@@ -10,6 +10,7 @@ import { AttentionEngine, homeRelative } from '../src/runtime-plugin/server/atte
 import { head } from '../src/runtime-plugin/server/attention/mask.js';
 import { leadMarkers } from '../src/runtime-plugin/server/attention/triage.js';
 import { rolePills } from '../src/runtime-plugin/client/pills.js';
+import { noticeText } from '../src/runtime-plugin/server/notices.js';
 import { GitEvidence } from '../src/runtime-plugin/server/git.js';
 import { Recognition } from '../src/runtime-plugin/server/recognition.js';
 import { FakePaseo, PARENT_AGENT_ID_LABEL } from './runtime-fake-paseo.js';
@@ -360,6 +361,63 @@ describe('attention signals and letters', () => {
     expect(text).toContain('NEEDS-HUMAN: "Q-a — keep the production copy or drop it?"');
     expect(text).toContain('"Waiting for the reviewer."');
     expect((await logRecords()).filter(record => record.type === 'lead-turn').map(record => record.decision)).toEqual(['now', 'digest']);
+  });
+
+  it('sends a Lead\'s answer to its Supervisor\'s message at once and in full, even when the Supervisor was busy or letters are off', async () => {
+    await settle();
+    const answer = `Understood: I keep the production copy. ${'Checked each table. '.repeat(30)}Shall I push the migration?`;
+    const answerTurn = (text: string) => [
+      { type: 'user_message' as const, text: noticeText('ntc_s1', 'Supervisor: Human chose to keep the production copy.') },
+      { type: 'assistant_message' as const, text },
+    ];
+    await engine.onTurnEnded('lead', { kind: 'completed' }, answerTurn(answer));
+    await settle();
+    expect(letters()).toHaveLength(1);
+    const text = letters()[0]?.text ?? '';
+    expect(text).toContain('[Lead answers its Supervisor\'s message]');
+    // Whole, where an ordinary letter carries only its tail.
+    expect(text).toContain(answer);
+    expect((await logRecords()).filter(record => record.type === 'lead-turn').map(record => [record.decision, record.reason]))
+      .toEqual([['now', 'Lead answers its Supervisor\'s message']]);
+
+    // Held while the Supervisor works, and a later progress turn does not replace it.
+    await setBusy('sup');
+    await engine.onTurnEnded('lead', { kind: 'completed' }, answerTurn('Pushed the migration.'));
+    await engine.onTurnEnded('lead', { kind: 'completed' }, [{ type: 'assistant_message', text: 'Waiting for the reviewer.' }]);
+    await settle();
+    expect(letters()).toHaveLength(1);
+    await setIdle('sup');
+    await settle();
+    expect(letters()).toHaveLength(2);
+    expect(letters()[1]?.text).toContain('Pushed the migration.');
+
+    // The Supervisor asked; with letters off it is still answered, and nothing else goes.
+    await setIdle('sup');
+    withSettings(draft => { draft.letters.enabled = false; });
+    await engine.onTurnEnded('lead', { kind: 'completed' }, answerTurn('Tagged v1.3.'));
+    await settle();
+    expect(letters()).toHaveLength(3);
+    expect(letters()[2]?.text).toContain('Tagged v1.3.');
+    expect(letters()[2]?.text).not.toContain('Waiting for the reviewer.');
+  });
+
+  it('wakes the Supervisor for a NEEDS-HUMAN line past the wake budget, while other now letters still wait for the digest', async () => {
+    withSettings(draft => { draft.delivery.wakesPerHour = 1; });
+    await settle();
+    await request('peer', 'perm-1');
+    advance(6 * MINUTE);
+    await settle();
+    expect(letters()).toHaveLength(1);
+    await setIdle('sup');
+    await engine.onTurnEnded('lead', { kind: 'completed' }, [{ type: 'assistant_message', text: 'NEEDS-HUMAN: keep the production copy or drop it?' }]);
+    await settle();
+    expect(letters()).toHaveLength(2);
+    expect(letters()[1]?.text).toContain('NEEDS-HUMAN: "keep the production copy or drop it?"');
+    await setIdle('sup');
+    await request('lead', 'perm-2');
+    advance(6 * MINUTE);
+    await settle();
+    expect(letters()).toHaveLength(2);
   });
 
   it('sends a digest early at ten lines, and at most once per digest interval', async () => {

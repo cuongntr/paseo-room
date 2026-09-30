@@ -62,6 +62,21 @@ export function noticeText(noticeId: string, text: string): string {
   return `[paseo-room notice ${noticeId}] ${text}`;
 }
 
+/** How the text of a Supervisor's `message_lead` notice begins. */
+export const SUPERVISOR_MESSAGE_PREFIX = 'Supervisor: ';
+
+/**
+ * Whether a prompt the runtime delivered carries a Supervisor's message: a notice whose text is one,
+ * or a bundle whose first line lists such a notice. Only the heads of the notices themselves are
+ * read, since a notice quotes what a Peer wrote.
+ */
+export function carriesSupervisorMessage(text: string): boolean {
+  const single = /^\[paseo-room notice (ntc_[\w-]+)\] /.exec(text)?.[1];
+  if (single !== undefined) return text.startsWith(noticeText(single, SUPERVISOR_MESSAGE_PREFIX));
+  const listed = BUNDLE_HEAD.exec(text.split('\n', 1)[0] ?? '')?.[1]?.split(' ') ?? [];
+  return listed.some(id => text.includes(`\n\n${noticeText(id, SUPERVISOR_MESSAGE_PREFIX)}`));
+}
+
 /** Two or more notices as one message: a line listing every id, then each notice as it would go alone. */
 export function bundleText(notices: readonly { readonly noticeId: string; readonly text: string }[]): string {
   return [`[paseo-room notices ${notices.map(notice => notice.noticeId).join(' ')}]`, ...notices.map(notice => noticeText(notice.noticeId, notice.text))].join('\n\n');

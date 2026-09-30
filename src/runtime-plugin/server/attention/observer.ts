@@ -11,6 +11,7 @@ import { basename, dirname, relative, resolve } from 'node:path';
 import type { PluginLifecycleEvents } from '@getpaseo/plugin/server';
 import type { RuntimeAgent, RuntimeRole } from '../../shared/policy.js';
 import type { GitEvidence } from '../git.js';
+import { carriesSupervisorMessage } from '../notices.js';
 import { toTimelineEntry, type AgentSnapshot, type PaseoPort, type SeatUsage, type TimelineEntry } from '../paseo-port.js';
 import type { Recognition } from '../recognition.js';
 import { leadMarkers, type Marker } from './triage.js';
@@ -64,6 +65,8 @@ export interface TurnFacts {
   readonly firstMessage?: string;
   /** A Lead's marker lines anywhere in the turn's own messages (Lead contract); none for another seat. */
   readonly markers: readonly Marker[];
+  /** A Lead turn that read its Supervisor's `message_lead`, alone or steered into the turn: it answers it. */
+  readonly answersSupervisor: boolean;
 }
 
 /** The compactions this runtime saw in a seat's turns (seat context delta K-D1). */
@@ -324,6 +327,7 @@ export class Observer {
       writes,
       // Every message of the turn, not only the last: an incident may be reported anywhere in it.
       markers: seat.role === 'lead' ? leadMarkers(said.map(entry => entry.text).join('\n')) : [],
+      answersSupervisor: seat.role === 'lead' && entries.some(entry => entry.kind === 'user' && carriesSupervisorMessage(entry.text)),
       ...(assistant === undefined ? {} : { lastMessage: assistant.text.slice(-MESSAGE_TAIL) }),
       ...(firstUser === undefined || firstUser.text.trim() === '' ? {} : { firstMessage: firstUser.text.slice(0, MESSAGE_TAIL) }),
     };

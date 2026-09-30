@@ -21,6 +21,7 @@ import { project } from '../domain/state.js';
 import {
   assignmentDetailView, findings, leanAssignmentView, projectStatusView, quietlySettled, revision, settledAssignmentLine, type StatusInput,
 } from '../domain/views.js';
+import { SUPERVISOR_MESSAGE_PREFIX } from '../notices.js';
 import { projectLeads } from '../ownership.js';
 import type { HandlerReply, OperationHandler } from '../spool.js';
 import { ProjectStore } from '../store/project.js';
@@ -192,7 +193,7 @@ export function createSupervisorHandlers(controller: Controller, attention: Atte
         const [lead] = leads;
         if (leads.length !== 1 || lead === undefined) return failure(leads.length === 0 ? 'lead_unavailable' : 'lead_ambiguous', leads.length === 0 ? 'No active Lead owns this project.' : 'More than one Lead is active on this project.');
         const noticeId = await controller.notices.notify(loaded.value, {
-          kind: 'supervisor-message', class: 'owner', disposition: 'lead-now', text: `Supervisor: ${input.message}`, recipient: { agentId: lead, role: 'lead' },
+          kind: 'supervisor-message', class: 'owner', disposition: 'lead-now', text: `${SUPERVISOR_MESSAGE_PREFIX}${input.message}`, recipient: { agentId: lead, role: 'lead' },
         });
         return success({ noticeId });
       });

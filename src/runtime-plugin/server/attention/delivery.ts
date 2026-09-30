@@ -5,8 +5,9 @@
  * permission of its recipient, so nothing is sent while the Supervisor holds one. A `now` letter
  * waits for the Supervisor to be idle; a page waits `pageHoldSeconds` and then steers into a
  * running turn. Digest lines coalesce and go together, at most once per `digestMinutes`. Non-page
- * wakes are budgeted per hour; overflow joins the digest. A reply answers the Supervisor's own
- * request (seat context delta K-D9): it goes as soon as the Supervisor is idle, even with letters
+ * wakes are budgeted per hour; overflow joins the digest, except a Lead's own question for Human. A
+ * reply answers the Supervisor's own request, such as a replacement handoff (seat context delta K-D9)
+ * or its Lead's answer to its message: it goes as soon as the Supervisor is idle, even with letters
  * off, and counts against no budget. Queues live in memory: a plugin reload drops them, and their
  * conditions re-fire from facts.
  */
@@ -46,6 +47,8 @@ export interface LetterItem {
   readonly createdAt: number;
   /** An answer to the Supervisor's own request, which it waits for rather than polls. */
   readonly reply?: true;
+  /** A Lead's NEEDS-HUMAN line: it wakes the Supervisor even past the wake budget. */
+  readonly unbudgeted?: true;
 }
 
 interface Queue {
@@ -167,10 +170,11 @@ export class Delivery {
     const holdMs = settings.delivery.pageHoldSeconds * 1_000;
     const pageDue = queue.pages.some(item => idle || now - item.createdAt >= holdMs);
     queue.wakes = queue.wakes.filter(at => now - at < HOUR);
-    // Budget: overflowing non-page wakes wait for the digest instead.
-    while (queue.now.length > 0 && queue.wakes.length >= settings.delivery.wakesPerHour && !pageDue) {
-      const moved = queue.now.shift();
-      if (moved !== undefined) queue.digest.push({ ...moved, level: 'digest' });
+    // Budget: overflowing non-page wakes wait for the digest instead, but a Lead's question for Human does not.
+    if (queue.wakes.length >= settings.delivery.wakesPerHour && !pageDue) {
+      const moved = queue.now.filter(item => item.unbudgeted !== true);
+      queue.now = queue.now.filter(item => item.unbudgeted === true);
+      queue.digest.push(...moved.map(item => ({ ...item, level: 'digest' as const })));
     }
     const digestMs = settings.delivery.digestMinutes * 60 * 1_000;
     const oldestDigest = queue.digest[0]?.createdAt;

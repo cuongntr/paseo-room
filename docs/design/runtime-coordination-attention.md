@@ -257,7 +257,8 @@ first — masked, up to 500 characters each, at most three, then a count of the 
 message's tail; the sensor is not asked. A line already relayed for that Lead is not relayed again,
 so a status block that restates it leaves an ordinary turn. Only a digest item is superseded by the
 same Lead's later turn, so no later progress turn hides a Human question, an incident or a `now`
-the sensor raised. Lead chooses what to mark; code alone chooses the class and the recipient.
+the sensor raised. A `NEEDS-HUMAN` item is never moved to the digest by the wake budget (§7.2). Lead
+chooses what to mark; code alone chooses the class and the recipient.
 
 This exists because a Supervisor missed an incident and three Human questions that sat in the
 middle of long Lead messages while its letters showed only their tails. It needs no model to read
@@ -343,11 +344,22 @@ archived, the letter is shown on the panel as `human-required` and nothing is se
   `digestMinutes` (15) have passed since its first line or it has 10 lines. At most one digest per
   `digestMinutes`.
 - Non-page `now` letters are budgeted at `wakesPerHour` (6) per Supervisor; overflow joins the digest.
-  Pages are never budgeted.
-- A **reply** answers the Supervisor's own request, such as the handoff of a Lead replacement it
-  started ([seat context delta](runtime-coordination-seat-context.md) K-D9). It waits for idle like a
-  `now` letter, but goes even with letters off and is never budgeted or moved to the digest: the
-  Supervisor waits for it rather than polls.
+  Pages are never budgeted, and neither is a Lead's `NEEDS-HUMAN` item (§6.1a). Such an item still
+  counts as a wake.
+- A **reply** answers the Supervisor's own request. It waits for idle like a `now` letter, but goes
+  even with letters off and is never budgeted, moved to the digest or superseded: the Supervisor
+  waits for it rather than polls. Two things are replies:
+  - the handoff of a Lead replacement it started
+    ([seat context delta](runtime-coordination-seat-context.md) K-D9);
+  - a Lead turn that read the Supervisor's `message_lead` and says something. The Observer knows it
+    from the turn's user messages: a notice, or a bundle whose first line lists one, whose text
+    begins `Supervisor: `. Only the heads of the notices are read, since a notice quotes what a Peer
+    wrote. The item carries up to 1,500 masked characters of the Lead's message rather than the
+    240-character tail, and the sensor is not asked. A turn with an `INCIDENT` line still pages.
+
+  The second was added on 2026-09-30. In six days of live use, 132 of 208 Lead answers to a
+  Supervisor's message went to the digest. 63 of them arrived after about five minutes, and 69
+  never arrived, because a later turn of the same Lead superseded them.
 - Deduplication is by `(project, signal, subject)`: a repeat updates the open incident's count and
   evidence instead of creating a letter.
 
@@ -674,6 +686,7 @@ files under `runtime/v1/attention` stay until `remove --apply`.
 
 | Date | Author | Change |
 |---|---|---|
+| 2026-09-30 | Repository owner / Bytes | §6.1a, §7.2: a Lead turn that answers the Supervisor's `message_lead` is a reply, delivered once the Supervisor is idle, with up to 1,500 characters of the answer. It goes even with letters off and is never budgeted or superseded. A `NEEDS-HUMAN` item is exempt from the wake budget. In six days, 132 of 208 answers had gone to the digest: 63 arrived about five minutes late and 69 never arrived. 15 of 107 `NEEDS-HUMAN` items had overflowed the budget into the digest. `message_lead`'s description says the answer comes back as a letter. Code still chooses every class and recipient. No authority is granted or removed. |
 | 2026-09-29 | Bytes | §8.3: `runtime.attention-status` adds a 24-hour tally of the attention log for the settings screen. Display only; letters, triage and authority are unchanged. |
 | 2026-09-29 | Repository owner / Bytes | §7.4: notices held through one recipient turn are sent together when it ends, as one message ([runtime design](runtime-coordination.md) §4.4), instead of one per turn. |
 | 2026-09-28 | Bytes | §7.2: a reply to the Supervisor's own request goes even with letters off and outside the wake budget. K-D9 promised this, but only the enqueue honoured it; delivery still dropped the item with letters off, or moved it to the digest past the budget. |

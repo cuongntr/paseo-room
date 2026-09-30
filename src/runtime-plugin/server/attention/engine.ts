@@ -20,7 +20,7 @@ import { Observer, type Checkout, type Seat, type TurnFacts } from './observer.j
 import { Portfolio, type Resolution } from './portfolio.js';
 import type { LedgerReader } from './succession.js';
 import { age, conditions, seatLabel, type Condition, type Level, type SignalKind } from './signals.js';
-import { BASELINE, MAX_MARKER_TEXT, assistLeadTurn, markedLeadTurn, type Assessment, type Decision, type LeadTurnFacts, type Marker, type Triaged } from './triage.js';
+import { ANSWER, BASELINE, MAX_MARKER_TEXT, assistLeadTurn, markedLeadTurn, type Assessment, type Decision, type LeadTurnFacts, type Marker, type Triaged } from './triage.js';
 
 export const SWEEP_MS = 30_000;
 const STALE_SNAPSHOT_MS = 5 * 60_000;
@@ -28,6 +28,8 @@ const REOPEN_MS = 10 * 60_000;
 const LEDGER_CACHE_MS = 60_000;
 const ITEM_MEMORY = 500;
 const LETTER_EXCERPT = 240;
+/** An answer to the Supervisor's own message carries more of it, as the sensor's tail does (§6.2). */
+const REPLY_EXCERPT = 1_500;
 /** Marker lines quoted in one letter item, each whole up to the parser's bound. */
 const LETTER_MARKERS = 3;
 /** Relayed marker lines remembered per Lead. */
@@ -379,13 +381,18 @@ export class AttentionEngine {
 
     // Only this turn's own message: an earlier one would be reported as news (a turn canceled at once has none).
     const message = pending.turn.lastMessage ?? '';
+    // A turn that read the Supervisor's `message_lead` and says something answers it. The Supervisor
+    // waits for that answer rather than polls, so it goes as a reply: never budgeted, folded into the
+    // digest or superseded. A turn cut off before saying anything is news like any other.
+    const answers = pending.turn.answersSupervisor && message.trim() !== '';
     const facts: LeadTurnFacts = {
       peersRunning: this.observer.descendants(lead.agentId).filter(seat => seat.state === 'running' || seat.state === 'permission').length,
       permissionPending: lead.pending.size > 0,
     };
-    // Lead's own marker lines decide, in code; the sensor is asked only about an unmarked turn.
-    let triaged: Triaged<Decision | 'page'> = markedLeadTurn(markers) ?? BASELINE;
-    if (markers.length === 0 && this.deps.sensor !== undefined && message.trim() !== '') {
+    // Lead's own marker lines decide, in code; the sensor is asked only about an unmarked turn that is
+    // news, since an answer already goes at once.
+    let triaged: Triaged<Decision | 'page'> = markedLeadTurn(markers) ?? (answers ? ANSWER : BASELINE);
+    if (markers.length === 0 && !answers && this.deps.sensor !== undefined && message.trim() !== '') {
       const sensed = await this.deps.sensor.leadTurn({ id: pending.id, message, facts, seatName: `Lead of ${project.name}` }).catch(() => undefined);
       if (sensed !== undefined && sensed.mode === 'assist' && sensed.assist) triaged = assistLeadTurn(sensed.assessment, facts);
     }
@@ -393,7 +400,9 @@ export class AttentionEngine {
     await record(level, triaged.reason);
     if (triaged.continuing === true) this.quiet.set(project.key, pending.turn.endedAt);
     else this.quiet.delete(project.key);
-    if (level === 'record' || !this.deps.settings().letters.enabled) return;
+    // An incident still pages; any other answer is a reply, which goes even with letters off.
+    const reply = answers && level !== 'page';
+    if (level === 'record' || (!this.deps.settings().letters.enabled && !reply)) return;
 
     this.remember(pending.id, { recipient: supervisor, projectKey: project.key, kind: 'lead-turn' });
     // The Supervisor needs the Lead's latest state, not every intermediate turn; but only a digest
@@ -411,13 +420,16 @@ export class AttentionEngine {
       if (markers.length > LETTER_MARKERS) quoted.push(`and ${String(markers.length - LETTER_MARKERS)} more marker line(s)`);
       said = ` — ${quoted.join(' · ')}`;
     } else {
-      const excerpt = message.trim() === '' ? '(no message in this turn)' : `"${tail(mask(message), LETTER_EXCERPT)}"`;
+      const excerpt = message.trim() === '' ? '(no message in this turn)' : `"${tail(mask(message), reply ? REPLY_EXCERPT : LETTER_EXCERPT)}"`;
       said = `${triaged === BASELINE ? '' : ` [${triaged.reason}]`}: ${excerpt}`;
     }
     this.delivery.enqueue(supervisor, {
       id: pending.id, level,
       line: `${project.name} · ${seatLabel(lead)} ended a turn (${pending.turn.outcome}; ${await this.runningNow(lead, facts)})${said}`,
       createdAt: pending.turn.endedAt,
+      ...(reply ? { reply: true } : {}),
+      // A NEEDS-HUMAN line is Lead's own question for Human: the wake budget never delays it (§7.2).
+      ...(level === 'now' && markers.length > 0 ? { unbudgeted: true } : {}),
     });
   }
 
