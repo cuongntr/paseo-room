@@ -86,6 +86,7 @@ describe('masking', () => {
       ['password: hunter2', 'password: [secret]'],
       ['token=abc', 'token=[secret]'],
       ['accessToken: abc', 'accessToken: [secret]'],
+      ['TOKEN: abc', 'TOKEN: [secret]'],
       ['Token: dGhpc2lzYWxvbmdvcGFxdWV0b2tlbg', 'Token: [secret]'],
       // Masked in live letters, and meaningless once masked (cmdb, 2026-09-30).
       ['nối theo từng người qua token Keycloak đã đổi', 'nối theo từng người qua token Keycloak đã đổi'],

@@ -296,8 +296,8 @@ internal hostnames are masked only when `maskNetworkIdentifiers` is on (default 
 never leaves memory. Amended 2026-09-30: after a scheme word, and after a plain word such as `token`
 or `password` followed by a colon, only a value that looks like a credential is masked: one with a
 digit and at least six characters, or at least 24. The only two masks in a week of letters had hidden
-prose ("token Keycloak", "create a token:**"). A named key (`GITLAB_TOKEN=`, `apiKey:`) or an `=`
-still masks any value.
+prose ("token Keycloak", "create a token:**"). A named key (`GITLAB_TOKEN=`, `apiKey:`, `TOKEN:`) or an
+`=` still masks any value.
 
 ### 6.3 Question set `lead-turn-v1`
 
@@ -420,10 +420,9 @@ is not sent to at all — the notice stays pending and is retried on that agent'
 and a page steer into a running turn. Every other owner notice is the runtime's own fact, such as a
 handback, a Peer question or a gate's end, and it waits like a `now` letter: held while the recipient
 has an active turn, and sent when that turn ends. Amended 2026-09-30: a Supervisor message waits the
-same way, and only a page steers. From 2026-09-28, 13 of 124 Supervisor messages to a running Lead
-cancelled its running command, and no steered message ever reached a Lead without doing so; a Lead
-turn lasts 31 s at the median and under 2 minutes nine times in ten. Amended 2026-09-29: whatever a recipient can take
-at that moment goes as one message ([runtime design](runtime-coordination.md) §4.4), so notices held
+same way, and only a page steers. From 2026-09-28, 13 of the 124 Supervisor messages sent to Leads
+cancelled the command the Lead was running; a Lead turn lasts 31 s at the median and under 2 minutes
+nine times in ten. Amended 2026-09-29: whatever a recipient can take at that moment goes as one message ([runtime design](runtime-coordination.md) §4.4), so notices held
 through one turn cost it one turn, not one each. Paseo's typed client omits `activeTurnBehavior` from
 `PaseoAgentSendOptions`, but `agents.ref(id).send` passes its options to the daemon client unchanged
 (`C/index.js`), whose `SendMessageOptions` carries it; qualification Q-3 confirms the effect.
@@ -715,7 +714,7 @@ files under `runtime/v1/attention` stay until `remove --apply`.
 
 | Date | Author | Change |
 |---|---|---|
-| 2026-09-30 | Repository owner / Bytes | §7.4, §9.4: a Supervisor's `message_lead` waits for the Lead's turn to end, like every runtime notice; only a page steers. Claude Code cancels the running tool call for any steer it takes, and 13 of 124 Supervisor messages to a running Lead had cut off its command. `message_lead` reaches a closed, unarchived Lead, which Paseo resumes. §6.2: masking after a plain word needs a credential-shaped value; its only two masks in a week had hidden prose. No authority is granted or removed. |
+| 2026-09-30 | Repository owner / Bytes | §7.4, §9.4: a Supervisor's `message_lead` waits for the Lead's turn to end, like every runtime notice; only a page steers. Claude Code cancels the running tool call for any steer it takes, and 13 of the 124 Supervisor messages sent to Leads had cut off the command the Lead was running. `message_lead` reaches a closed, unarchived Lead, which Paseo resumes. §6.2: masking after a plain word needs a credential-shaped value; its only two masks in a week had hidden prose. No authority is granted or removed. |
 | 2026-09-30 | Repository owner / Bytes | §6.1, §7.2: a Lead turn that began with the runtime's notices and left a Peer working is progress. It rides along with the Supervisor's next letter and never wakes it alone. Replayed over six days, letters fall from 347 to 271, and none is added. A proposed half-hourly bulletin built from the ledger was dropped at review: it saved less and needed a setting, a renderer and a letter level. `attention_feedback`'s description asks the Supervisor to rate only noise, since 233 of its model calls in six days did nothing but rate. No authority is granted or removed. |
 | 2026-09-30 | Repository owner / Bytes | §6.1a, §7.2: a Lead turn that answers the Supervisor's `message_lead` is a reply, delivered once the Supervisor is idle, with up to 1,500 characters of the answer. It goes even with letters off and is never budgeted or superseded. A `NEEDS-HUMAN` item is exempt from the wake budget. In six days, 132 of 208 answers had gone to the digest: 63 arrived about five minutes late and 69 never arrived. 15 of 107 `NEEDS-HUMAN` items had overflowed the budget into the digest. `message_lead`'s description says the answer comes back as a letter. Code still chooses every class and recipient. No authority is granted or removed. |
 | 2026-09-29 | Bytes | §8.3: `runtime.attention-status` adds a 24-hour tally of the attention log for the settings screen. Display only; letters, triage and authority are unchanged. |

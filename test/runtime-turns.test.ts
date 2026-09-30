@@ -34,10 +34,10 @@ async function view(h: Harness, id: string) {
 }
 
 /** The Peer asks Lead through its reporting bridge, as the `ask` tool would. */
-async function askLead(h: Harness, id: string): Promise<void> {
+async function askLead(h: Harness, id: string, requestId = 'req_turnask1'): Promise<void> {
   const association = await h.hooks.correlations.findByAssignment(id);
   const capability = (await latestCapability(join(h.runtimeRoot, 'capabilities'), association?.correlationId ?? ''))?.capability;
-  await createPeerHandlers(h.controller).ask({ protocol: 1, requestId: 'req_turnask1', operation: 'ask', payload: { question: 'q', blockingContext: 'c', evidence: [] }, correlation: association?.correlationId ?? '', ...(capability === undefined ? {} : { capability }) }, { kind: 'peer', role: 'peer' });
+  await createPeerHandlers(h.controller).ask({ protocol: 1, requestId, operation: 'ask', payload: { question: 'q', blockingContext: 'c', evidence: [] }, correlation: association?.correlationId ?? '', ...(capability === undefined ? {} : { capability }) }, { kind: 'peer', role: 'peer' });
 }
 
 const agent = (id: string) => ({ id, workspaceId: 'ws-1', parentAgentId: 'lead-1', provider: 'claude-peer', cwd: '/repo', title: null });
@@ -168,16 +168,22 @@ describe('a Lead refused as peer_busy', () => {
     expect(h.paseo.agents.get('lead-1')?.prompts.filter(prompt => prompt.text.includes('peer_busy'))).toHaveLength(1);
   });
 
-  it('is not told when it was never refused, or once its retry went through', async () => {
+  it('is not told once its retry went through, even when the answer turn asks again', async () => {
     const { h, id, peer, turns } = await dispatched();
     await askLead(h, id);
-    await h.controller.answer(h.lead, { assignmentId: id, answer: 'Yes.' });
+    expect(await h.controller.answer(h.lead, { assignmentId: id, answer: 'Yes.' })).toMatchObject({ ok: false, code: 'peer_busy' });
     h.paseo.endTurn(peer);
-    // The retry opened generation 2 before the asking turn's end was heard.
+    // The retry went through before the asking turn's end was heard, and its turn asks again: the
+    // assignment waits on Lead once more, but in a later generation than the refusal.
     expect(await h.controller.answer(h.lead, { assignmentId: id, answer: 'Yes.' })).toMatchObject({ ok: true });
-    h.paseo.endTurn('lead-1');
-    await turns.turnEnded(ended(peer, 'I asked Lead and am waiting.'));
-    expect(h.paseo.agents.get('lead-1')?.prompts.some(prompt => prompt.text.includes('peer_busy'))).toBe(false);
+    turns.turnStarted({ agent: agent(peer), turnId: 't2' });
+    await askLead(h, id, 'req_turnask2');
+    h.paseo.endTurn(peer);
+    expect(await turns.turnEnded({ ...ended(peer), turnId: 't2' })).toBe('none');
+    expect((await view(h, id)).view).toMatchObject({ state: 'questioned', reportingGeneration: 2 });
+    const loaded = await h.controller.load(await h.controller.projectFor(h.repo));
+    if (!loaded.ok) throw new Error(loaded.message);
+    expect(loaded.value.events.some(event => event.type === 'notice.pending' && event.data.kind === 'peer-free')).toBe(false);
   });
 });
 

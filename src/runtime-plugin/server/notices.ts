@@ -201,7 +201,7 @@ export class Notices {
       await this.record(loaded, unsent, 'notice.uncertain', reasonOf(error));
       return unsent.length;
     }
-    // Sending could interrupt the running turn: the runtime's own facts wait until it ends.
+    // Sending could interrupt the running turn: every owner notice waits until it ends.
     const batch = bundle(running ? unsent.filter(notice => !waitsForIdle(notice.class)) : unsent);
     const head = batch[0];
     if (head === undefined) return unsent.length;

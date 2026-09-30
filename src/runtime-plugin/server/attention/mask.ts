@@ -12,7 +12,10 @@ export interface MaskOptions {
 
 type Replacement = string | ((match: string, ...groups: string[]) => string);
 
-/** A plain word a sentence uses for a credential, as opposed to a key naming one (`GITLAB_TOKEN`, `apiKey`). */
+/**
+ * A plain word a sentence uses for a credential, as opposed to a key naming one (`GITLAB_TOKEN`,
+ * `apiKey`, or the same word in capitals, `TOKEN`).
+ */
 const PROSE_WORD = /^(?:tokens?|secrets?|passwords?|passwd|credentials?)$/i;
 
 /**
@@ -21,7 +24,7 @@ const PROSE_WORD = /^(?:tokens?|secrets?|passwords?|passwd|credentials?)$/i;
  * letter or digit is never one.
  */
 function assignment(match: string, key: string, separator: string, _quote: string, value: string): string {
-  const prose = PROSE_WORD.test(key) && !separator.includes('=');
+  const prose = PROSE_WORD.test(key) && key !== key.toUpperCase() && !separator.includes('=');
   const credential = /\d/.test(value) ? value.length >= 6 : value.length >= 24;
   return !/[A-Za-z0-9]/.test(value) || (prose && !credential) ? match : `${key}${separator}[secret]`;
 }
