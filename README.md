@@ -787,6 +787,15 @@ learn only when you ask it to check.
 - **Evaluation.** `npm run attention:eval` (in this repository) reads your Claude Lead transcripts
   read-only and prints what an evaluation would send. `-- --send` runs it against the endpoint, as
   your consent for that run.
+- **Usage report.** `npm run attention:report -- --since 2026-09-24 --until 2026-09-30` (in this
+  repository) reads the room home read-only. It prints what reached the Supervisors over that window:
+  - Lead turns by routing, and letters by level and delay;
+  - Lead answers to `message_lead`, and whether they arrived;
+  - feedback and the sensor;
+  - what the Supervisor and Lead seats read, and how long a question to you waited.
+
+  It prints counts and durations only, never message text. The window defaults to the last seven
+  days; `-- --json` prints the same as JSON.
 
 ### Isolated writers (runtime Phase 2)
 

@@ -1,6 +1,6 @@
 // Lets Node run this repository's TypeScript sources directly for development scripts: a `.js`
 // specifier that has no file resolves to the `.ts` file beside it. Used only by `npm run
-// attention:eval`; the published package never loads it.
+// attention:eval` and `npm run attention:report`; the published package never loads it.
 import { register } from 'node:module';
 
 const hook = `

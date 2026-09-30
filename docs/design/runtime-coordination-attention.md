@@ -620,6 +620,10 @@ deletes them together with the room home, as today.
 - `useful` share of `now` letters.
 - Supervisor wakes and tokens per day.
 
+`npm run attention:report` (`scripts/attention-report.ts`, not shipped) computes these from the room
+home, read-only, for any window. It prints counts and durations only. The baseline for the
+2026-09-30 changes is its output for 2026-09-24 to 2026-09-30T02:44Z.
+
 ## 13. Testing and qualification
 
 - **Unit:**
