@@ -9,7 +9,7 @@
  * wakes are budgeted per hour; overflow joins the digest, except a Lead's own question for Human. A
  * reply answers the Supervisor's own request, such as a replacement handoff (seat context delta K-D9)
  * or its Lead's answer to its message: it goes as soon as the Supervisor is idle, even with letters
- * off, and counts against no budget. Queues live in memory: a plugin reload drops them, and their
+ * off, and counts against no budget. With letters on, it carries the digest lines along too. Queues live in memory: a plugin reload drops them, and their
  * conditions re-fire from facts.
  */
 import { randomBytes } from 'node:crypto';
@@ -163,7 +163,11 @@ export class Delivery {
       return;
     }
     if (idle && queue.replies.length > 0) {
-      const items = queue.replies.splice(0, LETTER_MAX_ITEMS);
+      const replies = queue.replies.splice(0, LETTER_MAX_ITEMS);
+      // A reply is a wake that happens anyway: with letters on, it carries the digest lines along.
+      const riders = enabled ? queue.digest.splice(0, LETTER_MAX_ITEMS - replies.length) : [];
+      if (riders.length > 0) queue.lastDigestAt = now;
+      const items = [...replies, ...riders];
       const id = letterId();
       await this.send(supervisorAgentId, queue, id, render(id, items, now), items, 'now');
       return;

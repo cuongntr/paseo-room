@@ -354,8 +354,9 @@ archived, the letter is shown on the panel as `human-required` and nothing is se
 - Digest lines coalesce per Supervisor. The digest goes when the Supervisor is idle and either
   `digestMinutes` (15) have passed since its first line or it has 10 lines. At most one digest per
   `digestMinutes`.
-- A progress line (§6.1) goes with any letter that goes anyway, and is superseded by its Lead's
-  later turns like any digest line. It never makes a digest due, by age or by count.
+- A letter that goes anyway carries the pending digest lines along, a reply included while letters
+  are on. A progress line (§6.1) goes only that way: it never makes a digest due, by age or by count,
+  and is superseded by its Lead's later turns like any digest line.
 - Non-page `now` letters are budgeted at `wakesPerHour` (6) per Supervisor; overflow joins the digest.
   Pages are never budgeted, and neither is a Lead's `NEEDS-HUMAN` item (§6.1a). Such an item still
   counts as a wake.

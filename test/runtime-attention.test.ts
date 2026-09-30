@@ -401,6 +401,36 @@ describe('attention signals and letters', () => {
     expect(letters()[2]?.text).not.toContain('Waiting for the reviewer.');
   });
 
+  it('carries pending digest lines along with a reply while letters are on, and only the reply while they are off', async () => {
+    const other = join(root, 'billing');
+    await mkdir(other);
+    paseo.addAgent({ id: 'lead-b', provider: 'claude-lead', cwd: other, title: 'billing — Lead', labels: { [PARENT_AGENT_ID_LABEL]: 'sup' } });
+    await engine.onCreated('lead-b');
+    await settle();
+    const answer = (text: string) => [
+      { type: 'user_message' as const, text: noticeText('ntc_s1', 'Supervisor: go ahead.') },
+      { type: 'assistant_message' as const, text },
+    ];
+    await engine.onTurnEnded('lead-b', { kind: 'completed' }, [{ type: 'assistant_message', text: 'Invoices exported.' }]);
+    await engine.onTurnEnded('lead', { kind: 'completed' }, answer('Going ahead.'));
+    await settle();
+    expect(letters()).toHaveLength(1);
+    expect(letters()[0]?.text).toContain('Going ahead.');
+    expect(letters()[0]?.text).toContain('Invoices exported.');
+
+    // A line queued while letters were on stays behind once they are turned off.
+    await setIdle('sup');
+    await engine.onTurnEnded('lead-b', { kind: 'completed' }, [{ type: 'assistant_message', text: 'Refunds exported.' }]);
+    await settle();
+    expect(letters()).toHaveLength(1);
+    withSettings(draft => { draft.letters.enabled = false; });
+    await engine.onTurnEnded('lead', { kind: 'completed' }, answer('Done.'));
+    await settle();
+    expect(letters()).toHaveLength(2);
+    expect(letters()[1]?.text).toContain('Done.');
+    expect(letters()[1]?.text).not.toContain('Refunds exported.');
+  });
+
   it('wakes the Supervisor for a NEEDS-HUMAN line past the wake budget, while other now letters still wait for the digest', async () => {
     withSettings(draft => { draft.delivery.wakesPerHour = 1; });
     await settle();
