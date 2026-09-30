@@ -3,17 +3,18 @@
  *
  * Audience comes from code, never from a model: assignment-local evidence goes to that
  * assignment's Lead, a page goes to the authority recipient, operator faults go to status and
- * the panel. A Peer is never a recipient. Every notice carries a stable id in its delivered
+ * the panel. A Peer is never a recipient, and an archived seat is never sent to, since a send would
+ * unarchive it. Every notice carries a stable id in its delivered
  * text; delivery is at least once, a retry reuses the id, and a retry first checks the
  * recipient's timeline so a confirmed delivery is not sent twice.
  *
  * A notice is sent with `steer` (docs/design/runtime-coordination-attention.md §7.4), but Paseo
- * replaces — interrupts — a turn whose provider cannot take the steer, and a running Claude Lead
- * could not take about one in sixteen in live use. So only a notice that carries a person's
- * directive, a Supervisor message, or a page is sent into a running turn; the runtime's own facts
- * wait until the recipient's turn has ended. Paseo also clears every pending permission of an agent
- * it sends to, so a recipient holding one is not sent to at all. A held notice stays pending, and
- * `retryFor` delivers it when that permission resolves or the turn ends.
+ * replaces — interrupts — a turn whose provider cannot take the steer, and a steer Claude does take
+ * still cancels the tool call it is running. So only a page is sent into a running turn; every owner
+ * notice, a Supervisor's message included, waits until the recipient's turn has ended. Paseo also
+ * clears every pending permission of an agent it sends to, so a recipient holding one is not sent to
+ * at all. A held notice stays pending, and `retryFor` delivers it when that permission resolves or
+ * the turn ends.
  *
  * Whatever a recipient can take at that moment goes as one message, so notices held through the
  * same turn cost the recipient one turn, not one each (§4.4).
@@ -40,7 +41,6 @@ export interface NoticeRequest {
 interface Undelivered {
   readonly noticeId: string;
   readonly agentId: string;
-  readonly kind: string;
   readonly class: NoticeClass;
   readonly text: string;
 }
@@ -54,8 +54,8 @@ const BUNDLE_HEAD = /^\[paseo-room notices (ntc_[\w-]+(?: ntc_[\w-]+)+)\]$/;
 const BUNDLE_CHARS = 24_000;
 
 /** Whether a notice waits for its recipient's turn to end rather than steer into it. */
-function waitsForIdle(kind: string, noticeClass: NoticeClass): boolean {
-  return noticeClass === 'owner' && kind !== 'supervisor-message';
+function waitsForIdle(noticeClass: NoticeClass): boolean {
+  return noticeClass === 'owner';
 }
 
 export function noticeText(noticeId: string, text: string): string {
@@ -101,7 +101,7 @@ function undelivered(loaded: LoadedProject, agentId?: string): Undelivered[] {
   return loaded.events.flatMap(event => {
     if (event.type !== 'notice.pending' || event.data.recipientAgentId === undefined) return [];
     if ((agentId !== undefined && event.data.recipientAgentId !== agentId) || loaded.state.notices.get(event.data.noticeId)?.state === 'sent') return [];
-    return [{ noticeId: event.data.noticeId, agentId: event.data.recipientAgentId, kind: event.data.kind, class: event.data.class, text: event.data.text }];
+    return [{ noticeId: event.data.noticeId, agentId: event.data.recipientAgentId, class: event.data.class, text: event.data.text }];
   });
 }
 
@@ -189,6 +189,11 @@ export class Notices {
         await this.record(loaded, unsent, 'notice.failed', 'A notice is never addressed to a Peer.');
         return unsent.length;
       }
+      // Paseo unarchives an agent it is sent to. A closed seat is resumed, an archived one left alone.
+      if (target !== undefined && target.archivedAt !== null) {
+        await this.record(loaded, unsent, 'notice.failed', 'The recipient is archived.');
+        return unsent.length;
+      }
       // Sending would clear the recipient's pending permission: hold, and retry when it resolves.
       if (target !== undefined && target.pendingPermissions.length > 0) return unsent.length;
       running = target !== undefined && (target.activeTurn || target.status === 'running');
@@ -197,7 +202,7 @@ export class Notices {
       return unsent.length;
     }
     // Sending could interrupt the running turn: the runtime's own facts wait until it ends.
-    const batch = bundle(running ? unsent.filter(notice => !waitsForIdle(notice.kind, notice.class)) : unsent);
+    const batch = bundle(running ? unsent.filter(notice => !waitsForIdle(notice.class)) : unsent);
     const head = batch[0];
     if (head === undefined) return unsent.length;
     try {

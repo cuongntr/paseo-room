@@ -10,16 +10,33 @@ export interface MaskOptions {
   readonly networkIdentifiers: boolean;
 }
 
-const RULES: readonly (readonly [RegExp, string])[] = [
+type Replacement = string | ((match: string, ...groups: string[]) => string);
+
+/** A plain word a sentence uses for a credential, as opposed to a key naming one (`GITLAB_TOKEN`, `apiKey`). */
+const PROSE_WORD = /^(?:tokens?|secrets?|passwords?|passwd|credentials?)$/i;
+
+/**
+ * `key: value` or `key=value` naming a credential. After a plain word and a colon it is prose unless
+ * the value looks like a credential ("create a token: name it", "a token:**"), and a value with no
+ * letter or digit is never one.
+ */
+function assignment(match: string, key: string, separator: string, _quote: string, value: string): string {
+  const prose = PROSE_WORD.test(key) && !separator.includes('=');
+  const credential = /\d/.test(value) ? value.length >= 6 : value.length >= 24;
+  return !/[A-Za-z0-9]/.test(value) || (prose && !credential) ? match : `${key}${separator}[secret]`;
+}
+
+const RULES: readonly (readonly [RegExp, Replacement])[] = [
   [/-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|$)/g, '[private key]'],
-  [/\b(Bearer|Basic|Token)\s+[A-Za-z0-9._~+/=-]{8,}/gi, '$1 [secret]'],
+  // An authorization scheme's credential has a digit or is long; "token Keycloak" is prose.
+  [/\b(Bearer|Basic|Token)\s+(?:(?=[A-Za-z._~+/=-]*\d)[A-Za-z0-9._~+/=-]{8,}|[A-Za-z0-9._~+/=-]{24,})/gi, '$1 [secret]'],
   [/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, '[jwt]'],
   [/\b(?:sk|pk|rk)-(?:proj-|ant-|live-|test-)?[A-Za-z0-9_-]{12,}\b/g, '[secret]'],
   [/\b(?:ghp|gho|ghu|ghs|ghr|github_pat)_[A-Za-z0-9_]{16,}\b/g, '[secret]'],
   [/\bglpat-[A-Za-z0-9_-]{16,}\b/g, '[secret]'],
   [/\bxox[abprs]-[A-Za-z0-9-]{10,}\b/g, '[secret]'],
   [/\bAKIA[0-9A-Z]{16}\b/g, '[secret]'],
-  [/\b([A-Za-z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|ACCESS_?KEY|PRIVATE_?KEY|CREDENTIAL)[A-Za-z0-9_]*)(\s*[:=]\s*)(["']?)[^\s"'`,;]+\3/gi, '$1$2[secret]'],
+  [/\b([A-Za-z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|ACCESS_?KEY|PRIVATE_?KEY|CREDENTIAL)[A-Za-z0-9_]*)(\s*[:=]\s*)(["']?)([^\s"'`,;]+)\3/gi, assignment],
   [/\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@:]+(?::[^\s/@]*)?@/gi, '$1[user]@'],
   [/(\bhttps?:\/\/[^\s?#"'`<>]+)\?[^\s#"'`<>]*/gi, '$1?[query]'],
 ];
@@ -32,7 +49,7 @@ const NETWORK_RULES: readonly (readonly [RegExp, string])[] = [
 
 export function mask(text: string, options: MaskOptions = { networkIdentifiers: true }): string {
   let masked = text;
-  for (const [pattern, replacement] of RULES) masked = masked.replace(pattern, replacement);
+  for (const [pattern, replacement] of RULES) masked = typeof replacement === 'string' ? masked.replace(pattern, replacement) : masked.replace(pattern, replacement);
   if (options.networkIdentifiers) for (const [pattern, replacement] of NETWORK_RULES) masked = masked.replace(pattern, replacement);
   return masked;
 }

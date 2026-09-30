@@ -113,6 +113,27 @@ export async function settleEndedTurn(controller: Controller, spool: Spool, load
   return 'missing';
 }
 
+/** What Lead was refused as `peer_busy`, by the state it answered from. */
+const REFUSED: Partial<Record<AssignmentView['state'], string>> = { questioned: 'answer', blocked: 'follow-up', 'handed-back': 'rework' };
+
+/**
+ * Tells Lead that a Peer it was refused as busy has ended its turn, so what it tried to send can go.
+ * Only while the assignment still waits in the generation of the refusal; a later generation means
+ * Lead's retry went through. Call inside the project's queue.
+ */
+async function wakeRefusedLead(controller: Controller, loaded: LoadedProject, view: AssignmentView): Promise<void> {
+  const refused = controller.busyRefusals.get(view.id);
+  if (refused === undefined) return;
+  controller.busyRefusals.delete(view.id);
+  const what = REFUSED[view.state];
+  if (what === undefined || refused !== view.reportingGeneration) return;
+  await controller.notices.notify(loaded, {
+    kind: 'peer-free', class: 'owner', disposition: 'lead-now', assignmentId: view.id,
+    text: `The Peer of ${assignmentName(view)} has ended its turn, so the ${what} refused as peer_busy can go now; send it again.`,
+    recipient: { agentId: view.leadAgentId, role: 'lead' },
+  });
+}
+
 export interface TurnHandlers {
   turnStarted(event: PluginLifecycleEvents['agent.turn_started']): void;
   turnEnded(event: PluginLifecycleEvents['agent.turn_ended']): Promise<'missing' | 'uncertain' | 'waiting' | 'none'>;
@@ -143,9 +164,13 @@ export function createTurnHandlers(controller: Controller, spool: Spool, starts:
       await spool.schedule();
       return await within(event.agent.id, 'none' as const, async (loaded, view) => {
         const requestedAt = promptRequestedAt(loaded, view);
-        // Began before this generation's prompt was sent: an earlier turn ending late.
-        if (startedAt !== undefined && requestedAt !== undefined && startedAt < requestedAt) return 'none';
-        return await settleEndedTurn(controller, spool, loaded, view, event.agent.id);
+        // Began before this generation's prompt was sent: an earlier turn ending late. A turn this
+        // process never saw begin, when the prompt was sent after it started, began before the
+        // prompt too, since every start since then was announced here (as for recovery).
+        if (requestedAt !== undefined && (startedAt === undefined ? requestedAt >= starts.since : startedAt < requestedAt)) return 'none';
+        const outcome = await settleEndedTurn(controller, spool, loaded, view, event.agent.id);
+        if (outcome === 'none') await wakeRefusedLead(controller, loaded, view);
+        return outcome;
       });
     },
 

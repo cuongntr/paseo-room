@@ -250,8 +250,10 @@ export class FakePaseo implements PaseoPort {
   send(agentId: string, text: string, messageId: string, behavior: SendBehavior): Promise<void> {
     return this.step('send', [agentId, text, messageId, behavior], () => {
       const agent = this.agents.get(agentId);
-      // A closed but unarchived agent is resumed by the send, as Paseo loads it on demand.
-      if (agent === undefined || agent.archivedAt !== null) throw new Error(`agent ${agentId} cannot receive a turn`);
+      // A closed agent is resumed by the send, as Paseo loads it on demand, and an archived one is
+      // unarchived first (`sendPromptToAgent` defaults `unarchive` to true).
+      if (agent === undefined) throw new Error(`agent ${agentId} cannot receive a turn`);
+      agent.archivedAt = null;
       if (agent.activeTurn && behavior === 'interrupt') agent.interrupted += 1;
       // A steered send joins the running turn; any other starts one.
       if (!agent.activeTurn || behavior === 'interrupt' || agent.turnId === undefined) agent.turnId = `turn-${String(++this.turns)}`;

@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -125,7 +126,12 @@ describe('gate, decisions and closure', () => {
     const failed = await red.h.controller.gateRun(red.h.lead, { assignmentId: red.id });
     if (!failed.ok) throw new Error(failed.message);
     await red.h.controller.gates.get(failed.value.gateRunId);
-    expect(red.h.paseo.agents.get('lead-1')?.prompts.at(-1)?.text).toMatch(new RegExp(`runtime gate ${failed.value.gateRunId} of .+ is red on candidate [0-9a-f]{12}: it exited 3\\.$`));
+    const text = red.h.paseo.agents.get('lead-1')?.prompts.at(-1)?.text ?? '';
+    expect(text).toMatch(new RegExp(`runtime gate ${failed.value.gateRunId} of .+ is red on candidate [0-9a-f]{12}: it exited 3\\. The tail of its output is in (/\\S+)\\.$`));
+    // The log is named, so Lead reads why it failed rather than rerunning blind (cmdb, 2026-09-29).
+    const log = /The tail of its output is in (\/\S+)\.$/.exec(text)?.[1] ?? '';
+    expect(log.endsWith(`/gates/${failed.value.gateRunId}.log`)).toBe(true);
+    expect(existsSync(log)).toBe(true);
     const notice = (await loaded(red.h)).events.find(event => event.type === 'notice.pending' && event.data.kind === 'gate-ended');
     expect(notice).toMatchObject({ assignmentId: red.id, data: { class: 'owner', disposition: 'lead-now', recipientAgentId: 'lead-1' } });
   });

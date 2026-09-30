@@ -289,11 +289,15 @@ Code builds the state; numbers become named buckets, because the sensor reads te
 }
 ```
 
-Masking replaces, in this order: private-key blocks; `Bearer`/`Basic` credentials; tokens with known
+Masking replaces, in this order: private-key blocks; `Bearer`/`Basic`/`Token` credentials; tokens with known
 prefixes (`sk-`, `ghp_`, `glpat-`, `xox?-`, JWT shape); `NAME=value` where the name contains
 `TOKEN|SECRET|PASSWORD|PASSWD|KEY|CREDENTIAL`; URL user-info and query strings. IPv4/IPv6 literals and
 internal hostnames are masked only when `maskNetworkIdentifiers` is on (default on). The raw tail
-never leaves memory.
+never leaves memory. Amended 2026-09-30: after a scheme word, and after a plain word such as `token`
+or `password` followed by a colon, only a value that looks like a credential is masked: one with a
+digit and at least six characters, or at least 24. The only two masks in a week of letters had hidden
+prose ("token Keycloak", "create a token:**"). A named key (`GITLAB_TOKEN=`, `apiKey:`) or an `=`
+still masks any value.
 
 ### 6.3 Question set `lead-turn-v1`
 
@@ -402,7 +406,8 @@ of the letter.
 
 **Steering** (change-003 D-4, D-5). Claude, Codex, Pi and mock accept a steer, except while Claude is
 compacting, running a slash command or switching streams. In those cases Paseo replaces — interrupts
-— the turn. A page accepts that cost; a `now` letter and a digest never do, because they wait for
+— the turn. Even an accepted steer is not free: Claude Code cancels the tool call it is running to
+take the message, and records that as the user rejecting the tool. A page accepts that cost; a `now` letter and a digest never do, because they wait for
 idle. Nothing is ever sent while the recipient holds a permission: a send denies it. The cost is not
 rare: in the first week of live use, 16 of 248 notices to running Claude Leads cancelled the turn.
 
@@ -414,7 +419,10 @@ is not sent to at all — the notice stays pending and is retried on that agent'
 `permission_resolved` or `turn_ended`. Amended 2026-09-28: only a Supervisor message (`message_lead`)
 and a page steer into a running turn. Every other owner notice is the runtime's own fact, such as a
 handback, a Peer question or a gate's end, and it waits like a `now` letter: held while the recipient
-has an active turn, and sent when that turn ends. Amended 2026-09-29: whatever a recipient can take
+has an active turn, and sent when that turn ends. Amended 2026-09-30: a Supervisor message waits the
+same way, and only a page steers. From 2026-09-28, 13 of 124 Supervisor messages to a running Lead
+cancelled its running command, and no steered message ever reached a Lead without doing so; a Lead
+turn lasts 31 s at the median and under 2 minutes nine times in ten. Amended 2026-09-29: whatever a recipient can take
 at that moment goes as one message ([runtime design](runtime-coordination.md) §4.4), so notices held
 through one turn cost it one turn, not one each. Paseo's typed client omits `activeTurnBehavior` from
 `PaseoAgentSendOptions`, but `agents.ref(id).send` passes its options to the daemon client unchanged
@@ -530,7 +538,10 @@ Changing these assets changes what Supervisor is told. The commit must state the
   decided without a Peer to close — so the result stays within one tool answer.
 - `runtime_findings` includes open attention incidents, and its findings keep to the same projects.
 - `message_lead` takes an optional `project` (project id or repository name). It is required when the
-  portfolio has more than one project.
+  portfolio has more than one project. It reaches a Lead in a turn when that turn ends (§7.4). With no
+  live Lead, it goes to the project's Lead whose session closed but which is not archived, and Paseo
+  resumes that Lead; a Lead whose Claude process had exited was refused as `lead_unavailable` though it
+  still owned the project (2026-09-29).
 - New tool `attention_feedback({ id, verdict: 'useful' | 'noise' | 'unknown' })`. The `id` is an
   item's, or a sent letter's own id, which rates every item of that letter.
 
@@ -704,6 +715,7 @@ files under `runtime/v1/attention` stay until `remove --apply`.
 
 | Date | Author | Change |
 |---|---|---|
+| 2026-09-30 | Repository owner / Bytes | §7.4, §9.4: a Supervisor's `message_lead` waits for the Lead's turn to end, like every runtime notice; only a page steers. Claude Code cancels the running tool call for any steer it takes, and 13 of 124 Supervisor messages to a running Lead had cut off its command. `message_lead` reaches a closed, unarchived Lead, which Paseo resumes. §6.2: masking after a plain word needs a credential-shaped value; its only two masks in a week had hidden prose. No authority is granted or removed. |
 | 2026-09-30 | Repository owner / Bytes | §6.1, §7.2: a Lead turn that began with the runtime's notices and left a Peer working is progress. It rides along with the Supervisor's next letter and never wakes it alone. Replayed over six days, letters fall from 347 to 271, and none is added. A proposed half-hourly bulletin built from the ledger was dropped at review: it saved less and needed a setting, a renderer and a letter level. `attention_feedback`'s description asks the Supervisor to rate only noise, since 233 of its model calls in six days did nothing but rate. No authority is granted or removed. |
 | 2026-09-30 | Repository owner / Bytes | §6.1a, §7.2: a Lead turn that answers the Supervisor's `message_lead` is a reply, delivered once the Supervisor is idle, with up to 1,500 characters of the answer. It goes even with letters off and is never budgeted or superseded. A `NEEDS-HUMAN` item is exempt from the wake budget. In six days, 132 of 208 answers had gone to the digest: 63 arrived about five minutes late and 69 never arrived. 15 of 107 `NEEDS-HUMAN` items had overflowed the budget into the digest. `message_lead`'s description says the answer comes back as a letter. Code still chooses every class and recipient. No authority is granted or removed. |
 | 2026-09-29 | Bytes | §8.3: `runtime.attention-status` adds a 24-hour tally of the attention log for the settings screen. Display only; letters, triage and authority are unchanged. |

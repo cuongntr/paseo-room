@@ -174,8 +174,10 @@ cannot produce a candidate and cannot be waived into one by Lead.
 `GateSpecV1.runtimeRerun` separately selects `none`, `optional`, or `required`. An explicit Lead
 `gate_run` performs an independent rerun against an already validated candidate. It never substitutes
 for Peer verification. Lead ends its turn while the gate runs, so the gate's end — green, red or
-uncertain — is an `owner` notice to Lead naming the gate, the candidate and why a red result is red;
-a result that settles after Lead has decided is only recorded. If `required`, acceptance waits for a
+uncertain — is an `owner` notice to Lead naming the gate, the candidate, why a red result is red and
+the file holding a red result's output tail; a result that settles after Lead has decided is only
+recorded. A gate whose outcome is unknown stops mattering once its assignment is closed, both to the
+close and to the project's findings. If `required`, acceptance waits for a
 terminal rerun result; if `optional`, absence is displayed without weakening the Peer gate
 requirement.
 
@@ -254,7 +256,7 @@ Every signal first enters one code-owned class:
 | Class | Default behavior | Examples |
 |---|---|---|
 | `record` | event/status only | normal create, dispatch, rework, acceptance, a gate result that settles after Lead decided |
-| `owner` | notify Lead | Peer question, invalid result, blocked handback, candidate movement, red/unrun Peer gate, the end of a `gate_run` Lead requested (green, red or uncertain) |
+| `owner` | notify Lead | Peer question, invalid result, blocked handback, candidate movement, red/unrun Peer gate, the end of a `gate_run` Lead requested (green, red or uncertain), the end of a Peer turn that got Lead refused `peer_busy` |
 | `operator` | notify/show operator | plugin, manifest, state, export or compatibility fault |
 | `page` | notify the authority recipient immediately; never filtered or budgeted | duplicate/ambiguous Lead, writer ownership conflict, unavailable Lead with active work, explicit Human-boundary or irreversible-risk condition |
 | `attention` | incident/panel first; deterministic Phase 3 policy may digest it | recurring rework, repeated weak evidence, possible goal drift or stalled progress |
@@ -267,7 +269,11 @@ portfolio only, pages, momentum signals, and Lead turn outcomes triaged to `now`
 and no delivery clears a pending permission. Amended 2026-09-28: an `owner` notice the runtime writes
 waits until its recipient's turn has ended, because Paseo interrupts a turn whose steer the provider
 cannot take; only a Supervisor message and a page are steered into a running turn, accepting that
-cost.
+cost. Amended 2026-09-30: a Supervisor message waits too. A steer Claude does take still cancels the
+tool call it is running, and 13 of 124 Supervisor messages to a running Lead cut off its command, once
+a merge the Lead then believed a person had stopped; only a page is steered. A notice is never sent
+to an archived seat, since Paseo unarchives the agent it is sent to; a seat whose session merely
+closed is sent to, and Paseo resumes it.
 
 Phase 3 adds incident deduplication by subject and kind, counts, evidence references, a non-page daily
 attention budget, and `useful | noise | unknown` Supervisor feedback. Phase 5 may add a default-off
@@ -610,7 +616,10 @@ is lost, recovery replays the receipt; if persistence is uncertain, the tool fai
 assignment remains `uncertain` until replay resolves it.
 
 An accepted `ask` moves the assignment to `questioned` and consumes the reporting generation. Lead's
-answer opens a new generation before its separate `run()`. An accepted `handoff` with `partial` or
+answer opens a new generation before its separate `run()`. A later prompt goes only to a Peer between
+turns, and a Peer usually ends the turn that asked or handed back a few seconds after its report, so
+Lead is often refused `peer_busy`; that turn's end is then an `owner` notice telling Lead to send again
+(amended 2026-09-30: nothing woke Lead, and it waited until a person noticed). An accepted `handoff` with `partial` or
 `blocked` moves to `blocked` and creates no candidate. An accepted `complete` handoff moves to
 `handed-back` only after work-kind-specific checks. For writable work, the exact named Peer gate
 must have an outcome other than `not-run`; the runtime independently derives actual `HEAD`, base
@@ -622,7 +631,10 @@ A turn that ends without an accepted reporting action after every spool entry is
 judged: Lead may answer the moment the asking turn ends, and that answer opens the next generation
 before the runtime has judged the asking turn. The runtime notes when each turn began, as Paseo
 announces it; a turn that began before the open generation's prompt was requested is an earlier turn
-ending late and is not judged. Recovery likewise leaves a generation whose turn has not begun while
+ending late and is not judged. So is a turn whose start the runtime never heard, when the prompt was
+requested while it was listening: that turn began before the runtime did, and so before the prompt
+(amended 2026-09-30, after a plugin reload mid-turn let an asking turn close its answer's generation
+again). Recovery likewise leaves a generation whose turn has not begun while
 the runtime was listening, as long as its Peer is idle and could still begin it; a Peer closed,
 archived or failed first is judged. Unresolved report persistence instead produces
 `peer.report-uncertain`, projects `uncertain` and holds the generation fence closed. Final prose,
@@ -1687,6 +1699,7 @@ Q-011 do not block Phases 0–1 because those phases contain no sensor and no wo
 
 | Date | Author | Change |
 |---|---|---|
+| 2026-09-30 | Repository owner / Bytes | Defects from four days of live use (cmdb, 2026-09-27..30). §3.4: Lead refused `peer_busy` is told when the Peer's turn ends (32 refusals, none of which woke Lead), and a Peer turn whose start the runtime never heard is judged as an earlier turn when its generation's prompt came later (a plugin reload mid-turn had closed an answer's generation again). D9: a Supervisor message waits for the Lead's turn to end like every other `owner` notice (13 of 124 had cut off a running command); no notice goes to an archived seat. D6: a red gate's notice names its output file, and an unknown gate outcome stops raising a finding once its assignment is closed. `message_lead` reaches a Lead whose session closed but which is not archived. No seat gains or loses authority; Lead receives one more `owner` notice kind (`peer-free`). |
 | 2026-09-29 | Repository owner / Bytes | §3.1 range and §14: both room plugins accept Paseo `>=0.8.0` with no upper bound, and the CLI's separate plugin range checks are gone, since that floor is its compatibility check's. Paseo shipped five releases in a week and `<0.10.0` refused the carrier on the current one; a file-by-file comparison of `0.10.1` with `0.9.2` found the plugin SDK, plugin host, send path and worktree surfaces identical. §13 Phase 2: worktree dispatch keeps only its `0.9.1` floor ([Phase 2 delta](runtime-coordination-phase2.md) §8, §9.4). No event, authority or tool change. |
 | 2026-09-29 | Repository owner / Bytes | §4.4: notices one recipient can take at the same moment go as one message, whose first line lists them and is their delivery evidence. Since owner notices wait for Lead's turn to end, two or three held through the same turn went one per turn: in cmdb, a Peer question and a gate's end, then a handback and two gate ends, cost Lead three extra turns, and Lead's turn on the handback ran while a gate's end already waited for it. Delivery only: no event, payload or authority change. |
 | 2026-09-28 | Repository owner / Bytes | D4 Supervisor row and §3.4 gain the [seat context delta](runtime-coordination-seat-context.md)'s K-D9: the Supervisor of a project may replace its Lead, but only once the runtime reports that Lead past its rotation mark, and only through the runtime's succession flow with its quiet-point checks; it reviews and confirms the handoff itself. **Authority granted:** that one lifecycle action, which Human had been approving case by case while the Supervisor carried it out with raw Paseo tools. Every other reason to replace a Lead stays Human's. |

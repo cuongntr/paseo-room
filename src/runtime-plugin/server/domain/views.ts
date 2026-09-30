@@ -205,7 +205,10 @@ export function findings(input: StatusInput): Finding[] {
   const flagged = new Set<string>();
   for (const view of input.state.assignments.values()) {
     const owner = input.state.ownership.get(view.id);
-    if (view.state === 'uncertain' || view.closure === 'uncertain' || owner?.state === 'uncertain' || view.gates.some(gate => gate.status === 'uncertain')) {
+    // A gate is read-only evidence: once its assignment is closed, an unknown outcome changes nothing,
+    // as the close blockers already hold.
+    const unknownGate = view.closure !== 'closed' && view.gates.some(gate => gate.status === 'uncertain');
+    if (view.state === 'uncertain' || view.closure === 'uncertain' || owner?.state === 'uncertain' || unknownGate) {
       flagged.add(view.id);
       found.push({
         kind: view.reportingState === 'uncertain' ? 'report-uncertain' : 'uncertain-effect', evidence: 'unverifiable', assignmentId: view.id,

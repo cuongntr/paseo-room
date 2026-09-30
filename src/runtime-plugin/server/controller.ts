@@ -607,7 +607,7 @@ export class Controller {
     if (snapshot.provider !== view.observedProviderId || (snapshot.model ?? 'provider-default') !== view.observedModel) {
       return refuse('peer_drift', `Peer ${agentId} now runs ${snapshot.provider}/${snapshot.model ?? 'provider-default'}, not the dispatched ${String(view.observedProviderId)}/${String(view.observedModel)}.`);
     }
-    if (snapshot.activeTurn || snapshot.status === 'running') return refuse('peer_busy', `Peer ${agentId} is still in a turn.`, true);
+    if (snapshot.activeTurn || snapshot.status === 'running') return refuse('peer_busy', `Peer ${agentId} is still in a turn. The runtime tells you when it ends; send this again then.`, true);
     const association = await this.deps.correlations.findByAssignment(view.id, agentId);
     if (association?.agentId !== agentId) return refuse('peer_unbound', 'The Peer\'s reporting bridge is not associated with this assignment.');
     return done(association.correlationId);
@@ -646,12 +646,22 @@ export class Controller {
       const { loaded, view } = found.value;
       if (!from.includes(view.state)) return refuse('assignment_state', `Assignment ${view.id} is ${view.state}.`);
       const ready = await this.peerReadyForTurn(view);
-      if (!ready.ok) return ready;
+      if (!ready.ok) {
+        if (ready.code === 'peer_busy') this.busyRefusals.set(view.id, view.reportingGeneration);
+        return ready;
+      }
       const { turn, prompt } = await record(loaded, view);
       const current = loaded.state.assignments.get(view.id) ?? view;
       return await this.beginTurn(loaded, current, ready.value, turn, prompt);
     });
   }
+
+  /**
+   * Assignments whose Lead was refused `peer_busy`, with the reporting generation of the refusal.
+   * A Peer often ends its turn a few seconds after asking or handing back, and Lead answers first;
+   * that turn's end then tells Lead to send again (`handlers/turns.ts`). Kept by this process only.
+   */
+  readonly busyRefusals = new Map<string, number>();
 
   /** Background gate runs, keyed by gate run id, so callers and tests can await completion. */
   readonly gates = new Map<string, Promise<GateOutcome>>();
@@ -724,7 +734,8 @@ export class Controller {
       const on = `on candidate ${ended.result.candidate.commit.slice(0, 12)}`;
       text = red === undefined
         ? `The runtime gate ${ended.result.id} of ${assignmentName(view)} passed ${on}: exit 0. Accepting it is still your decision.`
-        : `The runtime gate ${ended.result.id} of ${assignmentName(view)} is red ${on}: ${red}.${ended.result.workspaceMoved ? ' Request a new handoff.' : ''}`;
+        : `The runtime gate ${ended.result.id} of ${assignmentName(view)} is red ${on}: ${red}.${ended.result.workspaceMoved ? ' Request a new handoff.' : ''}${
+          ended.result.outputTailAttachment === undefined ? '' : ` The tail of its output is in ${join(loaded.store.gatesDirectory, ended.result.outputTailAttachment)}.`}`;
     } else {
       text = `The runtime gate ${ended.gateRunId} of ${assignmentName(view)} has no trustworthy result (${ended.reason.replace(/\.$/, '')}). Run gate_run again if the assignment needs it.`;
     }

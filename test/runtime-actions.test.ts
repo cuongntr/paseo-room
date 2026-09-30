@@ -207,6 +207,29 @@ describe('Supervisor action handlers', () => {
     expect(h.paseo.agents.get('lead-1')?.prompts.at(-1)?.text).toContain('Supervisor: Please check the release branch.');
   });
 
+  it('reaches a Lead whose session closed, which the send resumes, and none that is archived', async () => {
+    const { h, supervisor, supervisorCorrelation } = await room();
+    const lead = h.paseo.agents.get('lead-1');
+    if (lead === undefined) throw new Error('no lead');
+    lead.status = 'closed';
+    const message = async (text: string) => body(await supervisor.message_lead?.(request(supervisorCorrelation, 'message_lead', { message: text }), { kind: 'action', role: 'supervisor' }) ?? { ok: false, result: {} });
+    expect(await message('Still there?')).toMatchObject({ noticeId: expect.any(String) as unknown });
+    expect(lead.prompts.at(-1)?.text).toContain('Supervisor: Still there?');
+
+    // A live Lead is preferred over a closed one, rather than read as a second owner.
+    h.paseo.addAgent({ id: 'lead-2', provider: 'claude-lead', cwd: h.repo });
+    lead.status = 'closed';
+    lead.activeTurn = false;
+    expect(await message('Which of you?')).toMatchObject({ noticeId: expect.any(String) as unknown });
+    expect(h.paseo.agents.get('lead-2')?.prompts.at(-1)?.text).toContain('Supervisor: Which of you?');
+
+    for (const id of ['lead-1', 'lead-2']) {
+      const seat = h.paseo.agents.get(id);
+      if (seat !== undefined) seat.archivedAt = '2026-09-30T00:00:00.000Z';
+    }
+    expect(await message('x')).toMatchObject({ error: { code: 'lead_unavailable' } });
+  });
+
   it('refuses a Lead correlation and an ambiguous Lead', async () => {
     const { h, supervisor, leadCorrelation, supervisorCorrelation } = await room();
     expect(body(await supervisor.room_status?.(request(leadCorrelation, 'room_status', {}), { kind: 'action', role: 'supervisor' }) ?? { ok: false, result: {} }))

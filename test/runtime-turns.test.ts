@@ -115,12 +115,69 @@ describe('an answer sent before the asking turn is judged', () => {
     expect((await recover())[0]?.actions).toEqual([expect.objectContaining({ assignmentId: id, intent: 'turn-g2', outcome: 'failed' })]);
   });
 
+  it('does not judge an asking turn that began before the plugin started against a later answer', async () => {
+    // cmdb, 2026-09-28: the plugin reloaded while the Peer's turn ran, so its start was never
+    // announced; the answer opened generation 2, the asking turn's end was judged against it, and
+    // the Peer's real handoff was refused as stale.
+    const d = await dispatched();
+    await askLead(d.h, d.id);
+    d.h.paseo.endTurn(d.peer);
+    const answered = await d.h.controller.answer(d.h.lead, { assignmentId: d.id, answer: 'Yes.' });
+    if (!answered.ok) throw new Error(answered.message);
+    const loaded = await d.h.controller.load(await d.h.controller.projectFor(d.h.repo));
+    if (!loaded.ok) throw new Error(loaded.message);
+    let clock = Date.parse(loaded.value.events.filter(event => event.type === 'run.requested').at(-1)?.occurredAt ?? '') - 500;
+    const turns = createTurnHandlers(d.h.controller, d.spool, new TurnStarts(() => clock));
+    expect(await turns.turnEnded(ended(d.peer, 'I asked Lead and am waiting.'))).toBe('none');
+    expect((await view(d.h, d.id)).view).toMatchObject({ state: 'active', reportingGeneration: 2, reportingState: 'open' });
+
+    clock += 1_000;
+    turns.turnStarted({ agent: agent(d.peer), turnId: 't2' });
+    expect(await turns.turnEnded({ ...ended(d.peer), turnId: 't2' })).toBe('missing');
+  });
+
   it('still judges the answer once its Peer is archived before the turn could begin', async () => {
     const { h, id, peer, spool, starts } = await answeredAsTurnEnds();
     await h.paseo.archive(peer);
     const [report] = await new Recovery(h.controller, spool, starts).recoverAll();
     expect(report?.actions).toEqual(expect.arrayContaining([expect.objectContaining({ assignmentId: id, intent: 'turn-g2', outcome: 'failed' })]));
     expect((await view(h, id)).view).toMatchObject({ state: 'blocked', reportingState: 'consumed' });
+  });
+});
+
+describe('a Lead refused as peer_busy', () => {
+  // The Peer asks and takes a few more seconds to end its turn; Lead answers first and is refused
+  // (cmdb, 2026-09-27..30: 32 refusals, and nothing woke Lead once the Peer was free).
+  it('is told when the Peer\'s turn ends, and its answer then goes', async () => {
+    const { h, id, peer, turns } = await dispatched();
+    await askLead(h, id);
+    const refused = await h.controller.answer(h.lead, { assignmentId: id, answer: 'Yes.' });
+    expect(refused).toMatchObject({ ok: false, code: 'peer_busy', message: expect.stringContaining('The runtime tells you when it ends') as unknown });
+    h.paseo.endTurn('lead-1');
+
+    h.paseo.endTurn(peer);
+    expect(await turns.turnEnded(ended(peer, 'I asked Lead and am waiting.'))).toBe('none');
+    expect(h.paseo.agents.get('lead-1')?.prompts.at(-1)?.text).toContain('has ended its turn, so the answer refused as peer_busy can go now');
+    expect(await h.controller.answer(h.lead, { assignmentId: id, answer: 'Yes.' })).toMatchObject({ ok: true });
+
+    // Told once: the answer turn's own end is judged, and wakes nobody for the old refusal.
+    h.paseo.endTurn('lead-1');
+    h.paseo.endTurn(peer);
+    turns.turnStarted({ agent: agent(peer), turnId: 't2' });
+    expect(await turns.turnEnded({ ...ended(peer), turnId: 't2' })).toBe('missing');
+    expect(h.paseo.agents.get('lead-1')?.prompts.filter(prompt => prompt.text.includes('peer_busy'))).toHaveLength(1);
+  });
+
+  it('is not told when it was never refused, or once its retry went through', async () => {
+    const { h, id, peer, turns } = await dispatched();
+    await askLead(h, id);
+    await h.controller.answer(h.lead, { assignmentId: id, answer: 'Yes.' });
+    h.paseo.endTurn(peer);
+    // The retry opened generation 2 before the asking turn's end was heard.
+    expect(await h.controller.answer(h.lead, { assignmentId: id, answer: 'Yes.' })).toMatchObject({ ok: true });
+    h.paseo.endTurn('lead-1');
+    await turns.turnEnded(ended(peer, 'I asked Lead and am waiting.'));
+    expect(h.paseo.agents.get('lead-1')?.prompts.some(prompt => prompt.text.includes('peer_busy'))).toBe(false);
   });
 });
 

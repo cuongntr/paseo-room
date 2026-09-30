@@ -99,16 +99,36 @@ describe('notice delivery never interrupts (attention delta §7.4)', () => {
     expect((await loaded(h)).state.notices.get(noticeId)?.state).toBe('sent');
   });
 
-  it('steers a Supervisor message into a running turn, as a person\'s directive may not wait', async () => {
+  it('holds a Supervisor message too, since a steer Claude takes still cancels its running tool', async () => {
     const h = await room();
     const lead = h.paseo.agents.get('lead-1');
     if (lead === undefined) throw new Error('no lead');
     lead.status = 'running';
     lead.activeTurn = true;
     const noticeId = await h.controller.notices.notify(await loaded(h), { kind: 'supervisor-message', class: 'owner', disposition: 'lead-now', text: 'Supervisor: stop', recipient: { agentId: 'lead-1', role: 'lead' } });
+    expect(lead.prompts).toEqual([]);
+    expect((await loaded(h)).state.notices.get(noticeId)?.state).toBe('pending');
+
+    h.paseo.endTurn('lead-1');
+    await h.controller.notices.retryFor('lead-1');
+    expect(lead.prompts).toEqual([expect.objectContaining({ messageId: noticeId, behavior: 'steer' })]);
     expect(lead.interrupted).toBe(0);
-    expect(lead.prompts.at(-1)).toMatchObject({ messageId: noticeId, behavior: 'steer' });
-    expect((await loaded(h)).state.notices.get(noticeId)?.state).toBe('sent');
+  });
+
+  it('never sends to an archived seat, which the send would unarchive, but does to a closed one', async () => {
+    const h = await room();
+    const lead = h.paseo.agents.get('lead-1');
+    if (lead === undefined) throw new Error('no lead');
+    lead.status = 'closed';
+    const resumed = await h.controller.notices.notify(await loaded(h), { kind: 'k', class: 'owner', disposition: 'lead-now', text: 'Resume', recipient: { agentId: 'lead-1', role: 'lead' } });
+    expect((await loaded(h)).state.notices.get(resumed)?.state).toBe('sent');
+
+    h.paseo.endTurn('lead-1');
+    lead.archivedAt = '2026-09-30T00:00:00.000Z';
+    const prompts = lead.prompts.length;
+    const noticeId = await h.controller.notices.notify(await loaded(h), { kind: 'k', class: 'owner', disposition: 'lead-now', text: 'Too late', recipient: { agentId: 'lead-1', role: 'lead' } });
+    expect((await loaded(h)).state.notices.get(noticeId)?.state).toBe('failed');
+    expect(lead.prompts).toHaveLength(prompts);
   });
 
   it('holds a notice while the recipient has a pending permission, and delivers it after', async () => {
@@ -160,17 +180,19 @@ describe('notices held through one turn go as one message (§4.4)', () => {
     expect([state.get(question)?.state, state.get(gate)?.state]).toEqual(['sent', 'sent']);
   });
 
-  it('steers a Supervisor message alone, while the runtime\'s facts still wait for the turn end', async () => {
+  it('bundles a held Supervisor message with the runtime\'s facts at the turn end', async () => {
     const h = await room();
     const lead = busy(h);
     const gate = await h.controller.notices.notify(await loaded(h), fact('The gate passed'));
     const message = await h.controller.notices.notify(await loaded(h), { ...fact('Supervisor: stop'), kind: 'supervisor-message' });
-    expect(lead.prompts).toEqual([{ text: `[paseo-room notice ${message}] Supervisor: stop`, messageId: message, behavior: 'steer' }]);
-    expect((await loaded(h)).state.notices.get(gate)?.state).toBe('pending');
+    expect(lead.prompts).toEqual([]);
 
     h.paseo.endTurn('lead-1');
     await h.controller.notices.retryFor('lead-1');
-    expect(lead.prompts.at(-1)).toEqual({ text: `[paseo-room notice ${gate}] The gate passed`, messageId: gate, behavior: 'steer' });
+    const text = `[paseo-room notices ${gate} ${message}]\n\n[paseo-room notice ${gate}] The gate passed\n\n[paseo-room notice ${message}] Supervisor: stop`;
+    expect(lead.prompts).toEqual([{ text, messageId: gate, behavior: 'steer' }]);
+    // The Observer still tells the Lead's answer to that message from any other turn.
+    expect(carriesSupervisorMessage(text)).toBe(true);
   });
 
   it('records a bundle delivered before its receipt was lost, and never resends it', async () => {

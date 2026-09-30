@@ -81,6 +81,21 @@ describe('masking', () => {
     for (const [input, expected] of cases) expect(mask(input, { networkIdentifiers: false })).toBe(expected);
   });
 
+  it('masks a credential a plain word names, but not the word in a sentence', () => {
+    const cases: [string, string][] = [
+      ['password: hunter2', 'password: [secret]'],
+      ['token=abc', 'token=[secret]'],
+      ['accessToken: abc', 'accessToken: [secret]'],
+      ['Token: dGhpc2lzYWxvbmdvcGFxdWV0b2tlbg', 'Token: [secret]'],
+      // Masked in live letters, and meaningless once masked (cmdb, 2026-09-30).
+      ['nối theo từng người qua token Keycloak đã đổi', 'nối theo từng người qua token Keycloak đã đổi'],
+      ['**Fresh sign-in to create a token:** name it', '**Fresh sign-in to create a token:** name it'],
+      ['create a token: name it after the host', 'create a token: name it after the host'],
+      ['the token: 5 phút', 'the token: 5 phút'],
+    ];
+    for (const [input, expected] of cases) expect(mask(input, { networkIdentifiers: false })).toBe(expected);
+  });
+
   it('masks network identifiers only when asked, and leaves ordinary prose alone', () => {
     expect(mask('deploy to 10.20.30.40:8080 and dx-cmdb.cmctelecom.vn', { networkIdentifiers: true })).toBe('deploy to [ip] and [host]');
     expect(mask('deploy to 10.20.30.40', { networkIdentifiers: false })).toBe('deploy to 10.20.30.40');

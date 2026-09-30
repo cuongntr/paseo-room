@@ -2,7 +2,7 @@
 import { rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { quiescence } from '../src/runtime-plugin/server/domain/views.js';
+import { findings, quiescence } from '../src/runtime-plugin/server/domain/views.js';
 import { Recovery } from '../src/runtime-plugin/server/recovery.js';
 import { dispatchAndHandBack, harness, writableBrief, type Harness } from './runtime-harness.js';
 
@@ -86,9 +86,17 @@ describe('gate_run review fixes', () => {
     if (view?.candidate === undefined) throw new Error('missing candidate');
     await h.controller.append(project, { type: 'gate.requested', payloadVersion: 1, assignmentId: id, actor: { source: 'plugin' }, data: { gateRunId: 'gate-late', candidate: view.candidate, command: 'sleep 1', timeoutSeconds: 30, processContractVersion: 1, environmentPolicyVersion: 1 } });
     await h.controller.append(project, { type: 'gate.uncertain', payloadVersion: 1, assignmentId: id, actor: { source: 'plugin' }, data: { gateRunId: 'gate-late', reason: 'restart' } });
+    const unknownEffects = async () => {
+      const { state, events } = await loaded(h);
+      return findings({ projectId: 'p', canonicalRoot: h.repo, replay: { status: 'ok', problems: [] }, violations: [], state, events, liveAvailable: true })
+        .filter(finding => finding.kind === 'uncertain-effect').length;
+    };
+    expect(await unknownEffects()).toBe(1);
     await h.controller.accept(h.lead, { assignmentId: id, reason: 'ok' });
     await h.controller.close(h.lead, { assignmentId: id });
     expect(quiescence((await loaded(h)).state)).toEqual({ quiescent: true, blockers: [] });
+    // Nor does it keep the project in attention once the assignment is closed (cmdb, 2026-09-29).
+    expect(await unknownEffects()).toBe(0);
 
     await writeFile(join(project.store.gatesDirectory, 'gate-late.result.json'), JSON.stringify({
       id: 'gate-late', assignmentId: id, candidate: view.candidate, command: 'sleep 1', startedAt: '2026-09-22T10:00:00Z',

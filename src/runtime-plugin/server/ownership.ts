@@ -16,12 +16,15 @@ export interface LeadEvidence {
   readonly leadProviderIds: readonly string[];
 }
 
-/** Every live, unarchived room Lead whose workspace resolves to this project's repository. */
-export async function projectLeads(controller: Controller, loaded: LoadedProject): Promise<LeadEvidence> {
+/**
+ * Every live, unarchived room Lead whose workspace resolves to this project's repository. With
+ * `closed`, a Lead whose session has closed counts too: it owns the project until it is archived.
+ */
+export async function projectLeads(controller: Controller, loaded: LoadedProject, options: { readonly closed?: boolean } = {}): Promise<LeadEvidence> {
   const agents = await controller.deps.paseo.listAgents();
   const leads: { agentId: string; providerId: string }[] = [];
   for (const agent of agents) {
-    if (agent.archivedAt !== null || agent.status === 'closed') continue;
+    if (agent.archivedAt !== null || (agent.status === 'closed' && options.closed !== true)) continue;
     if (controller.deps.recognition.recognize(agent.provider)?.role !== 'lead') continue;
     const identity = await controller.deps.git.identity(agent.cwd).catch(() => undefined);
     if (identity?.gitCommonDir === loaded.store.meta.gitCommonDir) leads.push({ agentId: agent.id, providerId: agent.provider });
