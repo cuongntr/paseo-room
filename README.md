@@ -755,10 +755,10 @@ learn only when you ask it to check.
     Lead is not running, when Paseo would take none.
   - **The Supervisor may do the same**, but only for a Lead of its own project that is past its
     rotation mark, through the runtime's `lead_replace_*` tools. The runtime refuses a Lead below
-    the mark and applies the same quiet-point checks. The Supervisor reviews the handoff against the
-    repository, confirms it, and tells you which Lead now owns the project. The panel shows a
-    replacement the Supervisor started, and you may cancel it until it completes. Any other reason to
-    replace a Lead stays yours.
+    the mark, or on a window where the mark does not apply, and applies the same quiet-point
+    checks. The Supervisor reviews the handoff against the repository, confirms it, and tells you
+    which Lead now owns the project. The panel shows a replacement the Supervisor started, and you
+    may cancel it until it completes. Any other reason to replace a Lead stays yours.
 - **Settings › Room attention.** Here you turn letters on or off, see what reached Supervisors in
   the last 24 hours (letters by level, incidents, Lead turns by what was decided, and the ratings you
   or a Supervisor gave), change when a Supervisor is told and how often, and configure the optional

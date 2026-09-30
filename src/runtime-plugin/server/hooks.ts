@@ -102,8 +102,8 @@ const LOOKUP_MS = 5_000;
 
 /**
  * `env` with Claude's compact window for this seat, or undefined to leave it as it is: only an exact
- * room seat whose compact mark reaches it and fits the window of `model` (the room profile's model
- * when that is unknown) receives it, and a value already set, by another plugin, is kept. Any failure
+ * room seat whose compact mark reaches it and applies on the window of `model` (the room profile's
+ * model when that is unknown) receives it, and a value already set, by another plugin, is kept. Any failure
  * or a lookup past its bound leaves the environment unchanged: a seat never fails to start over a
  * budget.
  */

@@ -21,7 +21,7 @@ const OFF = 'off';
 const PRESETS = Array.from({ length: (MAX_MARK_PERCENT - MIN_MARK_PERCENT) / 5 + 1 }, (_, index) => MIN_MARK_PERCENT + index * 5);
 /** The window sizes room Claude models come in. */
 const CLAUDE_WINDOWS = [1_000_000, 200_000];
-/** The Lead's report mark reaches every agent, and Codex and Pi models run 272k. */
+/** The Lead's report mark reaches every agent; today's Codex models run 272k, in Codex or in Pi. */
 const LEAD_WINDOWS = [1_000_000, 272_000, 200_000];
 
 function options(current: number | null): { label: string; value: string }[] {
@@ -30,6 +30,11 @@ function options(current: number | null): { label: string; value: string }[] {
 }
 
 const parse = (value: string): number | null => (value === OFF ? null : Number(value));
+
+/** `a, b or c`. */
+function orList(items: readonly string[]): string {
+  return items.length < 2 ? items.join('') : `${items.slice(0, -1).join(', ')} or ${items.at(-1) ?? ''}`;
+}
 
 /** What a mark comes to on each window: `400k on a 1M model; not applied on a 272k or 200k model (below 150k)`. */
 function onWindows(percent: number, windows: readonly number[]): string {
@@ -40,7 +45,7 @@ function onWindows(percent: number, windows: readonly number[]): string {
     if (tokens === undefined) not.push(formatTokens(size));
     else applied.push(`${formatTokens(tokens)} on a ${formatTokens(size)} model`);
   }
-  const skipped = not.length === 0 ? [] : [`not applied on a ${not.join(' or ')} model (below ${formatTokens(MIN_MARK_TOKENS)})`];
+  const skipped = not.length === 0 ? [] : [`not applied on a ${orList(not)} model (below ${formatTokens(MIN_MARK_TOKENS)})`];
   return [applied.join(', '), ...skipped].filter(part => part !== '').join('; ');
 }
 

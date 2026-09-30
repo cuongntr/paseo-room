@@ -145,8 +145,9 @@ Where a mark comes to less, it does not apply to that seat:
 - its Lead is not reported (K-D6);
 - its Supervisor may not replace it (K-D9); Human still may.
 
-The panel shows only the marks that apply to a seat. On a 1M window nothing changes above 15%. A
-policy of its own for smaller windows waits for measured Codex and Pi Leads, with Q-K04's delta.
+The panel shows only the marks that apply to a seat. On a 1M window only the 10% option changes:
+it comes to 100k and no longer applies. A policy of its own for smaller windows waits for measured
+Codex and Pi Leads, with Q-K04's delta.
 
 ### K-D3 — Claude's compact mark is injected at session open by the runtime
 Claude Code reads `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, the same as the `autoCompactWindow` setting: the
