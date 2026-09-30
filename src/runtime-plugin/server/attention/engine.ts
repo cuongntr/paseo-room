@@ -397,7 +397,10 @@ export class AttentionEngine {
       if (sensed !== undefined && sensed.mode === 'assist' && sensed.assist) triaged = assistLeadTurn(sensed.assessment, facts);
     }
     const level = triaged.decision;
-    await record(level, triaged.reason);
+    // A turn of the Lead's own loop that leaves a Peer working is progress (§6.1): it goes with the
+    // Supervisor's next letter and never wakes it alone, since a Supervisor almost never acts on one.
+    const progress = level === 'digest' && pending.turn.trigger === 'runtime' && facts.peersRunning > 0;
+    await record(level, progress ? 'progress: the Lead\'s loop still runs; it goes with the next letter' : triaged.reason);
     if (triaged.continuing === true) this.quiet.set(project.key, pending.turn.endedAt);
     else this.quiet.delete(project.key);
     // An incident still pages; any other answer is a reply, which goes even with letters off.
@@ -428,6 +431,7 @@ export class AttentionEngine {
       line: `${project.name} · ${seatLabel(lead)} ended a turn (${pending.turn.outcome}; ${await this.runningNow(lead, facts)})${said}`,
       createdAt: pending.turn.endedAt,
       ...(reply ? { reply: true } : {}),
+      ...(progress ? { rideAlong: true } : {}),
       // A NEEDS-HUMAN line is Lead's own question for Human: the wake budget never delays it (§7.2).
       ...(level === 'now' && markers.length > 0 ? { unbudgeted: true } : {}),
     });

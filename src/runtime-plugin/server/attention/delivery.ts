@@ -4,7 +4,8 @@
  * A letter never interrupts and never clears a permission: Paseo's send clears every pending
  * permission of its recipient, so nothing is sent while the Supervisor holds one. A `now` letter
  * waits for the Supervisor to be idle; a page waits `pageHoldSeconds` and then steers into a
- * running turn. Digest lines coalesce and go together, at most once per `digestMinutes`. Non-page
+ * running turn. Digest lines coalesce and go together, at most once per `digestMinutes`; a line of
+ * progress rides along with a letter that goes anyway and never makes one due. Non-page
  * wakes are budgeted per hour; overflow joins the digest, except a Lead's own question for Human. A
  * reply answers the Supervisor's own request, such as a replacement handoff (seat context delta K-D9)
  * or its Lead's answer to its message: it goes as soon as the Supervisor is idle, even with letters
@@ -49,6 +50,8 @@ export interface LetterItem {
   readonly reply?: true;
   /** A Lead's NEEDS-HUMAN line: it wakes the Supervisor even past the wake budget. */
   readonly unbudgeted?: true;
+  /** Progress of a Lead's loop that still runs: a digest line that goes with the next letter and never makes one due. */
+  readonly rideAlong?: true;
 }
 
 interface Queue {
@@ -177,9 +180,10 @@ export class Delivery {
       queue.digest.push(...moved.map(item => ({ ...item, level: 'digest' as const })));
     }
     const digestMs = settings.delivery.digestMinutes * 60 * 1_000;
-    const oldestDigest = queue.digest[0]?.createdAt;
+    const waking = queue.digest.filter(item => item.rideAlong !== true);
+    const oldestDigest = waking[0]?.createdAt;
     const digestDue = idle && oldestDigest !== undefined && now - queue.lastDigestAt >= digestMs
-      && (now - oldestDigest >= digestMs || queue.digest.length >= DIGEST_MAX_LINES);
+      && (now - oldestDigest >= digestMs || waking.length >= DIGEST_MAX_LINES);
 
     let items: LetterItem[] = [];
     let level: Level = 'digest';

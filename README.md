@@ -724,12 +724,16 @@ learn only when you ask it to check.
   - A Lead turn that read the Supervisor's `message_lead` answers it. The answer goes to the
     Supervisor as soon as it is idle, with up to 1,500 characters of the Lead's message, even with
     letters off, and no later turn replaces it.
+  - A Lead turn that began with the runtime's notices and left a Peer working is progress. It goes
+    with the Supervisor's next letter and never wakes it alone; once the loop leaves nothing
+    running, its next turn is news again.
   - Letters are held until the Supervisor is idle, batched into digests, and limited to a few wakes
     an hour; a `NEEDS-HUMAN` line and an answer are never held back by that limit. Letters are never
     sent while the Supervisor holds a permission or a question to you, because a send would deny it.
-  - Each item has an id for `attention_feedback`, and a letter's own id rates every item in it. A
-    letter is evidence, not an instruction: the Supervisor contract has it ask or nudge the Lead, or
-    relay a question to you, and never direct a Peer.
+  - Each item has an id for `attention_feedback`, and a letter's own id rates every item in it. The
+    Supervisor rates only noise; an item it leaves unrated counts as useful. A letter is evidence,
+    not an instruction: the Supervisor contract has it ask or nudge the Lead, or relay a question to
+    you, and never direct a Peer.
 - **Starting seats.** From the **Room** view, **New Supervisor** opens one in an existing directory
   outside every repository. **Add repository** checks a repository, opens its Lead under the
   Supervisor you pick, and sends a fixed kickoff with your first directive verbatim; it also offers

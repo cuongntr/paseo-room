@@ -420,6 +420,41 @@ describe('attention signals and letters', () => {
     expect(letters()).toHaveLength(2);
   });
 
+  it('lets the progress of a Lead\'s running loop go with the next letter, never waking the Supervisor alone', async () => {
+    await settle();
+    await setBusy('peer');
+    await engine.onTurnEnded('lead', { kind: 'completed' }, [
+      { type: 'user_message', text: noticeText('ntc_h1', 'Engineer handed back commit abc1234.') },
+      { type: 'assistant_message', text: 'Re-running the gate while the reviewer checks it.' },
+    ]);
+    advance(30 * MINUTE);
+    await settle();
+    expect(letters()).toEqual([]);
+    expect((await logRecords()).filter(record => record.type === 'lead-turn').map(record => [record.decision, record.reason]))
+      .toEqual([['digest', 'progress: the Lead\'s loop still runs; it goes with the next letter']]);
+
+    // A letter that goes anyway carries it.
+    await request('peer', 'perm-1');
+    advance(6 * MINUTE);
+    await settle();
+    expect(letters()).toHaveLength(1);
+    expect(letters()[0]?.text).toContain('permission perm-1');
+    expect(letters()[0]?.text).toContain('Re-running the gate while the reviewer checks it.');
+
+    // A turn that leaves nothing running is news again: the loop finished or stalled.
+    await setIdle('sup');
+    await resolve('peer', 'perm-1');
+    await setIdle('peer');
+    await engine.onTurnEnded('lead', { kind: 'completed' }, [
+      { type: 'user_message', text: noticeText('ntc_h2', 'Reviewer handed back.') },
+      { type: 'assistant_message', text: 'Accepted and closed; nothing else is open.' },
+    ]);
+    advance(16 * MINUTE);
+    await settle();
+    expect(letters()).toHaveLength(2);
+    expect(letters()[1]?.text).toContain('Accepted and closed; nothing else is open.');
+  });
+
   it('sends a digest early at ten lines, and at most once per digest interval', async () => {
     await settle();
     // Ten Leads of ten projects, so no line supersedes another and no Lead duplicates another.

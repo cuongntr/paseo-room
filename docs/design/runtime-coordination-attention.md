@@ -242,6 +242,17 @@ Pages and `now` signals are delivered as classed. `lead-turn-ended` is a **diges
 masked tail of Lead's message; `peer-report` is recorded only. Nothing is suppressed, and every
 Supervisor wake is either a mandatory signal or a batched digest.
 
+A digest line is **progress** when its turn began with the runtime's notices and, when it ended, a
+seat the Lead opened was still running or held a permission. That is the Lead's own loop at work. It
+rides along with the Supervisor's next letter and never wakes it alone (§7.2). A turn of that loop
+that leaves nothing running stays an ordinary digest line, since the batch either finished or
+stalled.
+
+Six days of live use, 2026-09-24 to 2026-09-30, drew that line:
+- 248 progress turns: the Supervisor rated 31 useful and 62 noise. It messaged a Lead, asked Human or
+  replaced a Lead after 4 of the 77 letters that carried nothing else.
+- 83 turns of the same loop that left nothing running: 19 rated useful and 16 noise.
+
 ### 6.1a Lead marker lines
 The Lead contract ("Human Questions and Incidents") has a turn put each question only Human can
 answer on its own line beginning `NEEDS-HUMAN:`, and each effect beyond the work's intended scope on
@@ -343,6 +354,8 @@ archived, the letter is shown on the panel as `human-required` and nothing is se
 - Digest lines coalesce per Supervisor. The digest goes when the Supervisor is idle and either
   `digestMinutes` (15) have passed since its first line or it has 10 lines. At most one digest per
   `digestMinutes`.
+- A progress line (§6.1) goes with any letter that goes anyway, and is superseded by its Lead's
+  later turns like any digest line. It never makes a digest due, by age or by count.
 - Non-page `now` letters are budgeted at `wakesPerHour` (6) per Supervisor; overflow joins the digest.
   Pages are never budgeted, and neither is a Lead's `NEEDS-HUMAN` item (§6.1a). Such an item still
   counts as a wake.
@@ -686,6 +699,7 @@ files under `runtime/v1/attention` stay until `remove --apply`.
 
 | Date | Author | Change |
 |---|---|---|
+| 2026-09-30 | Repository owner / Bytes | §6.1, §7.2: a Lead turn that began with the runtime's notices and left a Peer working is progress. It rides along with the Supervisor's next letter and never wakes it alone. Replayed over six days, letters fall from 347 to 271, and none is added. A proposed half-hourly bulletin built from the ledger was dropped at review: it saved less and needed a setting, a renderer and a letter level. `attention_feedback`'s description asks the Supervisor to rate only noise, since 233 of its model calls in six days did nothing but rate. No authority is granted or removed. |
 | 2026-09-30 | Repository owner / Bytes | §6.1a, §7.2: a Lead turn that answers the Supervisor's `message_lead` is a reply, delivered once the Supervisor is idle, with up to 1,500 characters of the answer. It goes even with letters off and is never budgeted or superseded. A `NEEDS-HUMAN` item is exempt from the wake budget. In six days, 132 of 208 answers had gone to the digest: 63 arrived about five minutes late and 69 never arrived. 15 of 107 `NEEDS-HUMAN` items had overflowed the budget into the digest. `message_lead`'s description says the answer comes back as a letter. Code still chooses every class and recipient. No authority is granted or removed. |
 | 2026-09-29 | Bytes | §8.3: `runtime.attention-status` adds a 24-hour tally of the attention log for the settings screen. Display only; letters, triage and authority are unchanged. |
 | 2026-09-29 | Repository owner / Bytes | §7.4: notices held through one recipient turn are sent together when it ends, as one message ([runtime design](runtime-coordination.md) §4.4), instead of one per turn. |
