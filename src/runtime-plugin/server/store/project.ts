@@ -75,6 +75,35 @@ async function readJsonFiles(directory: string, names: readonly string[]): Promi
   return files;
 }
 
+/**
+ * Event files already read, per events directory, for the life of the plugin process. An event
+ * file is published once and never rewritten, so a replay reads only the files it has not seen,
+ * and concurrent replays share one read of each. Reading the whole ledger on every operation let
+ * replays pile up on a ledger of thousands of events until the runtime stopped answering
+ * (cmdb, 2026-10-01). A failed read is not kept, so the next replay tries the file again.
+ */
+const READS = new Map<string, Map<string, Promise<JsonFile>>>();
+
+async function readEventFiles(directory: string, names: readonly string[]): Promise<Map<string, JsonFile>> {
+  let known = READS.get(directory);
+  if (known === undefined) { known = new Map(); READS.set(directory, known); }
+  // A file that left the directory, such as one quarantined, is forgotten with it.
+  const present = new Set(names);
+  for (const name of known.keys()) if (!present.has(name)) known.delete(name);
+  const missing = names.filter(name => !known.has(name));
+  if (missing.length > 0) {
+    const read = readJsonFiles(directory, missing);
+    for (const name of missing) {
+      const file = read.then(files => files.get(name) ?? { error: 'The event file was not read.' });
+      known.set(name, file);
+      void file.then(result => { if ('error' in result && known.get(name) === file) known.delete(name); });
+    }
+  }
+  const files = new Map<string, JsonFile>();
+  for (const name of names) files.set(name, await (known.get(name) ?? Promise.resolve({ error: 'The event file was not read.' })));
+  return files;
+}
+
 function eventName(sequence: number): string {
   return `${String(sequence).padStart(12, '0')}.json`;
 }
@@ -144,7 +173,7 @@ export class ProjectStore {
   /** Reads every event strictly. Any unreadable file pauses the project; nothing is moved. */
   async replay(): Promise<ReplayResult> {
     const names = (await readdir(this.eventsDirectory)).sort();
-    const files = await readJsonFiles(this.eventsDirectory, names.filter(name => EVENT_FILE.test(name)));
+    const files = await readEventFiles(this.eventsDirectory, names.filter(name => EVENT_FILE.test(name)));
     const problems: ReplayProblem[] = [];
     const events: RuntimeEventV1[] = [];
     const ids = new Map<string, string>();

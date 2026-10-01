@@ -127,6 +127,24 @@ describe('runtime project store', () => {
     await expect(store.quarantine('../meta.json')).rejects.toThrow();
   });
 
+  it('reads an event file once for every store of the project, and again only after a failed read', async () => {
+    const store = await ProjectStore.create(await room(), binding);
+    for (let sequence = 2; sequence <= 2_001; sequence += 1) await rawEvent(store, sequence);
+    // Concurrent replays through separate store objects share one read of each file and agree.
+    const replays = await Promise.all(Array.from({ length: 20 }, async () => (await ProjectStore.open(store.directory)).replay()));
+    expect(new Set(replays.map(replay => `${replay.status}:${String(replay.events.length)}`))).toEqual(new Set(['ok:2001']));
+    // A published event file is never rewritten, so a read file is not read again.
+    await writeFile(join(store.eventsDirectory, '000000000002.json'), 'garbage');
+    expect((await store.replay()).status).toBe('ok');
+    // A file that could not be read is tried again on the next replay.
+    await writeFile(join(store.eventsDirectory, '000000002002.json'), 'garbage');
+    expect((await store.replay()).status).toBe('paused');
+    await rawEvent(store, 2_002);
+    const repaired = await store.replay();
+    expect(repaired.status).toBe('ok');
+    expect(repaired.events).toHaveLength(2_002);
+  }, 60_000);
+
   it('replays 10,000 events cold within the performance target', async () => {
     const store = await ProjectStore.create(await room(), binding);
     const writes: Promise<void>[] = [];

@@ -731,6 +731,9 @@ On replay:
 - an unknown event type or unsupported payload version pauses that project;
 - an invalid file moves nothing automatically. The project is marked degraded and the operator may
   inspect or explicitly quarantine it; it is never read as an empty ledger.
+- a plugin process keeps each event file it has read, since a published file is never rewritten: a
+  replay reads only files it has not seen, and concurrent replays share one read of each. A failed
+  read is not kept, and a file that leaves the directory, such as one quarantined, is forgotten.
 
 ### 4.3 Assignment record
 
@@ -1700,6 +1703,7 @@ Q-011 do not block Phases 0–1 because those phases contain no sensor and no wo
 
 | Date | Author | Change |
 |---|---|---|
+| 2026-10-01 | Repository owner / Bytes | §4.2: replay keeps each event file a plugin process has read, and concurrent replays share one read. Every operation had read the whole ledger again; on cmdb's 7,600 events about 320 replays piled up, holding 10,000 open files and 3 GB, and the runtime stopped answering hooks, `message_lead` and `room_status` for about 20 minutes until the plugin was reloaded. A warm replay of that ledger now takes about 50 ms instead of 450 ms. Strict replay is unchanged. No event, authority or tool change. |
 | 2026-10-01 | Repository owner / Bytes | D4: Human no longer configures an attention sensor; the [attention delta](runtime-coordination-attention.md)'s 2026-10-01 amendment removes it. The Phase 5 rows below record what was built. No seat gains or loses authority; no event, validation step or tool changes. |
 | 2026-09-30 | Repository owner / Bytes | Defects from four days of live use (cmdb, 2026-09-27..30). §3.4: Lead refused `peer_busy` is told when the Peer's turn ends (32 refusals in four days; nothing woke Lead after one, and unless it retried by itself the project waited until a person noticed), and a Peer turn whose start the runtime never heard is judged as an earlier turn when its generation's prompt came later (a plugin reload mid-turn had closed an answer's generation again). D9: a Supervisor message waits for the Lead's turn to end like every other `owner` notice (13 of 124 had cut off a running command); no notice goes to an archived seat. D6: a red gate's notice names its output file, and an unknown gate outcome stops raising a finding once its assignment is closed. `message_lead` reaches a Lead whose session closed but which is not archived. No seat gains or loses authority; Lead receives one more `owner` notice kind (`peer-free`). |
 | 2026-09-29 | Repository owner / Bytes | §3.1 range and §14: both room plugins accept Paseo `>=0.8.0` with no upper bound, and the CLI's separate plugin range checks are gone, since that floor is its compatibility check's. Paseo shipped five releases in a week and `<0.10.0` refused the carrier on the current one; a file-by-file comparison of `0.10.1` with `0.9.2` found the plugin SDK, plugin host, send path and worktree surfaces identical. §13 Phase 2: worktree dispatch keeps only its `0.9.1` floor ([Phase 2 delta](runtime-coordination-phase2.md) §8, §9.4). No event, authority or tool change. |
