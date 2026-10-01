@@ -92,9 +92,10 @@ export function createRuntimeContext(location: RoomLocation, nodePath = process.
   const registries = {
     supervisor: createSupervisorHandlers(controller, attention, succession),
     lead: createLeadHandlers(controller),
-    peer: { ...createPeerHandlers(controller) },
+    // The spool is built from these registries just below; the closure reads it only once a request arrives.
+    peer: { ...createPeerHandlers(controller, (correlation: string): Promise<string[]> => spool.unresolvedFor(correlation)) },
   };
-  const spool = new Spool({
+  const spool: Spool = new Spool({
     root: join(location.runtimeRoot, 'spool'),
     // Only a durable association routes a call; a provisional correlation reaches nothing.
     resolve: async correlation => {

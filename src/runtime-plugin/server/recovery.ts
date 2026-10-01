@@ -22,7 +22,7 @@
 import { worktreeRequest, type Controller, type LoadedProject } from './controller.js';
 import type { AssignmentView } from './domain/state.js';
 import { recoverGate } from './gate.js';
-import { promptRequestedAt, settleEndedTurn, type TurnStarts } from './handlers/turns.js';
+import { promptRequestedAt, settleEndedTurn, settleUncertainReport, type TurnStarts } from './handlers/turns.js';
 import { checkLeadOwnership } from './ownership.js';
 import { ASSIGNMENT_LABEL, CreationConflictError, PARENT_AGENT_ID_LABEL, peerStopped, type AgentSnapshot, type WorkspaceSnapshot } from './paseo-port.js';
 import type { Spool } from './spool.js';
@@ -85,6 +85,10 @@ export class Recovery {
         }
         const ended = await this.recoverEndedTurn(loaded.value, loaded.value.state.assignments.get(view.id) ?? view);
         if (ended !== undefined) actions.push(ended);
+        const spool = this.spool;
+        if (spool !== undefined && await settleUncertainReport(this.controller, correlation => spool.unresolvedFor(correlation), loaded.value, loaded.value.state.assignments.get(view.id) ?? view)) {
+          actions.push({ assignmentId: view.id, intent: `turn-g${String(view.reportingGeneration)}`, outcome: 'failed', detail: 'The turn\'s unresolved report was settled without an accepted one.' });
+        }
         const current = loaded.value.state.assignments.get(view.id) ?? view;
         if (current.closure === 'uncertain' && !Object.values(current.openIntents).includes('archive.requested')) {
           const intentId = lastIntent(loaded.value, current.id, 'archive.requested');

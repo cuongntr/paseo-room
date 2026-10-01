@@ -638,7 +638,11 @@ requested while it was listening: that turn began before the runtime did, and so
 again). Recovery likewise leaves a generation whose turn has not begun while
 the runtime was listening, as long as its Peer is idle and could still begin it; a Peer closed,
 archived or failed first is judged. Unresolved report persistence instead produces
-`peer.report-uncertain`, projects `uncertain` and holds the generation fence closed. Final prose,
+`peer.report-uncertain`, projects `uncertain` and holds the generation fence closed. While it is
+uncertain, a report from that generation is still validated and may be accepted, since it is what the
+fence waits for; once every spool entry from the Peer is terminal and none was accepted, the turn is
+`report.missing` and Lead is told (amended 2026-10-01: such a report was refused as uncertain, and
+the generation stayed uncertain for good). Final prose,
 fenced JSON, canonical/projected message content and turn completion may aid diagnostics but never
 create a question, handoff, candidate or acceptance. There is no parser, fence removal, embedded-JSON
 extraction, repair loop, implicit retry, model substitution or automatic context transfer.
@@ -1703,6 +1707,7 @@ Q-011 do not block Phases 0–1 because those phases contain no sensor and no wo
 
 | Date | Author | Change |
 |---|---|---|
+| 2026-10-01 | Repository owner / Bytes | §3.4: a generation held `uncertain` by an unresolved report now accepts that report when it is answered, and becomes `report.missing` with a Lead notice once nothing from the turn is left in the spool, both after the answer and on plugin start. Before, the report it waited for was refused as uncertain, so was every retry, and the assignment could be neither reported, answered nor abandoned (cmdb, after the replay stall). No authority or tool change; the design always said uncertain lasts only until the spool entries are terminal. |
 | 2026-10-01 | Repository owner / Bytes | §4.2: replay keeps each event file a plugin process has read, and concurrent replays share one read. Every operation had read the whole ledger again; on cmdb's 7,600 events about 320 replays piled up, holding 10,000 open files and 3 GB, and the runtime stopped answering hooks, `message_lead` and `room_status` for about 20 minutes until the plugin was reloaded. A warm replay of that ledger now takes about 50 ms instead of 450 ms. Strict replay is unchanged. No event, authority or tool change. |
 | 2026-10-01 | Repository owner / Bytes | D4: Human no longer configures an attention sensor; the [attention delta](runtime-coordination-attention.md)'s 2026-10-01 amendment removes it. The Phase 5 rows below record what was built. No seat gains or loses authority; no event, validation step or tool changes. |
 | 2026-09-30 | Repository owner / Bytes | Defects from four days of live use (cmdb, 2026-09-27..30). §3.4: Lead refused `peer_busy` is told when the Peer's turn ends (32 refusals in four days; nothing woke Lead after one, and unless it retried by itself the project waited until a person noticed), and a Peer turn whose start the runtime never heard is judged as an earlier turn when its generation's prompt came later (a plugin reload mid-turn had closed an answer's generation again). D9: a Supervisor message waits for the Lead's turn to end like every other `owner` notice (13 of 124 had cut off a running command); no notice goes to an archived seat. D6: a red gate's notice names its output file, and an unknown gate outcome stops raising a finding once its assignment is closed. `message_lead` reaches a Lead whose session closed but which is not archived. No seat gains or loses authority; Lead receives one more `owner` notice kind (`peer-free`). |

@@ -20,6 +20,7 @@ import { conforms, parseScopes } from '../domain/scope.js';
 import type { AssignmentView } from '../domain/state.js';
 import { PARENT_AGENT_ID_LABEL } from '../paseo-port.js';
 import type { HandlerReply, OperationHandler } from '../spool.js';
+import { settleUncertainReport } from './turns.js';
 
 type Tool = 'ask' | 'handoff';
 
@@ -47,7 +48,11 @@ function bindingGeneration(loaded: LoadedProject, assignmentId: string): string 
   return published?.type === 'binding.published' ? published.data.roomGeneration : undefined;
 }
 
-export function createPeerHandlers(controller: Controller): Record<Tool, OperationHandler> {
+/**
+ * `unresolvedFor` reads the spool's open requests of a bridge; with it, a report answered while its
+ * generation is uncertain settles that generation once nothing from the turn is left (§3.4).
+ */
+export function createPeerHandlers(controller: Controller, unresolvedFor?: (correlation: string) => Promise<string[]>): Record<Tool, OperationHandler> {
   const handle = (tool: Tool): OperationHandler => async request => {
     const association = await controller.deps.correlations.lookup(request.correlation);
     if (association?.kind !== 'peer' || association.assignmentId === undefined || association.workKind === undefined) {
@@ -58,8 +63,9 @@ export function createPeerHandlers(controller: Controller): Record<Tool, Operati
     return await controller.serial(store.meta.projectId, async () => {
       const loaded = await controller.load(store);
       if (!loaded.ok) return reply(new Refusal('report_uncertain', 'The runtime project is paused; nothing can be recorded now.', true));
+      let answer: HandlerReply;
       try {
-        return await accept(controller, loaded.value, association, tool, request);
+        answer = await accept(controller, loaded.value, association, tool, request);
       } catch (error) {
         if (!(error instanceof Refusal)) throw error;
         await controller.append(loaded.value, {
@@ -67,8 +73,13 @@ export function createPeerHandlers(controller: Controller): Record<Tool, Operati
           actor: { source: 'seat', role: 'peer', agentId: association.agentId, providerId: association.providerId },
           data: { tool, requestId: request.requestId, code: error.code, reason: error.message.slice(0, 1_000) },
         }).catch(() => undefined);
-        return reply(error);
+        answer = reply(error);
       }
+      const view = loaded.value.state.assignments.get(association.assignmentId ?? '');
+      if (unresolvedFor !== undefined && view !== undefined) {
+        await settleUncertainReport(controller, unresolvedFor, loaded.value, view, request.requestId).catch(() => false);
+      }
+      return answer;
     });
   };
   return { ask: handle('ask'), handoff: handle('handoff') };
@@ -121,7 +132,9 @@ async function accept(controller: Controller, loaded: LoadedProject, association
   }
 
   // 6. Assignment state and the expected work kind.
-  if (view.state !== 'active' && view.state !== 'awaiting-permission') throw new Refusal('report_state', `No report is expected while the assignment is ${view.state}.`);
+  // An uncertain assignment waits on a report from its open generation, which the receipt check has
+  // already matched; the event checks accept one there too.
+  if (view.state !== 'active' && view.state !== 'awaiting-permission' && view.state !== 'uncertain') throw new Refusal('report_state', `No report is expected while the assignment is ${view.state}.`);
   if (view.input.kind !== workKind) throw new Refusal('report_state', 'The report is for a different kind of work than the assignment.');
 
   // 7. Operation-specific invariants; source-control facts are derived here, never copied.

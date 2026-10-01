@@ -60,7 +60,8 @@ describe('report receipts', () => {
     const later = view({ reportingGeneration: 3 });
     expect(resolveReceipt(later, { generation: 2, requestId: 'req_4', fingerprint: other })).toMatchObject({ kind: 'refuse', code: 'report_stale' });
     expect(resolveReceipt(view({ reportingState: 'closed' }), { generation: 1, requestId: 'req_5', fingerprint: other })).toMatchObject({ kind: 'refuse', code: 'report_stale' });
-    expect(resolveReceipt(view({ reportingState: 'uncertain' }), { generation: 1, requestId: 'req_6', fingerprint: other })).toMatchObject({ kind: 'refuse', code: 'report_uncertain' });
+    // An uncertain generation waits for a report from its turn, so one proceeds to the live checks.
+    expect(resolveReceipt(view({ reportingState: 'uncertain' }), { generation: 1, requestId: 'req_6', fingerprint: other })).toEqual({ kind: 'proceed' });
     // An old generation's accepted receipt still replays after the turn moved on.
     const moved = view({ reportingGeneration: 2, reports: [report] });
     expect(resolveReceipt(moved, { generation: 1, requestId: 'req_1', fingerprint: report.fingerprint })).toMatchObject({ kind: 'replay' });

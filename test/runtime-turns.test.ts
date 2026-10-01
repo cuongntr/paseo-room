@@ -67,6 +67,34 @@ describe('turn end without a report', () => {
     expect(await createTurnHandlers(h.controller, stuck, new TurnStarts()).turnEnded(ended(peer))).toBe('uncertain');
     expect((await view(h, id)).view).toMatchObject({ state: 'uncertain', reportingState: 'uncertain' });
   });
+
+  // cmdb, 2026-10-01: a handoff sent while the runtime was stalled was still in the spool when the
+  // turn ended. Once answered it was refused as uncertain, and the Peer's retries too, for good.
+  it('accepts the unrecorded report once it is answered', async () => {
+    const { h, id, peer, spool } = await dispatched();
+    const stuck = Object.assign(Object.create(spool) as Spool, { unresolvedFor: () => Promise.resolve(['req_pending01']), schedule: () => Promise.resolve() });
+    await createTurnHandlers(h.controller, stuck, new TurnStarts()).turnEnded(ended(peer));
+    await askLead(h, id);
+    const loaded = await h.controller.load(await h.controller.projectFor(h.repo));
+    const refused = loaded.ok ? loaded.value.events.flatMap(event => (event.type === 'report.refused' ? [event.data.reason] : [])) : ['unloaded'];
+    expect(refused).toEqual([]);
+    expect((await view(h, id)).view).toMatchObject({ state: 'questioned', reportingState: 'consumed' });
+  });
+
+  it('settles as missing, and tells Lead, once nothing from the turn is left in the spool', async () => {
+    const { h, id, peer, spool } = await dispatched();
+    const stuck = Object.assign(Object.create(spool) as Spool, { unresolvedFor: () => Promise.resolve(['req_pending01']), schedule: () => Promise.resolve() });
+    await createTurnHandlers(h.controller, stuck, new TurnStarts()).turnEnded(ended(peer));
+    const recover = (spoolUsed: Spool) => new Recovery(h.controller, spoolUsed).recoverAll();
+    // Still pending: recovery leaves the fence closed.
+    await recover(stuck);
+    expect((await view(h, id)).view?.state).toBe('uncertain');
+    // Every entry terminal and none accepted: the turn produced no report.
+    const [report] = await recover(spool);
+    expect(report?.actions).toContainEqual(expect.objectContaining({ assignmentId: id, outcome: 'failed' }));
+    expect((await view(h, id)).view).toMatchObject({ state: 'blocked', reportingState: 'consumed' });
+    expect(h.paseo.agents.get('lead-1')?.prompts.at(-1)?.text).toContain('without an accepted ask or handoff');
+  });
 });
 
 describe('an answer sent before the asking turn is judged', () => {

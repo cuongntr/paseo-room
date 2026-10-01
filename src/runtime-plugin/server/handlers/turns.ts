@@ -104,13 +104,37 @@ export async function settleEndedTurn(controller: Controller, spool: Spool, load
     if (live?.pendingPermissions.some(permission => permission.id === view.awaitingPermissionId) === true) return 'waiting';
     await controller.append(loaded, { type: 'permission.resolved', payloadVersion: 1, assignmentId: view.id, actor: { source: 'paseo' }, data: { generation: view.reportingGeneration, permissionRequestId: view.awaitingPermissionId ?? 'unknown', outcome: 'other' } });
   }
+  await recordMissing(controller, loaded, view);
+  return 'missing';
+}
+
+async function recordMissing(controller: Controller, loaded: LoadedProject, view: AssignmentView): Promise<void> {
   await controller.append(loaded, { type: 'report.missing', payloadVersion: 1, assignmentId: view.id, actor: plugin, data: { generation: view.reportingGeneration } });
   await controller.notices.notify(loaded, {
     kind: 'report-missing', class: 'owner', disposition: 'lead-now', assignmentId: view.id,
     text: `The Peer of ${assignmentName(view)} ended its turn without an accepted ask or handoff. Anything in its final message is not a report; answer with a follow-up or abandon the assignment.`,
     recipient: { agentId: view.leadAgentId, role: 'lead' },
   });
-  return 'missing';
+}
+
+/**
+ * Settles a generation held uncertain because its ended turn left a report in the spool (§3.4):
+ * once every spool entry from that Peer is terminal and none was accepted, the turn produced no
+ * report. `answering` is a request being answered now, whose reply is not yet written. Callers
+ * hold the project's serial lane. A generation uncertain for another reason, such as a run whose
+ * delivery is unknown, is left to its own recovery.
+ */
+export async function settleUncertainReport(
+  controller: Controller, unresolvedFor: (correlation: string) => Promise<string[]>, loaded: LoadedProject, view: AssignmentView, answering?: string,
+): Promise<boolean> {
+  if (view.state !== 'uncertain' || view.reportingState !== 'uncertain' || view.peerAgentId === undefined) return false;
+  const cause = loaded.events.filter(event => event.assignmentId === view.id && (event.type === 'report.uncertain' || event.type === 'run.uncertain')).at(-1);
+  if (cause?.type !== 'report.uncertain' || cause.data.generation !== view.reportingGeneration) return false;
+  const association = await controller.deps.correlations.findByAssignment(view.id, view.peerAgentId);
+  const pending = association === undefined ? [] : (await unresolvedFor(association.correlationId)).filter(id => id !== answering);
+  if (pending.length > 0) return false;
+  await recordMissing(controller, loaded, view);
+  return true;
 }
 
 /** What Lead was refused as `peer_busy`, by the state it answered from. */

@@ -63,10 +63,9 @@ export function resolveReceipt(view: AssignmentView, action: CapturedAction): Re
   if (action.generation !== view.reportingGeneration) {
     return { kind: 'refuse', code: 'report_stale', message: 'This report belongs to an earlier turn.' };
   }
-  if (view.reportingState === 'uncertain') {
-    return { kind: 'refuse', code: 'report_uncertain', message: 'An earlier report for this turn is still being confirmed. Retry shortly.' };
-  }
-  if (view.reportingState !== 'open') {
+  // An uncertain generation waits for exactly this: a report from its turn that was not yet
+  // recorded. Refusing it here left the generation uncertain for good (cmdb, 2026-10-01).
+  if (view.reportingState !== 'open' && view.reportingState !== 'uncertain') {
     return { kind: 'refuse', code: 'report_stale', message: 'No report is expected for this turn.' };
   }
   return { kind: 'proceed' };
