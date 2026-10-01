@@ -2,6 +2,7 @@
  * The runtime's per-process wiring. Built once per plugin subprocess from the generated room
  * location; every hook, event and RPC handler supplies Paseo's handle before doing any work.
  */
+import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { Controller } from './controller.js';
 import { CorrelationRegistry } from './correlations.js';
@@ -17,9 +18,6 @@ import { Recovery } from './recovery.js';
 import { Spool, type OperationHandler } from './spool.js';
 import { writeToolFiles } from './tools.js';
 import { AttentionEngine } from './attention/engine.js';
-import { AttentionKey } from './attention/key.js';
-import { AttentionLog } from './attention/log.js';
-import { SystemOneSensor } from './attention/sensor.js';
 import { SeatStarter } from './attention/seat-starter.js';
 import { controllerLedger, Succession } from './attention/succession.js';
 import { SuccessionStore } from './attention/succession-store.js';
@@ -46,7 +44,6 @@ export interface RuntimeContext {
   readonly attention: AttentionEngine;
   /** The current Room attention settings; replaced when the operator saves them. */
   readonly attentionSettings: { current: AttentionSettings; available: boolean };
-  readonly attentionKey: AttentionKey;
   /** The operator's thinking envelope for Peers (peer-effort delta); replaced when it is saved. */
   readonly peerEffort: { current: PeerEffortSettings; available: boolean };
   /** Adopts a saved envelope and rewrites the tool lists that describe it. */
@@ -56,7 +53,6 @@ export interface RuntimeContext {
    * `read` settles once the settings store was first read.
    */
   readonly seatContext: { current: SeatContextSettings; read: Promise<void> };
-  readonly sensor: SystemOneSensor;
   /** Human-initiated Lead replacement (seat context delta K-D5). */
   readonly succession: Succession;
   /** Writes the advertised tool lists and starts draining the spool. */
@@ -82,12 +78,10 @@ export function createRuntimeContext(location: RoomLocation, nodePath = process.
   });
   const attentionSettings = { current: DEFAULT_ATTENTION_SETTINGS, available: false };
   const seatContext = { current: DEFAULT_SEAT_CONTEXT_SETTINGS, read: Promise.resolve() };
-  const attentionKey = AttentionKey.at(location.runtimeRoot);
   const now = (): Date => new Date();
-  const sensor = new SystemOneSensor({ settings: () => attentionSettings.current, key: attentionKey, log: AttentionLog.at(location.runtimeRoot, now), now });
   const attention = new AttentionEngine({
     paseo: controller.deps.paseo, recognition, git: controller.deps.git, runtimeRoot: location.runtimeRoot,
-    now, settings: () => attentionSettings.current, contextSettings: () => seatContext.current, sensor, ready: () => handle.available,
+    now, settings: () => attentionSettings.current, contextSettings: () => seatContext.current, ready: () => handle.available,
     ledger: controllerLedger(controller),
   });
   controller.supervisorFor = gitCommonDir => attention.supervisorOf(gitCommonDir).supervisorAgentId;
@@ -132,7 +126,6 @@ export function createRuntimeContext(location: RoomLocation, nodePath = process.
     turns: createTurnHandlers(controller, spool, turnStarts),
     attention,
     attentionSettings,
-    attentionKey,
     peerEffort,
     seatContext,
     succession,
@@ -140,10 +133,11 @@ export function createRuntimeContext(location: RoomLocation, nodePath = process.
       peerEffort.current = settings;
       await writeTools();
     },
-    sensor,
     ready,
     async start() {
       await ready;
+      // The attention sensor was removed in 0.15.0; nothing reads the key it stored, so it is not kept.
+      await rm(join(location.runtimeRoot, 'secrets', 'attention-key'), { force: true }).catch(() => undefined);
       await writeTools();
       await spool.start();
     },

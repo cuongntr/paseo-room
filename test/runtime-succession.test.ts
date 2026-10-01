@@ -250,12 +250,10 @@ describe('handoff request', () => {
     expect((await statusOf(lost)).failure).toEqual({ code: 'handoff_failed', message: 'The request never reached the Lead; ask again.' });
   });
 
-  it('keeps a handoff out of letters and the sensor, while a marker line still goes', async () => {
-    let sensed = 0;
+  it('keeps a handoff out of letters, while a marker line still goes', async () => {
     engine = new AttentionEngine({
       paseo: h.paseo, recognition: h.controller.deps.recognition, git: h.controller.deps.git, runtimeRoot: h.runtimeRoot, now: () => clock,
       settings: () => settings, log: () => undefined,
-      sensor: { leadTurn: () => { sensed += 1; return Promise.resolve(undefined); } },
     });
     const turn = (said: string) => [
       { type: 'user_message' as const, text: '[paseo-room succession suc_AAAAAAAAAAAAAAAA]\n\n## Handoff to Your Successor' },
@@ -264,14 +262,12 @@ describe('handoff request', () => {
     const told = (): string => [...engine.delivery.held('sup').map(item => item.line), ...agent('sup').prompts.map(prompt => prompt.text)].join('\n');
     await engine.onTurnEnded('lead-1', { kind: 'completed' }, turn('# Handoff\n\nhost 10.0.0.1, password in vault'));
     expect(told()).toBe('');
-    expect(sensed).toBe(0);
     // Steered into a turn already running: the request is not the turn's first message.
     await engine.onTurnEnded('lead-1', { kind: 'completed' }, [{ type: 'user_message' as const, text: 'Earlier work' }, ...turn('# Handoff\n\nhost 10.0.0.2')]);
     expect(told()).toBe('');
     await engine.onTurnEnded('lead-1', { kind: 'completed' }, turn('# Handoff\nNEEDS-HUMAN: Approve the chart change?'));
     expect(told()).toContain('NEEDS-HUMAN: "Approve the chart change?"');
     expect(told()).not.toContain('# Handoff');
-    expect(sensed).toBe(0);
   });
 
   it('resumes a Lead asked for its handoff without a compact mark', async () => {

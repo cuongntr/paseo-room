@@ -162,14 +162,7 @@ export const runtimeIncidentFeedbackRpc = defineRpc({
   output: answer(z.strictObject({ recorded: z.literal(true) })),
 });
 
-/** Write-only: sets or clears the sensor key; answers only whether one is configured (attention delta A-D7). */
-export const runtimeAttentionKeyRpc = defineRpc({
-  name: 'runtime.attention-key',
-  input: z.union([z.strictObject({ set: z.string().min(1).max(4_096) }), z.strictObject({ clear: z.literal(true) })]),
-  output: answer(z.strictObject({ configured: z.boolean() })),
-});
-
-/** The sensor's state for the settings screen: mode, consent, key presence, circuit and today's use. */
+/** What the Room attention settings screen reads: whether settings are stored, letters on, and the last day's letters. */
 export const runtimeAttentionStatusRpc = defineRpc({
   name: 'runtime.attention-status',
   input: z.strictObject({}),
@@ -216,6 +209,6 @@ export const RUNTIME_RPCS = [
   runtimeHealthRpc, runtimeProjectRpc, runtimeAssignmentRpc, runtimeRecoverRpc, runtimeAbandonRpc,
   runtimeResolveOwnershipRpc, runtimeQuarantineRpc, runtimeWorkspaceCloseRpc, runtimeLeaseReclaimRpc,
   runtimeSeatsRpc, runtimeRoomRpc, runtimeStartSupervisorRpc, runtimeProjectPreflightRpc, runtimeStartProjectRpc,
-  runtimeAssignSupervisorRpc, runtimeIncidentFeedbackRpc, runtimeAttentionKeyRpc, runtimeAttentionStatusRpc, runtimePeerEffortRpc,
+  runtimeAssignSupervisorRpc, runtimeIncidentFeedbackRpc, runtimeAttentionStatusRpc, runtimePeerEffortRpc,
   runtimeSuccessionPreflightRpc, runtimeSuccessionStartRpc, runtimeSuccessionStatusRpc, runtimeSuccessionCompleteRpc, runtimeSuccessionCancelRpc,
 ] as const;

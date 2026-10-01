@@ -14,12 +14,10 @@ import type { z } from 'zod';
 import {
   runtimeAbandonRpc, runtimeAssignmentRpc, runtimeAssignSupervisorRpc, runtimeHealthRpc, runtimeIncidentFeedbackRpc, runtimeLeaseReclaimRpc,
   runtimeProjectPreflightRpc, runtimeProjectRpc, runtimeQuarantineRpc, runtimeRecoverRpc, runtimeResolveOwnershipRpc, runtimeRoomRpc,
-  runtimeAttentionKeyRpc, runtimeAttentionStatusRpc, runtimePeerEffortRpc, runtimeSeatsRpc, runtimeStartProjectRpc, runtimeStartSupervisorRpc, runtimeWorkspaceCloseRpc,
+  runtimeAttentionStatusRpc, runtimePeerEffortRpc, runtimeSeatsRpc, runtimeStartProjectRpc, runtimeStartSupervisorRpc, runtimeWorkspaceCloseRpc,
   runtimeSuccessionCancelRpc, runtimeSuccessionCompleteRpc, runtimeSuccessionPreflightRpc, runtimeSuccessionStartRpc, runtimeSuccessionStatusRpc,
 } from '../shared/rpc-contracts.js';
-import { egressRefusal, type AttentionSettings } from '../shared/attention.js';
-import type { AttentionKey } from './attention/key.js';
-import type { SystemOneSensor } from './attention/sensor.js';
+import type { AttentionSettings } from '../shared/attention.js';
 import { homeRelative, type AttentionEngine } from './attention/engine.js';
 import { TALLIED, tallyLetters } from './attention/log.js';
 import { SeatStarter, type StartResult } from './attention/seat-starter.js';
@@ -44,9 +42,7 @@ export interface RpcRuntime {
   readonly seats?: Pick<SeatDependencies, 'run' | 'lstat'>;
   /** The Room Observer and letters; the room RPCs answer `attention_unavailable` without it. */
   readonly attention?: AttentionEngine;
-  /** The sensor, its key and its settings, for the Room attention settings screen. */
-  readonly sensor?: SystemOneSensor;
-  readonly attentionKey?: AttentionKey;
+  /** The attention settings, for the Room attention settings screen. */
   readonly attentionSettings?: { readonly current: AttentionSettings; readonly available: boolean };
   /** Whether Paseo gave the plugin a store for the Peer thinking envelope. */
   readonly peerEffort?: { readonly available: boolean };
@@ -367,36 +363,15 @@ export function createRpcHandlers(runtime: RpcRuntime) {
       return outcome === 'recorded' ? answer(runtime, { recorded: true }) : error('attention_unknown', `No attention item ${input.id} is known; it may have expired.`, 'Refresh the room view.');
     }),
 
-    async attentionKey(input: z.infer<typeof runtimeAttentionKeyRpc.input>): Promise<Answer> {
-      const key = runtime.attentionKey;
-      if (key === undefined) return unavailable();
-      try {
-        if ('set' in input) await key.set(input.set);
-        else await key.clear();
-      } catch (failure) {
-        return error('key_invalid', failure instanceof Error ? failure.message : String(failure), 'Paste the key as issued, without spaces.');
-      }
-      // The key itself is never part of any answer.
-      return answer(runtime, { configured: await key.configured() });
-    },
-
     async attentionStatus(): Promise<Answer> {
-      const { sensor, attentionKey, attentionSettings } = runtime;
-      if (sensor === undefined || attentionKey === undefined || attentionSettings === undefined) return unavailable();
-      const settings = attentionSettings.current.sensor;
-      let host: string | null;
-      try { host = new URL(settings.endpoint).hostname; } catch { host = null; }
+      const { attentionSettings } = runtime;
+      if (attentionSettings === undefined) return unavailable();
       // What reached Supervisors lately, read back from the attention log; a log that cannot be read costs only the tally.
       const recent = await runtime.attention?.log.recent(TALLY_HOURS, TALLIED).catch(() => undefined);
       const letters = recent === undefined ? undefined : tallyLetters(recent.records, TALLY_HOURS, recent.partial);
       return answer(runtime, {
         settingsAvailable: attentionSettings.available,
         lettersEnabled: attentionSettings.current.letters.enabled,
-        mode: settings.mode, endpointHost: host, model: settings.model, assistQuestionSets: settings.assistQuestionSets,
-        keyConfigured: await attentionKey.configured(),
-        egress: egressRefusal(settings) ?? 'allowed',
-        sending: (await sensor.refusal()) ?? 'ready',
-        ...sensor.status(),
         ...(letters === undefined ? {} : { letters }),
       });
     },
@@ -436,7 +411,6 @@ export function registerRpcs(server: Pick<PluginServerContext, 'handle'>, runtim
   server.handle(runtimeStartProjectRpc, async (input, { paseo }) => { supply(paseo); return runtimeStartProjectRpc.output.parse(await handlers.startProject(input)); });
   server.handle(runtimeAssignSupervisorRpc, async (input, { paseo }) => { supply(paseo); return runtimeAssignSupervisorRpc.output.parse(await handlers.assignSupervisor(input)); });
   server.handle(runtimeIncidentFeedbackRpc, async (input, { paseo }) => { supply(paseo); return runtimeIncidentFeedbackRpc.output.parse(await handlers.incidentFeedback(input)); });
-  server.handle(runtimeAttentionKeyRpc, async (input, { paseo }) => { supply(paseo); return runtimeAttentionKeyRpc.output.parse(await handlers.attentionKey(input)); });
   server.handle(runtimeAttentionStatusRpc, async (_input, { paseo }) => { supply(paseo); return runtimeAttentionStatusRpc.output.parse(await handlers.attentionStatus()); });
   server.handle(runtimePeerEffortRpc, async (_input, { paseo }) => { supply(paseo); return runtimePeerEffortRpc.output.parse(await handlers.peerEffort()); });
   server.handle(runtimeSuccessionPreflightRpc, async (input, { paseo }) => { supply(paseo); return runtimeSuccessionPreflightRpc.output.parse(await handlers.successionPreflight(input)); });

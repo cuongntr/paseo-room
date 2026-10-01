@@ -26,7 +26,7 @@ describe('attention usage report', () => {
     expect(supervisorMessage('not json')).toBeUndefined();
   });
 
-  it('measures letters, their delays, answers and what the sensor would change', () => {
+  it('measures letters, their delays and answers', () => {
     const records = logRecords([
       line({ at: at('08:00:00'), type: 'lead-turn', id: 'q', decision: 'now', reason: 'Lead marked the turn NEEDS-HUMAN', leadAgentId: 'lead' }),
       line({ at: at('08:00:00'), type: 'letter.sent', id: 'L1', level: 'now', items: ['q'] }),
@@ -34,7 +34,6 @@ describe('attention usage report', () => {
       line({ at: at('09:01:00'), type: 'lead-turn', id: 'd2', decision: 'digest', reason: 'progress: the Lead\'s loop still runs; it goes with the next letter', leadAgentId: 'lead' }),
       line({ at: at('09:06:00'), type: 'letter.sent', id: 'L2', level: 'digest', items: ['d2'] }),
       line({ at: at('09:06:01'), type: 'feedback.recorded', id: 'd2', verdict: 'noise' }),
-      line({ at: at('09:06:02'), type: 'assessment.recorded', id: 'd1', questionSet: 'lead-turn-v1', latencyMs: 700, baseline: 'digest', decision: 'now' }),
     ].join('\n'), window);
     const report = letterReport(records, [{ at: Date.parse(at('08:59:00')), leadAgentId: 'lead' }, { at: Date.parse('2026-09-26T00:00:00Z'), leadAgentId: 'lead' }], window);
     expect(report.leadTurns).toEqual({ 'now · Lead marked the turn NEEDS-HUMAN': 1, 'digest · baseline': 1, 'digest · progress': 1 });
@@ -44,7 +43,6 @@ describe('attention usage report', () => {
     // The message outside the window is not counted; the one inside was answered by d1, which never went.
     expect(report.answers).toMatchObject({ messages: 1, byDecision: { digest: 1 }, sent: 0, unsent: 1 });
     expect(report.feedback).toEqual({ noise: 1 });
-    expect(report.sensor).toEqual({ assessments: 1, latencyP50: 700, wouldRaise: 1, wouldLower: 0 });
   });
 
   it('reads a seat\'s turns, what they cost, what they did and how long Human took to answer', () => {

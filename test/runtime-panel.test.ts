@@ -123,10 +123,10 @@ describe('letters over the last day', () => {
     await attention.append({ type: 'feedback.recorded', id: 'att_2', verdict: 'noise', by: 'sup-1' });
     // A record built with its type after other fields is still read back by its head.
     await attention.append({ id: 'ltr_4', type: 'letter.sent', level: 'now', items: [] });
-    await attention.append({ type: 'assessment.recorded', id: 'as_1', questionSet: 'lead-turn-v1', model: 'jev', mode: 'shadow', state: {}, answers: {}, decision: 'now', baseline: 'digest', latencyMs: 1 });
+    await attention.append({ type: 'incident.closed', id: 'att_1', kind: 'permission-waiting', level: 'page', projectKey: 'k', subjects: [], count: 1 });
     clock = new Date('2026-09-29T21:00:00.000Z');
     const recent = await attention.recent(24, TALLIED);
-    expect(recent.records.map(record => record.type)).not.toContain('assessment.recorded');
+    expect(recent.records.map(record => record.type)).not.toContain('incident.closed');
     expect(recent.partial).toBe(false);
     const tally = tallyLetters(recent.records, 24);
     expect(tally).toEqual({ hours: 24, sent: { page: 1, digest: 1, now: 1 }, failed: 1, incidents: 1, leadTurns: { now: 1, record: 1 }, useful: 1, noise: 1 });
@@ -134,16 +134,15 @@ describe('letters over the last day', () => {
     expect(lettersLine(tallyLetters([], 24))).toBe('No letters sent');
   });
 
-  it('adds the tally to the sensor status the settings screen reads', async () => {
+  it('adds the tally to the status the settings screen reads', async () => {
     const clock = new Date('2026-09-29T09:00:00.000Z');
     const attention = await log(() => clock);
     await attention.append({ type: 'letter.sent', id: 'ltr_1', level: 'now', items: [] });
     const status = await createRpcHandlers({
       controller: {} as never, recovery: {} as never, handle: new PaseoHandle(), attention: { log: attention } as unknown as AttentionEngine,
-      sensor: { refusal: () => Promise.resolve('The sensor is off.'), status: () => ({ calls: 0, failures: 0, inputTokens: 0, shadow: {} }) } as never,
-      attentionKey: { configured: () => Promise.resolve(false) } as never, attentionSettings: { current: DEFAULT_ATTENTION_SETTINGS, available: true },
+      attentionSettings: { current: DEFAULT_ATTENTION_SETTINGS, available: true },
     }).attentionStatus();
-    expect(data(status).letters).toMatchObject({ hours: 24, sent: { now: 1 } });
+    expect(data(status)).toMatchObject({ settingsAvailable: true, lettersEnabled: true, letters: { hours: 24, sent: { now: 1 } } });
   });
 });
 

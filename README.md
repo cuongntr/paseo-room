@@ -757,8 +757,7 @@ learn only when you ask it to check.
     handoff, verbatim, and it verifies the handoff and reports to you before it acts outside the
     repository. The Supervisor gets one line naming the new Lead.
   - The handoff stays on this machine, under `~/.paseo-room/runtime/v1/attention/successions/`,
-    owner-only and never sent to the sensor or in a letter. Finished replacements are pruned after 30
-    days.
+    owner-only and never put in a letter. Finished replacements are pruned after 30 days.
   - If the replacement stops after the archive, the project offers **Finish replacing Lead**, which
     creates no second Lead, or cancel, which leaves the project as it is. A replacement that fails
     before the archive stays on the project's screen for a day, with the reason.
@@ -772,30 +771,14 @@ learn only when you ask it to check.
     may cancel it until it completes. Any other reason to replace a Lead stays yours.
 - **Settings › Room attention.** Here you turn letters on or off, see what reached Supervisors in
   the last 24 hours (letters by level, incidents, Lead turns by what was decided, and the ratings you
-  or a Supervisor gave), change when a Supervisor is told and how often, and configure the optional
-  **attention sensor** in the order it is set up: mode and state, connection, privacy, then the
-  shadow evaluation beside the switch that lets it assist.
-  - The sensor speaks the System One HTTP shape, with [TypeSafe Jev](https://docs.typesafe.ai/)
-    first and any compatible or self-hosted endpoint after it. It is `off` by default.
-  - Without a TypeSafe key, use Jev through OpenRouter: endpoint
-    `https://openrouter.ai/api/v1/systemone`, model `typesafe/jev-1.13`, and an OpenRouter key.
-    OpenRouter can answer with a dated snapshot such as `typesafe/jev-1.13-20260917`, which the
-    sensor accepts as the pinned model.
-  - `shadow` assesses Lead messages and records the answers without acting on them. `assist` lets
-    them decide, for the question sets you enable, whether a Lead turn wakes the Supervisor, waits
-    for a digest, or is only recorded.
-  - Nothing leaves the machine until you acknowledge the endpoint's host, and only masked, bounded
-    excerpts of Lead messages are sent.
-  - The key is write-only: it is stored owner-only under `~/.paseo-room/runtime/v1/secrets` and never
-    shown again.
-- **Evaluation.** `npm run attention:eval` (in this repository) reads your Claude Lead transcripts
-  read-only and prints what an evaluation would send. `-- --send` runs it against the endpoint, as
-  your consent for that run.
+  or a Supervisor gave), and change when a Supervisor is told and how often. Code decides every
+  letter: no model ranks a Lead turn, and nothing about your projects leaves the machine. Releases
+  before 0.15.0 had an optional attention sensor; 0.15.0 removed it and deletes the key it stored.
 - **Usage report.** `npm run attention:report -- --since 2026-09-24 --until 2026-09-30` (in this
   repository) reads the room home read-only. It prints what reached the Supervisors over that window:
   - Lead turns by routing, and letters by level and delay;
   - Lead answers to `message_lead`, and whether they arrived;
-  - feedback and the sensor;
+  - feedback;
   - what the Supervisor and Lead seats read, and how long a question to you waited.
 
   It prints counts and durations only, never message text. The window defaults to the last seven

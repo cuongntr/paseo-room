@@ -319,9 +319,9 @@ has to ask it to check.
   them and quotes them, because a letter's excerpt of a long message missed exactly those parts.
 - It delivers them as letters: only when the Supervisor is idle, never while it holds a permission,
   batched into digests and budgeted.
-- The optional sensor ranks only Lead turns, only when the operator enables it, and only on masked
-  excerpts. It is a System One HTTP call, so Jev through OpenRouter or a self-hosted model can
-  replace TypeSafe's own endpoint without code.
+- No model ranks a letter. An optional sensor that ranked Lead turns was removed in 0.15.0: in
+  shadow it would have lowered about as many turns that mattered as it raised, and it was the only
+  path by which project text left the machine.
 
 `AUTHENTICATION.md` is different from a credential path: it is a managed, secret-free guide
 at the room root. Setup renders it from the binaries it already resolved and the deterministic

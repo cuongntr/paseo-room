@@ -1,25 +1,20 @@
 /**
  * Settings › Room attention (docs/design/runtime-coordination-attention.md §8.3, runtime-panel-ux.md
  * §5), built from the host's settings controls. Letters come first, with what reached Supervisors
- * in the last day, then when to tell and how often. The sensor follows in the order it is set up:
- * its mode and state, its connection, what may leave the machine, and the evaluation that decides
- * whether to let it assist. Switches and selects save at once; the endpoint and model save together
- * with Apply. The key is typed here, sent once, and never shown again.
+ * in the last day, then when to tell and how often. Switches and selects save at once.
  */
 import { useSettings, type PluginSurfaceProps } from '@getpaseo/plugin/client';
 import { ScrollView, useToast } from '@getpaseo/plugin/client/react-native';
-import { SettingsAction, SettingsInput, SettingsRow, SettingsSection, SettingsSelect, SettingsSwitch } from '@getpaseo/plugin/client/ui';
+import { SettingsAction, SettingsRow, SettingsSection, SettingsSelect, SettingsSwitch } from '@getpaseo/plugin/client/ui';
 import { useEffect, useState } from 'react';
-import { ATTENTION_SETTINGS, isLoopbackHost, type AttentionSettings } from '../shared/attention.js';
+import { ATTENTION_SETTINGS, type AttentionSettings } from '../shared/attention.js';
 import type { LetterTally } from '../shared/panel.js';
 import { unwrap, useRuntimeRpcs } from './data.js';
-import { Callout, Loading, Page, Pill, Title } from './kit.js';
+import { Callout, Loading, Page, Title } from './kit.js';
 import { lettersLine } from './model.js';
 
 interface Status {
-  readonly settingsAvailable: boolean; readonly mode: string; readonly keyConfigured: boolean; readonly sending: string;
-  readonly calls: number; readonly failures: number; readonly inputTokens: number; readonly circuitOpenUntil?: string; readonly lastError?: string;
-  readonly shadow: Readonly<Record<string, { readonly assessed: number; readonly record: number; readonly digest: number; readonly now: number }>>;
+  readonly settingsAvailable: boolean;
   readonly letters?: LetterTally;
 }
 
@@ -42,26 +37,10 @@ const PACE: readonly Step[] = [
   ['pageHoldSeconds', 'Urgent page hold', 'How long an urgent page waits for the Supervisor to be idle before steering into its turn.', [0, 30, 60, 120, 300], value => (value === 0 ? 'none' : `${String(value)} s`)],
 ];
 
-const MODE_HINT: Readonly<Record<string, string>> = {
-  off: 'Nothing leaves this machine. Lead turns reach the Supervisor as digest lines.',
-  shadow: 'Lead messages are assessed and the answers recorded, but never acted on — for evaluation.',
-  assist: 'Assessments decide, for what is enabled under Evaluation, whether a Lead turn wakes the Supervisor, waits for a digest, or is only recorded.',
-};
-
-const QUESTION_SETS: Readonly<Record<string, string>> = { 'lead-turn-v1': 'Lead turns' };
-
-function hostOf(endpoint: string): string | undefined {
-  try { return new URL(endpoint).hostname; } catch { return undefined; }
-}
-
 export function RoomAttentionSettings(props: PluginSurfaceProps) {
   const settings = useSettings(ATTENTION_SETTINGS);
   const rpc = useRuntimeRpcs();
   const toast = useToast();
-  const [endpoint, setEndpoint] = useState<string>();
-  const [model, setModel] = useState<string>();
-  const [key, setKey] = useState('');
-  const [keyField, setKeyField] = useState(0);
   const [status, setStatus] = useState<Status>();
   const [tick, setTick] = useState(0);
   const { theme } = props;
@@ -81,17 +60,6 @@ export function RoomAttentionSettings(props: PluginSurfaceProps) {
       setTick(tick + 1);
     }, (error: unknown) => { toast.error(String(error)); });
   };
-  const sendKey = (input: { set: string } | { clear: true }): void => {
-    rpc.attentionKey(input).then(answer => {
-      const result = unwrap<{ configured: boolean }>(answer);
-      if (result.error !== undefined) { toast.error(result.error.message); return; }
-      toast.show(result.data?.configured === true ? 'Key stored' : 'Key removed', { variant: 'success' });
-      setKey('');
-      setKeyField(keyField + 1);
-      setTick(tick + 1);
-    }, (error: unknown) => { toast.error(String(error)); });
-  };
-
   if (values === undefined) {
     return (
       <ScrollView style={{ flex: 1, backgroundColor: theme.colors.surface0 }}>
@@ -105,15 +73,6 @@ export function RoomAttentionSettings(props: PluginSurfaceProps) {
     );
   }
 
-  const sensor = values.sensor;
-  const host = hostOf(sensor.endpoint);
-  const remote = host !== undefined && !isLoopbackHost(host);
-  const acknowledged = remote && sensor.egressAcknowledgedHost === host;
-  const draftEndpoint = endpoint ?? sensor.endpoint;
-  const draftModel = model ?? sensor.model;
-  const dirty = draftEndpoint.trim() !== sensor.endpoint || draftModel.trim() !== sensor.model;
-  const assistLeadTurns = sensor.assistQuestionSets.includes('lead-turn-v1');
-  const ready = status?.sending === 'ready';
   const step = ([name, label, hint, presets, format]: Step) => {
     const value = values.delivery[name];
     const options = [...new Set([...presets, value])].sort((a, b) => a - b).map(entry => ({ label: format(entry), value: String(entry) }));
@@ -122,20 +81,10 @@ export function RoomAttentionSettings(props: PluginSurfaceProps) {
         onValueChange={next => { save(current => ({ ...current, delivery: { ...current.delivery, [name]: Number(next) } })); }} />
     );
   };
-  const usage = status === undefined ? ''
-    : `${String(status.calls)} call${status.calls === 1 ? '' : 's'} · ${String(status.failures)} failure${status.failures === 1 ? '' : 's'} · ${String(status.inputTokens)} input tokens today${status.lastError === undefined ? '' : ` · last error: ${status.lastError}`}`;
-
   return (
     <ScrollView style={{ flex: 1, backgroundColor: theme.colors.surface0 }}>
       <Page theme={theme} compact={props.layout.compact}>
-        <Title theme={theme} subtitle="What reaches a Supervisor about the projects it watches, and the optional sensor that ranks Lead messages.">Room attention</Title>
-
-        {sensor.mode !== 'off' && remote ? (
-          <Callout theme={theme} tone={acknowledged ? 'warning' : 'danger'} icon={acknowledged ? 'Send' : 'ShieldAlert'}
-            title={acknowledged ? `Masked excerpts of Lead messages go to ${host}` : `Sending to ${host} is not allowed yet`}>
-            {acknowledged ? 'Only bounded, masked excerpts are sent; never timelines, tool output, source files or credentials.' : 'Allow it under Sensor privacy, or set the mode back to Off. Until then nothing is sent.'}
-          </Callout>
-        ) : null}
+        <Title theme={theme} subtitle="What reaches a Supervisor about the projects it watches.">Room attention</Title>
 
         <SettingsSection title="Letters to Supervisors">
           <SettingsSwitch label="Send attention letters" hint="Off: incidents still show in the Room panel, but no Supervisor is prompted."
@@ -146,53 +95,9 @@ export function RoomAttentionSettings(props: PluginSurfaceProps) {
         <SettingsSection title="When to tell a Supervisor">{WHEN.map(step)}</SettingsSection>
         <SettingsSection title="How often">{PACE.map(step)}</SettingsSection>
 
-        <SettingsSection title="Attention sensor" info="System One compatible: TypeSafe Jev directly or through OpenRouter (https://openrouter.ai/api/v1/systemone, model typesafe/jev-1.13), a self-hosted model later.">
-          <SettingsSelect label="Mode" hint={MODE_HINT[sensor.mode] ?? ''} value={sensor.mode}
-            options={[{ label: 'Off', value: 'off' }, { label: 'Shadow', value: 'shadow' }, { label: 'Assist', value: 'assist' }]}
-            onValueChange={mode => { save(current => ({ ...current, sensor: { ...current.sensor, mode } }), `Sensor ${mode}`); }} />
-          {status === undefined ? null : (
-            <SettingsRow label={ready ? 'Ready to send' : 'Not sending'} hint={ready ? usage : `${status.sending} · ${usage}`}>
-              {status.circuitOpenUntil === undefined
-                ? <Pill theme={theme} tone={ready ? 'success' : sensor.mode === 'off' ? 'muted' : 'warning'}>{ready ? 'ready' : sensor.mode === 'off' ? 'off' : 'not ready'}</Pill>
-                : <Pill theme={theme} tone="warning">paused until {new Date(status.circuitOpenUntil).toLocaleTimeString()}</Pill>}
-            </SettingsRow>
-          )}
+        <SettingsSection title="Status">
           {status?.settingsAvailable === false ? <SettingsRow label="Settings storage" hint="Paseo gave this plugin no settings storage; defaults apply." /> : null}
-        </SettingsSection>
-
-        <SettingsSection title="Sensor connection">
-          <SettingsInput label="Endpoint" hint="A System One compatible endpoint." initialValue={sensor.endpoint} onChangeText={setEndpoint} placeholder="https://api.typesafe.ai/v1/systemone" />
-          <SettingsInput label="Pinned model" hint="A versioned id, never an alias, so thresholds stay calibrated. A dated snapshot of it (…-YYYYMMDD) also counts." initialValue={sensor.model} onChangeText={setModel} placeholder="jev-1.13.0" />
-          <SettingsAction label="Endpoint and model" hint={dirty ? 'Unsaved changes' : 'Saved'} actionLabel="Apply" disabled={!dirty}
-            onPress={() => { save(current => ({ ...current, sensor: { ...current.sensor, endpoint: draftEndpoint.trim(), model: draftModel.trim() } }), 'Endpoint and model saved'); setEndpoint(undefined); setModel(undefined); }} />
-          <SettingsRow label={status?.keyConfigured === true ? 'A key is stored' : 'No key stored'} hint="Owner-only under the room's runtime secrets. It is never shown again, sent to the app, or exported.">
-            <Pill theme={theme} tone={status?.keyConfigured === true ? 'success' : 'muted'}>{status?.keyConfigured === true ? 'stored' : 'none'}</Pill>
-          </SettingsRow>
-          <SettingsInput key={`key-${String(keyField)}`} label={status?.keyConfigured === true ? 'Replace the key' : 'Key'} initialValue="" secureTextEntry onChangeText={setKey} placeholder="Paste the API key" />
-          <SettingsAction label="Store the key" actionLabel="Store" disabled={key.trim() === ''} onPress={() => { sendKey({ set: key.trim() }); }} />
-          {status?.keyConfigured === true ? <SettingsAction label="Remove the stored key" actionLabel="Remove" onPress={() => { sendKey({ clear: true }); }} /> : null}
-        </SettingsSection>
-
-        <SettingsSection title="Sensor privacy">
-          <SettingsSwitch label="Mask IP addresses and host names" hint="Credentials, tokens and URL queries are always masked."
-            value={sensor.maskNetworkIdentifiers} onValueChange={mask => { save(current => ({ ...current, sensor: { ...current.sensor, maskNetworkIdentifiers: mask } })); }} />
-          {remote ? (
-            <SettingsSwitch label={`Allow sending to ${host}`} hint="Your consent for masked excerpts to leave this machine. Loopback endpoints need none."
-              value={acknowledged} onValueChange={allow => { save(current => ({ ...current, sensor: { ...current.sensor, egressAcknowledgedHost: allow ? host : null } }), allow ? `Sending to ${host} allowed` : 'Sending withdrawn'); }} />
-          ) : host === undefined
-            ? <SettingsRow label="The endpoint is not a URL" hint="Fix it under Sensor connection; nothing is sent meanwhile." />
-            : <SettingsRow label="Nothing leaves this machine" hint="The endpoint is on this machine, so no consent is needed." />}
-        </SettingsSection>
-
-        <SettingsSection title="Sensor evaluation" info="Shadow mode assesses Lead messages without acting on them. Compare what it would have done with what you rated, then let it assist.">
-          {Object.entries(status?.shadow ?? {}).map(([set, tally]) => (
-            <SettingsRow key={set} label={`${QUESTION_SETS[set] ?? set} today`} hint={`${String(tally.assessed)} assessed — would record ${String(tally.record)}, digest ${String(tally.digest)}, wake ${String(tally.now)}`} />
-          ))}
-          {Object.keys(status?.shadow ?? {}).length === 0 ? <SettingsRow label="Nothing assessed today" hint={sensor.mode === 'off' ? 'Set the mode to Shadow to start an evaluation.' : 'Assessments appear here as Lead turns end.'} /> : null}
-          <SettingsSwitch label="Assist Lead turns" hint="In Assist mode, let the sensor decide whether a Lead turn wakes the Supervisor, waits for a digest, or is only recorded. Turn on after a shadow evaluation."
-            value={assistLeadTurns} disabled={sensor.mode !== 'assist'}
-            onValueChange={on => { save(current => ({ ...current, sensor: { ...current.sensor, assistQuestionSets: on ? ['lead-turn-v1'] : [] } })); }} />
-          <SettingsAction label="Status and counts" hint="Read again from the runtime." actionLabel="Refresh" onPress={() => { setTick(tick + 1); }} />
+          <SettingsAction label="Letter counts" hint="Read again from the runtime." actionLabel="Refresh" onPress={() => { setTick(tick + 1); }} />
         </SettingsSection>
       </Page>
     </ScrollView>

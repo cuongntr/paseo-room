@@ -12,7 +12,7 @@ import type { Observer, Seat } from './observer.js';
 
 export type SignalKind =
   | 'lead-gone-with-work' | 'writers-observed' | 'duplicate-lead' | 'permission-waiting'
-  | 'peer-result-unread' | 'turn-failing' | 'peer-orphaned' | 'project-quiet' | 'context-high';
+  | 'peer-result-unread' | 'turn-failing' | 'peer-orphaned' | 'context-high';
 
 /** `page` bypasses budgets; `now` wakes the Supervisor when idle; `digest` waits for the next digest. */
 export type Level = 'page' | 'now' | 'digest';
@@ -38,8 +38,6 @@ export interface SignalContext {
   readonly now: number;
   /** Project keys with a runtime assignment ledger, whose duplicate Leads the ledger already pages. */
   readonly ledgerProjects: ReadonlySet<string>;
-  /** Projects whose last Lead turn the sensor recorded as `continuing`, and when. */
-  readonly quiet: ReadonlyMap<string, number>;
   /** The operator's context budgets (seat context delta K-D2). */
   readonly budgets: SeatContextSettings['budgets'];
 }
@@ -217,23 +215,6 @@ function peerOrphaned(ctx: SignalContext): Condition[] {
   return found;
 }
 
-function projectQuiet(ctx: SignalContext): Condition[] {
-  const found: Condition[] = [];
-  const limit = ctx.delivery.quietHours * 60 * MINUTE;
-  for (const [key, since] of ctx.quiet) {
-    const seats = ctx.observer.seats().filter(seat => seat.project.key === key && seat.state !== 'archived');
-    if (seats.some(active) || seats.some(seat => (seat.lastTurn?.endedAt ?? 0) > since)) continue;
-    if (ctx.now - since < limit) continue;
-    const lead = seats.find(seat => seat.role === 'lead');
-    found.push({
-      key: `quiet:${key}:${String(since)}`, kind: 'project-quiet', level: 'now', projectKey: key, subjects: lead === undefined ? [] : [lead.agentId],
-      ...both(label => `${lead === undefined ? 'The Lead' : label(lead)} said it would keep working ${age(ctx.now - since)} ago, and nothing in the project has run since.`),
-      evidence: '',
-    });
-  }
-  return found;
-}
-
 /**
  * A live Lead whose context has reached its rotation mark (seat context delta K-D6). A fact, not
  * advice. The evidence is the mark, not the figure, so a context that keeps growing restates the
@@ -261,6 +242,6 @@ function contextHigh(ctx: SignalContext): Condition[] {
 export function conditions(ctx: SignalContext): readonly Condition[] {
   return [
     ...leadGoneWithWork(ctx), ...duplicateLead(ctx), ...writersObserved(ctx), ...permissionWaiting(ctx),
-    ...peerResultUnread(ctx), ...turnFailing(ctx), ...projectQuiet(ctx), ...peerOrphaned(ctx), ...contextHigh(ctx),
+    ...peerResultUnread(ctx), ...turnFailing(ctx), ...peerOrphaned(ctx), ...contextHigh(ctx),
   ];
 }

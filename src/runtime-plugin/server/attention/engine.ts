@@ -7,7 +7,7 @@
  * retried on the next one. It decides nothing about assignments and writes nothing Paseo owns.
  */
 import { homedir } from 'node:os';
-import type { AttentionSettings, SensorMode } from '../../shared/attention.js';
+import type { AttentionSettings } from '../../shared/attention.js';
 import { DEFAULT_SEAT_CONTEXT_SETTINGS, appliedMark, compactMarkFor, contextPercent, rotateMark, type SeatContextSettings } from '../../shared/seat-context.js';
 import type { GitEvidence } from '../git.js';
 import type { PaseoPort } from '../paseo-port.js';
@@ -20,7 +20,7 @@ import { Observer, type Checkout, type Seat, type TurnFacts } from './observer.j
 import { Portfolio, type Resolution } from './portfolio.js';
 import type { LedgerReader } from './succession.js';
 import { age, conditions, seatLabel, type Condition, type Level, type SignalKind } from './signals.js';
-import { ANSWER, BASELINE, MAX_MARKER_TEXT, assistLeadTurn, markedLeadTurn, type Assessment, type Decision, type LeadTurnFacts, type Marker, type Triaged } from './triage.js';
+import { ANSWER, BASELINE, MAX_MARKER_TEXT, markedLeadTurn, type Decision, type LeadTurnFacts, type Marker, type Triaged } from './triage.js';
 
 export const SWEEP_MS = 30_000;
 const STALE_SNAPSHOT_MS = 5 * 60_000;
@@ -28,7 +28,7 @@ const REOPEN_MS = 10 * 60_000;
 const LEDGER_CACHE_MS = 60_000;
 const ITEM_MEMORY = 500;
 const LETTER_EXCERPT = 240;
-/** An answer to the Supervisor's own message carries more of it, as the sensor's tail does (§6.2). */
+/** An answer to the Supervisor's own message carries more of it (§6.2). */
 const REPLY_EXCERPT = 1_500;
 /** Marker lines quoted in one letter item, each whole up to the parser's bound. */
 const LETTER_MARKERS = 3;
@@ -72,12 +72,6 @@ interface Item {
   readonly kind: string;
 }
 
-/** The sensor as the engine sees it: implemented in sensor.ts, absent in O1-only wiring. */
-export interface SensorHook {
-  leadTurn(input: { readonly id: string; readonly message: string; readonly facts: LeadTurnFacts; readonly seatName: string }): Promise<{ readonly assessment: Assessment; readonly mode: Exclude<SensorMode, 'off'>; readonly assist: boolean } | undefined>;
-  peerReport?(input: { readonly id: string; readonly brief: string; readonly report: string }): Promise<unknown>;
-}
-
 export interface EngineDependencies {
   readonly paseo: PaseoPort;
   readonly recognition: Pick<Recognition, 'recognize'>;
@@ -87,7 +81,6 @@ export interface EngineDependencies {
   readonly settings: () => AttentionSettings;
   /** The operator's context budgets; the defaults when omitted. */
   readonly contextSettings?: () => SeatContextSettings;
-  readonly sensor?: SensorHook;
   readonly log?: (message: string) => void;
   /** Whether Paseo's handle has arrived; the sweep waits for it rather than failing every pass. */
   readonly ready?: () => boolean;
@@ -114,7 +107,6 @@ export class AttentionEngine {
   readonly delivery: Delivery;
   private readonly incidents = new Map<string, Incident>();
   private readonly items = new Map<string, Item>();
-  private readonly quiet = new Map<string, number>();
   /** The queued digest Lead-turn item of each Lead: a newer turn supersedes it. */
   private readonly queuedTurn = new Map<string, string>();
   /** Marker lines already relayed per Lead, so a restated one does not page or wake again. */
@@ -184,8 +176,7 @@ export class AttentionEngine {
   onTurnStarted(agentId: string): Promise<unknown> {
     return this.run(async () => {
       await this.ensureStarted();
-      const seat = await this.observer.onTurnStarted(agentId);
-      if (seat !== undefined) this.quiet.delete(seat.project.key);
+      await this.observer.onTurnStarted(agentId);
       await this.settle();
     });
   }
@@ -195,13 +186,6 @@ export class AttentionEngine {
       await this.ensureStarted();
       const previousEndedAt = this.observer.seat(agentId)?.lastTurn?.endedAt;
       const ended = await this.observer.onTurnEnded(agentId, outcome, timeline, turnId);
-      const sensor = this.deps.sensor;
-      if (ended !== undefined && ended.seat.role === 'peer' && ended.turn.outcome === 'completed' && sensor?.peerReport !== undefined) {
-        // Shadow only: recorded for evaluation, never applied, so it does not hold the lane.
-        const brief = ended.turn.firstMessage ?? '';
-        const report = ended.turn.lastMessage ?? '';
-        if (brief !== '' && report !== '') void sensor.peerReport({ id: letterId(), brief, report }).catch(() => undefined);
-      }
       if (ended !== undefined && ended.seat.role === 'lead' && ended.seat.state !== 'archived') {
         const grace = this.deps.settings().delivery.envelopeGraceSeconds * 1_000;
         this.pendingTurns.push({ id: letterId(), leadAgentId: agentId, turn: ended.turn, previousEndedAt, dueAt: ended.turn.endedAt + grace });
@@ -292,7 +276,7 @@ export class AttentionEngine {
     const settings = this.deps.settings();
     const now = this.time;
     const current = conditions({
-      observer: this.observer, delivery: settings.delivery, now, ledgerProjects: await this.ledgerProjects(), quiet: this.quiet, budgets: this.contextSettings().budgets,
+      observer: this.observer, delivery: settings.delivery, now, ledgerProjects: await this.ledgerProjects(), budgets: this.contextSettings().budgets,
     });
     const seen = new Set<string>();
     for (const condition of current) {
@@ -374,7 +358,7 @@ export class AttentionEngine {
     const relayed = this.relayedMarkers.get(lead.agentId) ?? new Set<string>();
     const markers = pending.turn.markers.filter(marker => !relayed.has(markerKey(marker)));
     // A handoff request or a successor's kickoff: the runtime reads that turn itself, and its text
-    // never reaches a letter or the sensor. A marker line in it still goes, quoted alone.
+    // never reaches a letter. A marker line in it still goes, quoted alone.
     if (markers.length === 0 && pending.turn.trigger === 'succession') { await record('record', 'the runtime reads a succession turn itself'); return; }
     // Paseo's own report of a prompted turn carries only its last message, so a marker still goes.
     if (markers.length === 0 && await this.supervisorPrompted(supervisor, pending)) { await record('record', 'Paseo reports this turn to the Supervisor that prompted it'); return; }
@@ -389,20 +373,13 @@ export class AttentionEngine {
       peersRunning: this.observer.descendants(lead.agentId).filter(seat => seat.state === 'running' || seat.state === 'permission').length,
       permissionPending: lead.pending.size > 0,
     };
-    // Lead's own marker lines decide, in code; the sensor is asked only about an unmarked turn that is
-    // news, since an answer already goes at once.
-    let triaged: Triaged<Decision | 'page'> = markedLeadTurn(markers) ?? (answers ? ANSWER : BASELINE);
-    if (markers.length === 0 && !answers && this.deps.sensor !== undefined && message.trim() !== '') {
-      const sensed = await this.deps.sensor.leadTurn({ id: pending.id, message, facts, seatName: `Lead of ${project.name}` }).catch(() => undefined);
-      if (sensed !== undefined && sensed.mode === 'assist' && sensed.assist) triaged = assistLeadTurn(sensed.assessment, facts);
-    }
+    // Lead's own marker lines decide, in code; an answer goes at once, and any other turn is a digest line.
+    const triaged: Triaged<Decision | 'page'> = markedLeadTurn(markers) ?? (answers ? ANSWER : BASELINE);
     const level = triaged.decision;
     // A turn of the Lead's own loop that leaves a Peer working is progress (§6.1): it goes with the
     // Supervisor's next letter and never wakes it alone, since a Supervisor almost never acts on one.
     const progress = level === 'digest' && pending.turn.trigger === 'runtime' && facts.peersRunning > 0;
     await record(level, progress ? 'progress: the Lead\'s loop still runs; it goes with the next letter' : triaged.reason);
-    if (triaged.continuing === true) this.quiet.set(project.key, pending.turn.endedAt);
-    else this.quiet.delete(project.key);
     // An incident still pages; any other answer is a reply, which goes even with letters off.
     const reply = answers && level !== 'page';
     if (level === 'record' || (!this.deps.settings().letters.enabled && !reply)) return;

@@ -228,15 +228,8 @@ belongs to an observed project, and falls back to Room otherwise. Row order:
     latest, whether you or a Supervisor gave it) — read back from the attention log.
   - *When to tell a Supervisor*: permission waiting, Peer result unread, orphaned Peer.
   - *How often*: digest interval, wakes per hour, urgent page hold.
-  - *Attention sensor*: the mode, and whether it is ready to send with today's calls, failures and
-    tokens, or why not.
-  - *Sensor connection*: endpoint and pinned model with **Apply**, then the key's state, a secure
-    input, and **Store** / **Remove**.
-  - *Sensor privacy*: the mask switch, and *Allow sending to <host>* (for loopback, a line saying
-    nothing leaves the machine).
-  - *Sensor evaluation*: today's shadow tallies (*Lead turns today — 34 assessed, would record 20,
-    digest 10, wake 4*) beside the *Assist Lead turns* switch, and **Refresh**.
-  - An egress callout while the sensor sends off the machine.
+  - *Status*: a line when Paseo gave the plugin no settings storage, and **Refresh** for the counts.
+  - The sensor sections were removed with the sensor in 0.15.0.
 - **Settings › Room seats.**
   - *Accounts*: host Settings rows, one per seat (`Lead · Claude`), with its account line — email or
     login method, plan, and the organization unless it is only the personal one Claude names after

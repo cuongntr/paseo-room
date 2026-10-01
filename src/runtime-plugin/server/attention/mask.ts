@@ -1,14 +1,9 @@
 /**
- * Masking of agent text before it leaves the runtime (docs/design/runtime-coordination-attention.md
- * §6.2, A-D7). Applied to every excerpt the runtime sends anywhere — a letter to a Supervisor, or
- * the sensor's state — so a credential an agent printed is never repeated by the room. The order
- * matters: whole secret blocks first, then shaped tokens, then assignments, then URLs, and network
- * identifiers last when asked.
+ * Masking of agent text before the runtime repeats it (docs/design/runtime-coordination-attention.md
+ * §6.2). Applied to every excerpt in a letter to a Supervisor, the attention log and the panel, so a
+ * credential an agent printed is never repeated by the room. The order matters: whole secret blocks
+ * first, then shaped tokens, then assignments, then URLs, and network identifiers last.
  */
-
-export interface MaskOptions {
-  readonly networkIdentifiers: boolean;
-}
 
 type Replacement = string | ((match: string, ...groups: string[]) => string);
 
@@ -63,10 +58,10 @@ const NETWORK_RULES: readonly (readonly [RegExp, string])[] = [
   [/\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.){2,}(?:internal|local|lan|corp|intra|vn|com|net|org|io|cloud)\b/gi, '[host]'],
 ];
 
-export function mask(text: string, options: MaskOptions = { networkIdentifiers: true }): string {
+export function mask(text: string): string {
   let masked = text;
   for (const [pattern, replacement] of RULES) masked = typeof replacement === 'string' ? masked.replace(pattern, replacement) : masked.replace(pattern, replacement);
-  if (options.networkIdentifiers) for (const [pattern, replacement] of NETWORK_RULES) masked = masked.replace(pattern, replacement);
+  for (const [pattern, replacement] of NETWORK_RULES) masked = masked.replace(pattern, replacement);
   return masked;
 }
 

@@ -120,6 +120,15 @@ function bundleInventory(): { readonly dirs: string[]; readonly files: string[] 
 }
 
 /**
+ * Plugin files an earlier release installed and this one does not ship. Setup removes each one,
+ * only while it is still a regular file, so an upgraded tree matches the bundle.
+ */
+const REMOVED_FILES = [
+  // The attention sensor, removed in 0.15.0.
+  'server/attention/key.ts', 'server/attention/questions.ts', 'server/attention/sensor.ts',
+] as const;
+
+/**
  * The runtime plugin as ordinary managed entries under `~/.paseo-room/runtime-plugin`. The
  * plugin-owned `~/.paseo-room/runtime` state tree is deliberately absent: setup never plans,
  * compares, replaces or deletes it.
@@ -137,5 +146,6 @@ export function runtimePluginEntries(layout: Layout, agents: readonly AgentId[],
         : path === SUCCESSION_MODULE ? renderSuccessionText() : readFileSync(join(BUNDLE, path), 'utf8'),
     })),
     { kind: 'file', path: join(root, MANIFEST_FILE), content: renderRuntimeManifestFile(agents, roles) },
+    ...REMOVED_FILES.map(path => ({ kind: 'absent' as const, path: join(root, path) })),
   ];
 }

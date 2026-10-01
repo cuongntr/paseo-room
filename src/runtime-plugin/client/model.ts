@@ -243,7 +243,6 @@ export const KIND_LABEL: Readonly<Record<string, string>> = {
   'peer-result-unread': 'Peer result unread',
   'turn-failing': 'Repeated failure',
   'peer-orphaned': 'Orphaned Peer',
-  'project-quiet': 'Stalled project',
   'context-high': 'Context past rotation mark',
 };
 

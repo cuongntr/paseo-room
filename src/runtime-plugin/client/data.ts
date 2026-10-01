@@ -7,7 +7,7 @@ import { useEffect, useRef, useState } from 'react';
 import {
   runtimeAbandonRpc, runtimeAssignmentRpc, runtimeAssignSupervisorRpc, runtimeHealthRpc, runtimeIncidentFeedbackRpc, runtimeLeaseReclaimRpc,
   runtimeProjectPreflightRpc, runtimeProjectRpc, runtimeQuarantineRpc, runtimeRecoverRpc, runtimeResolveOwnershipRpc, runtimeRoomRpc,
-  runtimeAttentionKeyRpc, runtimeAttentionStatusRpc, runtimePeerEffortRpc, runtimeSeatsRpc, runtimeStartProjectRpc, runtimeStartSupervisorRpc, runtimeWorkspaceCloseRpc,
+  runtimeAttentionStatusRpc, runtimePeerEffortRpc, runtimeSeatsRpc, runtimeStartProjectRpc, runtimeStartSupervisorRpc, runtimeWorkspaceCloseRpc,
   runtimeSuccessionCancelRpc, runtimeSuccessionCompleteRpc, runtimeSuccessionPreflightRpc, runtimeSuccessionStartRpc, runtimeSuccessionStatusRpc,
 } from '../shared/rpc-contracts.js';
 
@@ -79,7 +79,6 @@ export function useRuntimeRpcs() {
     startProject: useRpc(runtimeStartProjectRpc),
     assignSupervisor: useRpc(runtimeAssignSupervisorRpc),
     incidentFeedback: useRpc(runtimeIncidentFeedbackRpc),
-    attentionKey: useRpc(runtimeAttentionKeyRpc),
     attentionStatus: useRpc(runtimeAttentionStatusRpc),
     peerEffort: useRpc(runtimePeerEffortRpc),
     successionPreflight: useRpc(runtimeSuccessionPreflightRpc),

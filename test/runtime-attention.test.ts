@@ -623,30 +623,6 @@ describe('attention signals and letters', () => {
     expect(engine.openIncidents('sup')[0]?.feedback).toBe('noise');
   });
 
-  it('lets an assisting sensor wake the Supervisor for a dead wait, while a shadow one changes nothing', async () => {
-    const recognition = new Recognition(join(root, 'plugin'));
-    await recognition.load();
-    const make = (assist: boolean) => new AttentionEngine({
-      paseo, recognition, git: new GitEvidence(), runtimeRoot, now: () => clock, settings: () => settings, log: () => undefined,
-      sensor: {
-        leadTurn: () => Promise.resolve({
-          assessment: { questionSet: 'lead-turn-v1', model: 'jev-1.13.0', choice: { value: 'waiting_for_peer', confidence: 0.92 }, nouls: {}, latencyMs: 80 },
-          mode: assist ? 'assist' : 'shadow', assist,
-        }),
-      },
-    });
-    const shadow = make(false);
-    await shadow.run(() => shadow.sweep());
-    await shadow.onTurnEnded('lead', { kind: 'completed' }, [{ type: 'assistant_message', text: 'Waiting for the Engineer to finish.' }]);
-    expect(letters()).toEqual([]);
-
-    const assisted = make(true);
-    await assisted.run(() => assisted.sweep());
-    await assisted.onTurnEnded('lead', { kind: 'completed' }, [{ type: 'assistant_message', text: 'Waiting for the Engineer to finish.' }]);
-    expect(letters()).toHaveLength(1);
-    expect(letters()[0]?.text).toContain('[dead wait: Lead waits for a Peer and none is running]');
-  });
-
   it('gives the panel a names-only summary of each incident, and letters the ids', async () => {
     paseo.addAgent({ id: 'lead-2', provider: 'codex-lead', cwd: repo, title: 'shop — second Lead', labels: { [PARENT_AGENT_ID_LABEL]: 'sup' } });
     await settle();

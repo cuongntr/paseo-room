@@ -56,8 +56,12 @@ describe('runtime plugin managed entries', () => {
     expect([...files].sort()).toEqual(expected);
     for (const entry of entries) {
       expect(entry.path.startsWith(root)).toBe(true);
-      expect(entry.kind === 'dir' || entry.kind === 'file').toBe(true);
+      expect(entry.kind === 'dir' || entry.kind === 'file' || entry.kind === 'absent').toBe(true);
     }
+    // A file an earlier release installed and this one does not ship is removed on upgrade.
+    const removed = entries.filter(entry => entry.kind === 'absent').map(entry => entry.path);
+    expect(removed).toContain(join(root, 'server', 'attention', 'sensor.ts'));
+    for (const path of removed) expect(files).not.toContain(path);
     const index = entries.find(entry => entry.path === join(root, 'index.server.ts'));
     expect(index?.kind === 'file' ? index.content : '').toBe(await readFile(join(source, 'index.server.ts'), 'utf8'));
     // The per-room locator replaces the inactive placeholder shipped in the bundle.

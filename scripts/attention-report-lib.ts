@@ -21,9 +21,6 @@ export interface LogRecord {
   readonly items: readonly string[];
   readonly verdict?: string | undefined;
   readonly leadAgentId?: string | undefined;
-  readonly questionSet?: string | undefined;
-  readonly latencyMs?: number | undefined;
-  readonly baseline?: string | undefined;
 }
 
 /** A Supervisor's `message_lead`, from a project ledger's `notice.pending` event. */
@@ -84,7 +81,7 @@ export function logRecords(text: string, window: Window): LogRecord[] {
     records.push({
       at, type, items,
       id: str(raw.id), decision: str(raw.decision), reason: str(raw.reason), level: str(raw.level), verdict: str(raw.verdict),
-      leadAgentId: str(raw.leadAgentId), questionSet: str(raw.questionSet), latencyMs: num(raw.latencyMs), baseline: str(raw.baseline),
+      leadAgentId: str(raw.leadAgentId),
     });
   }
   return records;
@@ -204,7 +201,6 @@ export interface LetterReport {
   readonly delay: Record<string, Delay>;
   readonly answers: { readonly messages: number; readonly byDecision: Record<string, number> } & Omit<Delay, 'decided' | 'otherLevel'>;
   readonly feedback: Record<string, number>;
-  readonly sensor: { readonly assessments: number; readonly latencyP50: number; readonly wouldRaise: number; readonly wouldLower: number };
 }
 
 function delayOf(decisions: readonly LogRecord[], sentIn: ReadonlyMap<string, LogRecord>, level?: string): Delay {
@@ -230,7 +226,6 @@ export function letterReport(records: readonly LogRecord[], messages: readonly S
     .map(message => turns.find(turn => turn.leadAgentId === message.leadAgentId && turn.at > message.at))
     .filter((turn): turn is LogRecord => turn !== undefined);
   const answerDelay = delayOf(answers, sentIn);
-  const assessments = records.filter(record => record.type === 'assessment.recorded' && record.questionSet === 'lead-turn-v1');
   return {
     days: (window.to - window.from) / 86_400_000,
     leadTurns: count(turns, record => `${record.decision ?? '?'} · ${reasonClass(record.reason ?? '')}`),
@@ -245,11 +240,6 @@ export function letterReport(records: readonly LogRecord[], messages: readonly S
       sent: answerDelay.sent, unsent: answerDelay.unsent, p50: answerDelay.p50, p90: answerDelay.p90,
     },
     feedback: count(records.filter(record => record.type === 'feedback.recorded'), record => record.verdict ?? '?'),
-    sensor: {
-      assessments: assessments.length, latencyP50: quantile(assessments.map(record => record.latencyMs ?? Number.NaN).filter(value => !Number.isNaN(value)), 0.5),
-      wouldRaise: assessments.filter(record => record.baseline === 'digest' && record.decision === 'now').length,
-      wouldLower: assessments.filter(record => record.baseline === 'digest' && record.decision === 'record').length,
-    },
   };
 }
 
@@ -305,7 +295,6 @@ export function formatReport(window: Window, letters: LetterReport, seats: Reado
     ...Object.entries(letters.delay).map(([level, delay]) => `  ${level.padEnd(6)} decided ${String(delay.decided)}, sent ${String(delay.sent)}, never sent ${String(delay.unsent)}, sent in another level ${String(delay.otherLevel)}; decision to letter p50 ${n(delay.p50)} s, p90 ${n(delay.p90)} s`),
     `Answers to message_lead: ${String(letters.answers.messages)} messages; answered as ${pairs(letters.answers.byDecision)}; sent ${String(letters.answers.sent)}, never sent ${String(letters.answers.unsent)}; decision to letter p50 ${n(letters.answers.p50)} s, p90 ${n(letters.answers.p90)} s`,
     `Feedback: ${pairs(letters.feedback) || 'none'}`,
-    `Sensor: ${String(letters.sensor.assessments)} assessments, latency p50 ${n(letters.sensor.latencyP50)} ms, would raise ${String(letters.sensor.wouldRaise)}, would lower ${String(letters.sensor.wouldLower)}`,
   ];
   for (const [role, seat] of Object.entries(seats)) {
     lines.push('', `${role}: turns ${pairs(seat.turns)}; input read ${tokens(seat.input)} (${tokens(seat.input / letters.days)}/day): ${pairs(Object.fromEntries(Object.entries(seat.inputByTrigger).map(([key, value]) => [key, Math.round(value / 1e6)])))} (M)`);

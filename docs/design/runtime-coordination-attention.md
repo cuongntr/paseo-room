@@ -18,6 +18,32 @@
 - Approved: 2026-09-24 — Repository owner (§9 contract amendment, §10 PRD amendment, Q-A01–Q-A04)
 - Supersedes: runtime-coordination.md §13 "Phase 3" and "Phase 5" scope rows
 
+## Amendment 2026-10-01 — the sensor is removed
+
+Approved by the repository owner on 2026-10-01. The attention sensor (§6.2–§6.5, A-D7, §12.3, the
+sensor rows of §8.3) is removed in 0.15.0, with its key, its settings, its RPC and the evaluation
+script. Those sections stay below as the record of what was built and why; they no longer describe
+the runtime.
+
+- **Evidence.** In shadow over 2026-09-24..30 the sensor answered 550 Lead turns. Against the
+  ratings, it would have raised 79 turns that mattered and lowered 62 that mattered too, so assist
+  would have traded about as many misses as it fixed. The Lead marker lines (§6.1a) and replies to
+  `message_lead` (§7.2) already route what it was meant to catch, in code. The owner set it to
+  `off` on 2026-09-30, and it made no call after.
+- **Cost.** It was the only path by which project text left the machine. Masking changed in three
+  releases in two days (0.14.0–0.14.2); with the sensor on, a gap in any of them would have sent a
+  credential to a third party rather than to a local Supervisor.
+- **What changes.** Code alone triages a Lead turn: a marker line pages or wakes, an answer goes at
+  once, anything else is a digest line (§6.1). `project-quiet` (§5) is removed with the setting
+  `quietHours`, since only a sensor answer of `continuing` armed it. Masking (§6.2) stays for
+  letters, the log and the panel, now always masking network identifiers, as letters already did.
+  On its first start the plugin deletes `runtime/v1/secrets/attention-key`, which nothing reads any
+  more; `setup --apply` removes the three plugin files that held the sensor.
+- **What does not change.** No seat gains or loses authority. No tool, event type or contract text
+  changes. A stored `sensor` object in Paseo's host settings is ignored.
+
+Bringing a model back into routing is a new design delta with its own evaluation, not a setting.
+
 Paseo facts are read from the installed `0.9.1` packages. `S/` is `@getpaseo/server/dist/server/server/`
 under the global `@getpaseo/cli` install; `L/`, `C/` and `P/` are `node_modules/@getpaseo/plugin/dist/`,
 `node_modules/@getpaseo/client/dist/` and `node_modules/@getpaseo/protocol/dist/` in this repository. Reading source is not qualification: what a running daemon must confirm is listed in §13.
@@ -716,6 +742,7 @@ files under `runtime/v1/attention` stay until `remove --apply`.
 
 | Date | Author | Change |
 |---|---|---|
+| 2026-10-01 | Repository owner / Bytes | The sensor is removed (amendment at the head of this document): 550 shadow answers would have raised 79 useful turns and lowered 62 useful ones, it was off since 2026-09-30, and it was the only egress path. `project-quiet` and `quietHours` go with it. Code alone triages. No authority is granted or removed. |
 | 2026-09-30 | Repository owner / Bytes | §7.4, §9.4: a Supervisor's `message_lead` waits for the Lead's turn to end, like every runtime notice; only a page steers. Claude Code cancels the running tool call for any steer it takes, and 13 of the 124 Supervisor messages sent to Leads had cut off the command the Lead was running. `message_lead` reaches a closed, unarchived Lead, which Paseo resumes. §6.2: masking after a plain word needs a credential-shaped value; its only two masks in a week had hidden prose. No authority is granted or removed. |
 | 2026-09-30 | Repository owner / Bytes | §6.1, §7.2: a Lead turn that began with the runtime's notices and left a Peer working is progress. It rides along with the Supervisor's next letter and never wakes it alone. Replayed over six days, letters fall from 347 to 271, and none is added. A proposed half-hourly bulletin built from the ledger was dropped at review: it saved less and needed a setting, a renderer and a letter level. `attention_feedback`'s description asks the Supervisor to rate only noise, since 233 of its model calls in six days did nothing but rate. No authority is granted or removed. |
 | 2026-09-30 | Repository owner / Bytes | §6.1a, §7.2: a Lead turn that answers the Supervisor's `message_lead` is a reply, delivered once the Supervisor is idle, with up to 1,500 characters of the answer. It goes even with letters off and is never budgeted or superseded. A `NEEDS-HUMAN` item is exempt from the wake budget. In six days, 132 of 208 answers had gone to the digest: 63 arrived about five minutes late and 69 never arrived. 15 of 107 `NEEDS-HUMAN` items had overflowed the budget into the digest. `message_lead`'s description says the answer comes back as a letter. Code still chooses every class and recipient. No authority is granted or removed. |

@@ -1,7 +1,7 @@
 /**
  * The attention log (docs/design/runtime-coordination-attention.md A-D8, §11).
  *
- * Incidents, letters, feedback and sensor assessments are low-stakes records: a lost or
+ * Incidents, letters, feedback and Lead turns are low-stakes records: a lost or
  * duplicated line is not a safety fault. They are appended to one owner-only JSONL file per day
  * and pruned by whole file, never replayed as a ledger. Nothing secret is ever written here.
  */
@@ -25,7 +25,6 @@ export type LogRecord =
   | { readonly type: 'letter.held' | 'letter.sent' | 'letter.failed'; readonly id: string; readonly supervisorAgentId?: string; readonly level: string; readonly items: readonly string[]; readonly reason?: string }
   | { readonly type: 'lead-turn'; readonly id: string; readonly projectKey: string; readonly leadAgentId: string; readonly decision: string; readonly reason: string }
   | { readonly type: 'feedback.recorded'; readonly id: string; readonly verdict: 'useful' | 'noise' | 'unknown'; readonly by: string }
-  | { readonly type: 'assessment.recorded'; readonly id: string; readonly questionSet: string; readonly model: string; readonly mode: string; readonly state: unknown; readonly answers: unknown; readonly decision: string; readonly baseline: string; readonly latencyMs: number; readonly inputTokens?: number }
   /** A Lead succession's step (seat context delta §5.4); never its handoff text. */
   | {
     readonly type: `succession.${'started' | 'handoff-received' | 'archived' | 'created' | 'delivered' | 'completed' | 'cancelled' | 'failed'}`;

@@ -149,7 +149,7 @@ const ABOUT: readonly (readonly [string, string])[] = [
   ['ShieldAlert', 'The runtime is trusted, unsandboxed plugin code. It cannot stop a process running as your user.'],
   ['Eye', 'Attention letters to a Supervisor are evidence, not instructions. A letter waits for the Supervisor to be idle and is never sent while it holds a permission.'],
   ['Moon', 'An asleep seat\'s session is closed. Opening it, or a message to it, resumes it.'],
-  ['Lock', 'Records stay under your room home. The attention sensor is off unless you enable it; when on, it sends masked, bounded excerpts of Lead messages to the endpoint you acknowledged, and nothing else.'],
+  ['Lock', 'Records stay under your room home. Nothing about your projects leaves this machine.'],
   ['GitBranch', 'Isolated writers work in worktrees Paseo creates. Write scopes prevent collisions between them; they do not contain a Peer.'],
 ];
 
