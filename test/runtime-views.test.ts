@@ -132,7 +132,10 @@ describe('Phase 2 status views', () => {
     expect(worktreesOnDisk(leftover.state)).toEqual({ retained: 0, leftover: 1 });
 
     const exceeded = input([...leased(A, ['src/api']), handoff(A), ev('scope.exceeded', { candidateCommit: HEAD, paths: ['README.md'] }, A)]);
-    expect(findings(exceeded)).toEqual([expect.objectContaining({ kind: 'scope-exceeded', message: expect.stringContaining('README.md') as string })]);
+    // An outside path no other writer holds is shown, not a finding (scope contest delta SC-D2).
+    expect(findings(exceeded)).toEqual([]);
+    const contested = input([...leased(A, ['src/api']), ...leased(B, ['README.md']), handoff(A), ev('scope.exceeded', { candidateCommit: HEAD, paths: ['README.md'] }, A)]);
+    expect(findings(contested)).toEqual([expect.objectContaining({ kind: 'scope-exceeded', message: expect.stringContaining(`README.md (held or changed by ${B})`) as string })]);
     expect(assignmentDetailView(exceeded.state, A, 'lead')).toMatchObject({
       lease: { epoch: 1 }, worktree: { path: `/wt/${A}` }, scopeExceeded: { value: { candidateCommit: HEAD, paths: ['README.md'] }, evidence: 'detected' },
     });

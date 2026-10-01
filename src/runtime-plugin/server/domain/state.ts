@@ -17,7 +17,7 @@ import { SETTLED_STATES } from '../../shared/states.js';
 import type { AssignmentCreateInputV1, CandidateRefV1 } from '../contracts/assignment.js';
 import type { PeerReportReceiptV1 } from '../contracts/peer.js';
 import type { GateResultV1, RuntimeEventOf, RuntimeEventV1 } from '../events/schema.js';
-import { firstOverlap, parseScopes, reaches, type ScopeEntry } from './scope.js';
+import { firstOverlap, overlaps, parseScope, parseScopes, reaches, type ScopeEntry } from './scope.js';
 
 export type AssignmentState =
   | 'draft' | 'dispatching' | 'active' | 'questioned' | 'blocked' | 'handed-back' | 'rework'
@@ -234,6 +234,38 @@ export function leaseCollision(state: ProjectState, assignmentId: string, reques
     if (holder !== undefined) return { code: 'serial_path', message: `${path.text} is serial-only and ${holder.lease.assignmentId} already writes under it.` };
   }
   return undefined;
+}
+
+/** An outside path another writer holds or has changed, and who (scope contest delta SC-D1). */
+export interface ContestedPath {
+  readonly path: string;
+  readonly holder: string;
+}
+
+/**
+ * The paths of `paths` that another writer of the project holds or has changed: inside a scope or
+ * serial-only path of another non-released lease, or among the changed paths of another undecided
+ * assignment's latest candidate. Decided at acceptance, when what counts is who else is writing. A
+ * scope that no longer parses contests every path, since it cannot be proven disjoint.
+ */
+export function scopeContest(state: ProjectState, assignmentId: string, paths: readonly string[]): ContestedPath[] {
+  const holders: { readonly id: string; readonly entries: readonly ScopeEntry[] | undefined }[] = activeLeases(state, assignmentId).map(lease => {
+    const scopes = parsed(lease.lease.scopes, 'whole');
+    const serial = parsed(lease.lease.serialOnly, 'none');
+    return { id: lease.assignmentId, entries: typeof scopes === 'string' || typeof serial === 'string' ? undefined : [...scopes, ...serial] };
+  });
+  const changed = [...state.assignments.values()]
+    .filter(view => view.id !== assignmentId && view.decision === undefined && view.candidate !== undefined)
+    .map(view => ({ id: view.id, paths: new Set((view.candidate?.changedPaths ?? []).map(path => path.normalize('NFC').toLowerCase())) }));
+  const contested: ContestedPath[] = [];
+  for (const path of paths) {
+    const entry = parseScope(path);
+    const held = holders.find(holder => holder.entries === undefined || (entry.ok && holder.entries.some(scope => overlaps(entry.entry, scope))));
+    const touched = held === undefined ? changed.find(other => other.paths.has(path.normalize('NFC').toLowerCase())) : undefined;
+    const holder = held?.id ?? touched?.id;
+    if (holder !== undefined) contested.push({ path, holder });
+  }
+  return contested;
 }
 
 type Check = string | undefined;

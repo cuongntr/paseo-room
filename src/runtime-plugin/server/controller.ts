@@ -20,7 +20,7 @@ import { evaluateAcceptance, rerunRedReason } from './domain/acceptance.js';
 import { sha256 } from './domain/receipts.js';
 import { normalizeScope, parseScope } from './domain/scope.js';
 import {
-  activeLeases, applyEvent, checkEvent, leadWorkspaceWriter, leaseCollision, project, reclaimCheck, type AssignmentView, type ProjectState, type WorkspaceRecord,
+  activeLeases, applyEvent, checkEvent, leadWorkspaceWriter, leaseCollision, project, reclaimCheck, scopeContest, type AssignmentView, type ProjectState, type WorkspaceRecord,
 } from './domain/state.js';
 import { validateAssignmentCreate } from './domain/validate.js';
 import { EVENT_SCHEMA, type GateResultV1, type RuntimeEventV1 } from './events/schema.js';
@@ -759,7 +759,8 @@ export class Controller {
         const root = worktree ?? (await this.deps.git.identity(caller.cwd)).canonicalRoot;
         observedHead = await this.deps.git.head(root).catch(() => 'unavailable');
       }
-      const decision = evaluateAcceptance(view, { reason: input.reason, ...(input.override === undefined ? {} : { override: input.override }), ...(observedHead === undefined ? {} : { observedHead }) });
+      const contested = view.scopeExceeded === undefined ? [] : scopeContest(loaded.state, view.id, view.scopeExceeded.paths);
+      const decision = evaluateAcceptance(view, { reason: input.reason, contested, ...(input.override === undefined ? {} : { override: input.override }), ...(observedHead === undefined ? {} : { observedHead }) });
       if (!decision.ok) return refuse(decision.code, decision.message);
       await this.append(loaded, {
         type: 'assignment.accepted', payloadVersion: 1, assignmentId: view.id, actor: this.lead(caller),

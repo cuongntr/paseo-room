@@ -297,7 +297,7 @@ describe('isolated handoff, acceptance and gate', () => {
     expect(await h.controller.accept(h.lead, { assignmentId: id, reason: 'In scope and green.' })).toMatchObject({ ok: true, value: { red: false } });
   });
 
-  it('records paths outside the lease\'s scope and requires an override to accept them', async () => {
+  it('records paths outside the lease\'s scope, and accepts one no other writer holds without an override', async () => {
     const h = await room();
     const { id, correlation, worktree } = await seat(h, ['src/api']);
     const head = await commit(worktree, ['src/api/a.ts', 'README.md']);
@@ -305,12 +305,34 @@ describe('isolated handoff, acceptance and gate', () => {
     const loaded = await ledger(h);
     const exceeded = loaded.events.find(event => event.type === 'scope.exceeded');
     expect(exceeded?.type === 'scope.exceeded' && exceeded.data).toEqual({ candidateCommit: head, paths: ['README.md'] });
+    // Lead still sees every outside path.
     expect(h.paseo.agents.get('lead-1')?.prompts.at(-1)?.text).toContain('1 changed path(s) outside its write scope, e.g. README.md');
-    const refused = await h.controller.accept(h.lead, { assignmentId: id, reason: 'Looks fine.' });
+    expect(await h.controller.accept(h.lead, { assignmentId: id, reason: 'README is the release note.' })).toMatchObject({ ok: true, value: { red: false } });
+  });
+
+  it('requires an override for an outside path another lease holds, and names the holder', async () => {
+    const h = await room();
+    const first = await seat(h, ['src/api']);
+    const second = await seat(h, ['docs']);
+    await commit(first.worktree, ['src/api/a.ts', 'docs/guide.md']);
+    await handoff(h, first.correlation);
+    const refused = await h.controller.accept(h.lead, { assignmentId: first.id, reason: 'Looks fine.' });
     expect(refused).toMatchObject({ ok: false, code: 'override_required' });
-    expect(!refused.ok && refused.message).toContain('README.md outside its write scope');
-    expect(await h.controller.accept(h.lead, { assignmentId: id, reason: 'Looks fine.', override: { reason: 'README change is the release note.', residualRiskAcknowledged: true } }))
+    expect(!refused.ok && refused.message).toContain(`docs/guide.md (held or changed by ${second.id}) outside its write scope`);
+    expect(await h.controller.accept(h.lead, { assignmentId: first.id, reason: 'Looks fine.', override: { reason: 'The docs Peer is told to rebase.', residualRiskAcknowledged: true } }))
       .toMatchObject({ ok: true, value: { red: true } });
+  });
+
+  it('requires an override for an outside path another open candidate also changed', async () => {
+    const h = await room();
+    const first = await seat(h, ['src/api']);
+    const second = await seat(h, ['src/web']);
+    await commit(first.worktree, ['src/api/a.ts', 'shared/types.ts']);
+    await commit(second.worktree, ['src/web/b.ts', 'shared/types.ts']);
+    await handoff(h, second.correlation);
+    await handoff(h, first.correlation);
+    const refused = await h.controller.accept(h.lead, { assignmentId: first.id, reason: 'Looks fine.' });
+    expect(!refused.ok && refused.message).toContain(`shared/types.ts (held or changed by ${second.id})`);
   });
 
   it('refuses acceptance when the worktree moved after handoff', async () => {

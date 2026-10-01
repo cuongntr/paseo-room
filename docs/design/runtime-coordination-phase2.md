@@ -276,9 +276,11 @@ refused while any worktree lease is not released.
 ### 5.4 Conformance at handoff
 
 The derived candidate's `changedPaths` are matched against the lease's scopes. Any path outside
-them records `scope.exceeded`. Such a candidate cannot be accepted without Phase 1's explicit
-override (reason plus `residualRiskAcknowledged`). This is evidence, not containment; the panel and
-the tool text say so (REQ-011).
+them records `scope.exceeded`. Since the [scope contest delta](runtime-coordination-scope-contest.md)
+(2026-10-01), such a candidate needs Phase 1's explicit override (reason plus
+`residualRiskAcknowledged`) only for an outside path another writer holds or has changed, decided at
+acceptance; before it, every outside path needed one. This is evidence, not containment; the panel
+and the tool text say so (REQ-011).
 
 ### 5.5 Q-011 recommendation
 
@@ -532,6 +534,7 @@ dispatch on the operator's `0.10` daemon is to be recorded here.
 
 | Date | Author | Change |
 |---|---|---|
+| 2026-10-01 | Repository owner / Bytes | §5.4: the override is required only for an outside path another writer holds or has changed ([scope contest delta](runtime-coordination-scope-contest.md)); in cmdb, 40 of 43 overrides had marked no contest. No seat gains authority; one acceptance step is removed where nothing is contested and added where another candidate changed the same file. |
 | 2026-09-29 | Repository owner / Bytes | §8 and §9.4: worktree dispatch is refused only below `0.9.1` and on a prerelease, with no upper bound, as the plugins now have none. A file-by-file comparison of `0.10.0` and `0.10.1` with `0.9.2` found every worktree surface identical. `QUALIFIED_WORKTREE_LINES` became `WORKTREE_PASEO_FLOOR`. No event, authority or tool change. |
 | 2026-09-28 | Repository owner / Bytes | A worktree workspace is titled with the gist of its assignment's outcome instead of `room <id>`: Paseo's sidebar listed several `room asg_…` rows whose work could not be told apart. The branch keeps `paseo-room/<id>`. `workspace.create-requested` gains an optional `title`, which recovery reissues because Paseo's receipt fingerprints the whole request; a request recorded without one is reissued with `room <id>` (P2-D3, §4, §7). No authority or tool change. |
 | 2026-09-28 | Bytes | §9.3 records the first live worktree dispatch on the operator's `0.9.2` daemon: create and Git proof, parentage, handback, a gate in the worktree, acceptance and a clean close, then a second dispatch from the new base. No defect; no event, authority or tool change. |

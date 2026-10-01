@@ -8,7 +8,7 @@
 import type { RuntimeEventV1 } from '../events/schema.js';
 import { canonicalJson, sha256 } from './receipts.js';
 import {
-  activeLeases, leadWorkspaceWriter, reclaimCheck, settled, TERMINAL_STATES, type AssignmentView, type ProjectState, type Violation, type WorkspaceRecord,
+  activeLeases, leadWorkspaceWriter, reclaimCheck, scopeContest, settled, TERMINAL_STATES, type AssignmentView, type ProjectState, type Violation, type WorkspaceRecord,
 } from './state.js';
 
 export type EvidenceClass = 'enforced' | 'detected' | 'procedural' | 'unverifiable';
@@ -242,8 +242,10 @@ export function findings(input: StatusInput): Finding[] {
   }
   for (const view of input.state.assignments.values()) {
     const exceeded = view.scopeExceeded;
-    if (exceeded !== undefined && !TERMINAL_STATES.includes(view.state)) {
-      found.push({ kind: 'scope-exceeded', evidence: 'detected', assignmentId: view.id, message: `The candidate of ${view.id} changes ${exceeded.paths.join(', ')} outside its write scope.`, recoveryAction: RECOVERY.exceeded, sourceEventIds: [exceeded.eventId] });
+    // Only an outside path another writer holds or has changed is a finding (scope contest delta SC-D2).
+    const contested = exceeded === undefined || TERMINAL_STATES.includes(view.state) ? [] : scopeContest(input.state, view.id, exceeded.paths);
+    if (exceeded !== undefined && contested.length > 0) {
+      found.push({ kind: 'scope-exceeded', evidence: 'detected', assignmentId: view.id, message: `The candidate of ${view.id} changes ${contested.map(entry => `${entry.path} (held or changed by ${entry.holder})`).join(', ')} outside its write scope.`, recoveryAction: RECOVERY.exceeded, sourceEventIds: [exceeded.eventId] });
     }
   }
   for (const notice of input.state.notices.values()) {

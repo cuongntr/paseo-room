@@ -808,7 +808,9 @@ and the refusal is final for that dispatch — narrow or sequence the work:
 
 Write scopes prevent collisions between isolated writers; **they do not contain a Peer**, which can
 still write anywhere its user can. At handoff the runtime records any changed path outside the
-scope as `scope.exceeded`, and accepting that candidate needs an override. Lead still integrates
+scope as `scope.exceeded` and tells Lead. Accepting the candidate needs an override only for an
+outside path another writer holds or has changed: one inside another live lease's scope or a
+serial-only path, or one another open candidate also changed. Lead still integrates
 each candidate by hand, in its own workspace, one at a time; the runtime never merges, rebases or
 pushes.
 

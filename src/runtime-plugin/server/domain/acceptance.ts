@@ -7,7 +7,7 @@
  * disabled — neither can be waived after handoff.
  */
 import type { GateResultV1 } from '../events/schema.js';
-import type { AssignmentView, GateRun } from './state.js';
+import type { AssignmentView, ContestedPath, GateRun } from './state.js';
 
 export type AcceptanceCode =
   | 'not_handed_back' | 'reason_missing' | 'candidate_missing' | 'candidate_moved' | 'peer_gate_missing'
@@ -18,6 +18,8 @@ export interface AcceptanceRequest {
   readonly override?: { readonly reason: string; readonly residualRiskAcknowledged: true };
   /** HEAD the Git port observed in the assigned workspace just now, when writable. */
   readonly observedHead?: string;
+  /** Outside paths another writer holds or has changed (scope contest delta SC-D1); none when omitted. */
+  readonly contested?: readonly ContestedPath[];
 }
 
 export type AcceptanceDecision =
@@ -72,13 +74,14 @@ export function evaluateAcceptance(view: AssignmentView, request: AcceptanceRequ
       : refuse('rerun_required', 'This assignment requires a runtime gate rerun on the candidate before acceptance.');
   }
   const gateRed = peer === 'failed' || (required && finished !== undefined && rerunIsRed(finished));
-  // An isolated candidate that changed paths outside its lease's scopes (Phase 2 delta §5.4).
-  const exceeded = view.scopeExceeded !== undefined;
-  const red = gateRed || exceeded;
+  // An isolated candidate's outside path needs an override only where another writer holds or
+  // has changed it (Phase 2 delta §5.4, scope contest delta SC-D1).
+  const contested = view.scopeExceeded === undefined ? [] : request.contested ?? [];
+  const red = gateRed || contested.length > 0;
   if (red && (request.override === undefined || request.override.reason.trim() === '')) {
     return refuse('override_required', gateRed
       ? 'The gate evidence is red: accepting it needs an override reason and a residual-risk acknowledgement.'
-      : `The candidate changes ${view.scopeExceeded?.paths.join(', ') ?? 'paths'} outside its write scope: accepting it needs an override reason and a residual-risk acknowledgement.`);
+      : `The candidate changes ${contested.map(entry => `${entry.path} (held or changed by ${entry.holder})`).join(', ')} outside its write scope: accepting it needs an override reason and a residual-risk acknowledgement.`);
   }
   return { ok: true, red, ...(finished === undefined ? {} : { gate: finished }) };
 }
