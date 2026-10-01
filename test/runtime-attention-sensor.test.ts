@@ -87,6 +87,13 @@ describe('masking', () => {
       ['token=abc', 'token=[secret]'],
       ['accessToken: abc', 'accessToken: [secret]'],
       ['TOKEN: abc', 'TOKEN: [secret]'],
+      ['curl -H "Authorization: Basic dXNlcjpwYXNz" https://x', 'curl -H "Authorization: Basic [secret]" https://x'],
+      ['Basic authentication is off', 'Basic authentication is off'],
+      // A credential with no digit is still told from a word by its shape.
+      ['use Basic dXNlcjpwYXNz', 'use Basic [secret]'],
+      ['password: correctHorse', 'password: [secret]'],
+      // A quoted key names a credential, as in JSON.
+      ['{"password": "hunter2", "token": "abc"}', '{"password": [secret], "token": [secret]}'],
       ['Token: dGhpc2lzYWxvbmdvcGFxdWV0b2tlbg', 'Token: [secret]'],
       // Masked in live letters, and meaningless once masked (cmdb, 2026-09-30).
       ['nối theo từng người qua token Keycloak đã đổi', 'nối theo từng người qua token Keycloak đã đổi'],

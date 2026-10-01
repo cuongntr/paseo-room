@@ -294,10 +294,12 @@ prefixes (`sk-`, `ghp_`, `glpat-`, `xox?-`, JWT shape); `NAME=value` where the n
 `TOKEN|SECRET|PASSWORD|PASSWD|KEY|CREDENTIAL`; URL user-info and query strings. IPv4/IPv6 literals and
 internal hostnames are masked only when `maskNetworkIdentifiers` is on (default on). The raw tail
 never leaves memory. Amended 2026-09-30: after a scheme word, and after a plain word such as `token`
-or `password` followed by a colon, only a value that looks like a credential is masked: one with a
-digit and at least six characters, or at least 24. The only two masks in a week of letters had hidden
-prose ("token Keycloak", "create a token:**"). A named key (`GITLAB_TOKEN=`, `apiKey:`, `TOKEN:`) or an
-`=` still masks any value.
+or `password` followed by a bare colon, only a credential-shaped value is masked: at least 24
+characters, or at least six with a digit, a capital inside it or a base64 sign (`+`, `/`, `=`). The
+only two masks in a week of letters had hidden prose ("token Keycloak", "create a token:**"). A named
+key (`GITLAB_TOKEN=`, `apiKey:`, `TOKEN:`), a quoted key (`"password": …`), an `=`, or an
+`Authorization:` header still masks any value; a lower-case word after `password:` is the accepted
+cost.
 
 ### 6.3 Question set `lead-turn-v1`
 

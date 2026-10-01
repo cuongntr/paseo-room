@@ -223,6 +223,11 @@ describe('Supervisor action handlers', () => {
     expect(await message('Which of you?')).toMatchObject({ noticeId: expect.any(String) as unknown });
     expect(h.paseo.agents.get('lead-2')?.prompts.at(-1)?.text).toContain('Supervisor: Which of you?');
 
+    // Two closed Leads are as ambiguous as two live ones; neither is resumed.
+    const second = h.paseo.agents.get('lead-2');
+    if (second !== undefined) { second.status = 'closed'; second.activeTurn = false; }
+    expect(await message('Anyone?')).toMatchObject({ error: { code: 'lead_ambiguous', message: expect.stringContaining('closed') as unknown } });
+
     for (const id of ['lead-1', 'lead-2']) {
       const seat = h.paseo.agents.get(id);
       if (seat !== undefined) seat.archivedAt = '2026-09-30T00:00:00.000Z';

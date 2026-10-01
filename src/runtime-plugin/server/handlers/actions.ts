@@ -193,7 +193,10 @@ export function createSupervisorHandlers(controller: Controller, attention: Atte
         // A Lead whose session closed still owns the project, and the send resumes it.
         const leads = live.length > 0 ? live : (await projectLeads(controller, loaded.value, { closed: true })).leadAgentIds;
         const [lead] = leads;
-        if (leads.length !== 1 || lead === undefined) return failure(leads.length === 0 ? 'lead_unavailable' : 'lead_ambiguous', leads.length === 0 ? 'No unarchived Lead owns this project.' : 'More than one Lead is active on this project.');
+        if (leads.length !== 1 || lead === undefined) {
+          return failure(leads.length === 0 ? 'lead_unavailable' : 'lead_ambiguous', leads.length === 0 ? 'No unarchived Lead owns this project.'
+            : live.length > 0 ? 'More than one Lead is active on this project.' : 'More than one closed, unarchived Lead claims this project; Human archives the stale one first.');
+        }
         const noticeId = await controller.notices.notify(loaded.value, {
           kind: 'supervisor-message', class: 'owner', disposition: 'lead-now', text: `${SUPERVISOR_MESSAGE_PREFIX}${input.message}`, recipient: { agentId: lead, role: 'lead' },
         });

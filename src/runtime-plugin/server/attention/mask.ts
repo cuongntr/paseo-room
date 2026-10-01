@@ -19,27 +19,40 @@ type Replacement = string | ((match: string, ...groups: string[]) => string);
 const PROSE_WORD = /^(?:tokens?|secrets?|passwords?|passwd|credentials?)$/i;
 
 /**
- * `key: value` or `key=value` naming a credential. After a plain word and a colon it is prose unless
- * the value looks like a credential ("create a token: name it", "a token:**"), and a value with no
- * letter or digit is never one.
+ * Whether a value is shaped like a credential rather than a word: long, or with a digit, a capital
+ * inside it or a base64 sign. "Keycloak" and "authentication" are words; `dXNlcjpwYXNz` is not.
+ */
+function credentialShaped(value: string): boolean {
+  return value.length >= 24 || (value.length >= 6 && /\d|[a-z][A-Z]|[+/=]/.test(value));
+}
+
+/** An authorization scheme followed by a word is prose ("token Keycloak", "Basic authentication"). */
+function scheme(match: string, name: string, value: string): string {
+  return credentialShaped(value) ? `${name} [secret]` : match;
+}
+
+/**
+ * `key: value`, `key=value` or `"key": value` naming a credential. A plain word before a bare colon
+ * is prose unless the value is credential-shaped ("create a token: name it"), and a value with no
+ * letter or digit is never one ("a token:**").
  */
 function assignment(match: string, key: string, separator: string, _quote: string, value: string): string {
-  const prose = PROSE_WORD.test(key) && key !== key.toUpperCase() && !separator.includes('=');
-  const credential = /\d/.test(value) ? value.length >= 6 : value.length >= 24;
-  return !/[A-Za-z0-9]/.test(value) || (prose && !credential) ? match : `${key}${separator}[secret]`;
+  const prose = PROSE_WORD.test(key) && key !== key.toUpperCase() && /^\s*:\s*$/.test(separator);
+  return !/[A-Za-z0-9]/.test(value) || (prose && !credentialShaped(value)) ? match : `${key}${separator}[secret]`;
 }
 
 const RULES: readonly (readonly [RegExp, Replacement])[] = [
   [/-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|$)/g, '[private key]'],
-  // An authorization scheme's credential has a digit or is long; "token Keycloak" is prose.
-  [/\b(Bearer|Basic|Token)\s+(?:(?=[A-Za-z._~+/=-]*\d)[A-Za-z0-9._~+/=-]{8,}|[A-Za-z0-9._~+/=-]{24,})/gi, '$1 [secret]'],
+  // A header carries a credential whatever its shape; elsewhere only a credential-shaped one counts.
+  [/\b(Authorization:\s*(?:Bearer|Basic|Token)\s+)[A-Za-z0-9._~+/=-]+/gi, '$1[secret]'],
+  [/\b(Bearer|Basic|Token)\s+([A-Za-z0-9._~+/=-]{8,})/gi, scheme],
   [/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, '[jwt]'],
   [/\b(?:sk|pk|rk)-(?:proj-|ant-|live-|test-)?[A-Za-z0-9_-]{12,}\b/g, '[secret]'],
   [/\b(?:ghp|gho|ghu|ghs|ghr|github_pat)_[A-Za-z0-9_]{16,}\b/g, '[secret]'],
   [/\bglpat-[A-Za-z0-9_-]{16,}\b/g, '[secret]'],
   [/\bxox[abprs]-[A-Za-z0-9-]{10,}\b/g, '[secret]'],
   [/\bAKIA[0-9A-Z]{16}\b/g, '[secret]'],
-  [/\b([A-Za-z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|ACCESS_?KEY|PRIVATE_?KEY|CREDENTIAL)[A-Za-z0-9_]*)(\s*[:=]\s*)(["']?)([^\s"'`,;]+)\3/gi, assignment],
+  [/\b([A-Za-z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|ACCESS_?KEY|PRIVATE_?KEY|CREDENTIAL)[A-Za-z0-9_]*)(["']?\s*[:=]\s*)(["']?)([^\s"'`,;]+)\3/gi, assignment],
   [/\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@:]+(?::[^\s/@]*)?@/gi, '$1[user]@'],
   [/(\bhttps?:\/\/[^\s?#"'`<>]+)\?[^\s#"'`<>]*/gi, '$1?[query]'],
 ];
