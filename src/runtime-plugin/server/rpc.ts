@@ -25,12 +25,14 @@ import type { Succession } from './attention/succession.js';
 import type { RuntimeWarningV1 } from '../shared/rpc.js';
 import { RUNTIME_PLUGIN_ID } from '../shared/identity.js';
 import type { Controller } from './controller.js';
-import { project, TERMINAL_STATES } from './domain/state.js';
+import { TERMINAL_STATES } from './domain/state.js';
 import { assignmentDetailView, projectStatusView, revision, type StatusInput } from './domain/views.js';
 import { assignmentTimes, milestones, recentActivity } from './panel.js';
 import { peerStopped, type PaseoApi, type PaseoHandle } from './paseo-port.js';
+import { snapshot } from './projection.js';
 import type { Recovery } from './recovery.js';
 import { lstatOrUndefined, readSeatAccounts, runStatus, type SeatDependencies } from './seats.js';
+import type { Spool } from './spool.js';
 import { ProjectStore } from './store/project.js';
 import { bounded } from './timeout.js';
 
@@ -48,6 +50,8 @@ export interface RpcRuntime {
   readonly peerEffort?: { readonly available: boolean };
   /** Lead succession (seat context delta K-D5); the succession RPCs answer `attention_unavailable` without it. */
   readonly succession?: Succession;
+  /** The bridge spool, whose backlog tells whether the runtime still answers its seats. */
+  readonly spool?: Pick<Spool, 'backlog'>;
 }
 
 type Answer = { schema: 1; revision: string; data: unknown; warnings: RuntimeWarningV1[] } | {
@@ -74,15 +78,16 @@ async function storeOf(runtime: RpcRuntime, projectId: string): Promise<ProjectS
 }
 
 async function statusInput(runtime: RpcRuntime, store: ProjectStore): Promise<StatusInput> {
-  const replay = await store.replay();
-  const projection = project(store.meta.projectId, replay.events);
+  const { replay, state, violations } = await snapshot(store);
   return {
-    projectId: store.meta.projectId, canonicalRoot: store.meta.canonicalRoot, replay, violations: projection.violations,
-    state: projection.state, events: replay.events, liveAvailable: runtime.handle.available, present: existsSync,
+    projectId: store.meta.projectId, canonicalRoot: store.meta.canonicalRoot, replay, violations,
+    state, events: replay.events, liveAvailable: runtime.handle.available, present: existsSync,
   };
 }
 
 const LIVENESS_MS = 2_000;
+/** How long the oldest bridge call may wait before the room view says the runtime is not answering. */
+const STALLED_SECONDS = 60;
 /** Major milestones a project view carries for its recent activity. */
 const ACTIVITY_ITEMS = 30;
 /** The window the settings screen's letter tally covers. */
@@ -118,9 +123,11 @@ export function createRpcHandlers(runtime: RpcRuntime) {
         const view = projectStatusView(input);
         projects.push({ projectId: view.projectId, canonicalRoot: view.canonicalRoot, health: view.health.value, findings: view.findings.length });
       }
+      const spool = await runtime.spool?.backlog().catch(() => undefined);
       return answer(runtime, {
         plugin: { id: RUNTIME_PLUGIN_ID, manifest: manifest.status, ...(manifest.status === 'paused' ? { reason: manifest.reason } : {}) },
         projects,
+        ...(spool === undefined ? {} : { spool }),
       });
     },
 
@@ -309,7 +316,10 @@ export function createRpcHandlers(runtime: RpcRuntime) {
           seats: [], incidents: [], succession,
         });
       }
-      return answer(runtime, { ...room, projects, providers });
+      // Only a stalled spool reaches the view, so a call answered in a second never changes its revision.
+      const spool = await runtime.spool?.backlog().catch(() => undefined);
+      const stalled = spool !== undefined && spool.oldestSeconds >= STALLED_SECONDS ? { spool } : {};
+      return answer(runtime, { ...room, projects, providers, ...stalled });
     },
 
     async projectPreflight(input: z.infer<typeof runtimeProjectPreflightRpc.input>): Promise<Answer> {

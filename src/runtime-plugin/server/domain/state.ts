@@ -169,6 +169,16 @@ export function emptyProjectState(projectId: string): ProjectState {
   return { projectId, assignments: new Map(), ownership: new Map(), workspaces: new Map(), notices: new Map(), lastSequence: 0 };
 }
 
+/**
+ * An independent copy of a projection. `applyEvent` replaces a record with a new object and never
+ * changes one in place, so copying the maps is enough for the copy to fold its own events.
+ */
+export function cloneState(state: ProjectState): ProjectState {
+  return {
+    ...state, assignments: new Map(state.assignments), ownership: new Map(state.ownership), workspaces: new Map(state.workspaces), notices: new Map(state.notices),
+  };
+}
+
 /** Any writer ownership in the project other than released, optionally ignoring one assignment. */
 export function activeWriter(state: ProjectState, except?: string): WriterOwnership | undefined {
   for (const owner of state.ownership.values()) if (owner.state !== 'released' && owner.assignmentId !== except) return owner;
@@ -694,15 +704,26 @@ export interface Projection {
   readonly violations: readonly Violation[];
 }
 
+/**
+ * Folds events onto a state, from `from`, and returns the first illegal transition, if any. That
+ * transition stops folding: state after it is unknown.
+ */
+export function foldInto(state: ProjectState, events: readonly RuntimeEventV1[], from = 0): Violation | undefined {
+  for (let index = from; index < events.length; index += 1) {
+    const event = events[index];
+    if (event === undefined) continue;
+    const problem = checkEvent(state, event);
+    if (problem !== undefined) return { eventId: event.id, type: event.type, message: problem };
+    applyEvent(state, event);
+  }
+  return undefined;
+}
+
 /** Replays a ledger. The first illegal transition stops folding: state after it is unknown. */
 export function project(projectId: string, events: readonly RuntimeEventV1[]): Projection {
   const state = emptyProjectState(projectId);
-  for (const event of events) {
-    const problem = checkEvent(state, event);
-    if (problem !== undefined) return { state, violations: [{ eventId: event.id, type: event.type, message: problem }] };
-    applyEvent(state, event);
-  }
-  return { state, violations: [] };
+  const violation = foldInto(state, events);
+  return { state, violations: violation === undefined ? [] : [violation] };
 }
 
 export interface ReclaimableLease {

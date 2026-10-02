@@ -1,11 +1,12 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { mkdtemp, readdir, readFile, rm, writeFile, mkdir } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm, utimes, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { afterEach, describe, expect, it } from 'vitest';
 import { mintCapability, publishCapability } from '../src/runtime-plugin/server/capabilities.js';
-import { Spool, type Registries } from '../src/runtime-plugin/server/spool.js';
+import { SPOOL_RETENTION_MS, Spool, type Registries } from '../src/runtime-plugin/server/spool.js';
+import { ACTION_START_DEADLINE_MS } from '../src/runtime-plugin/shared/limits.js';
 import { toolDefinitions, writeToolFiles } from '../src/runtime-plugin/server/tools.js';
 
 const bridgeScript = join(import.meta.dirname, '..', 'src', 'runtime-plugin', 'server', 'bridge', 'bridge.mjs');
@@ -55,8 +56,8 @@ function registries(): Registries {
   };
 }
 
-async function spool(root: string, callers: Record<string, { kind: 'action' | 'peer'; role: 'supervisor' | 'lead' | 'peer' }>): Promise<Spool> {
-  const created = new Spool({ root: join(root, 'spool'), resolve: correlation => Promise.resolve(callers[correlation]), registries: registries() });
+async function spool(root: string, callers: Record<string, { kind: 'action' | 'peer'; role: 'supervisor' | 'lead' | 'peer' }>, handlers: Registries = registries()): Promise<Spool> {
+  const created = new Spool({ root: join(root, 'spool'), resolve: correlation => Promise.resolve(callers[correlation]), registries: handlers });
   spools.push(created);
   await created.start();
   return created;
@@ -142,5 +143,73 @@ describe('bridge process over the spool', () => {
     const client = bridge(root, { PASEO_ROOM_CORRELATION: `cor_${'e'.repeat(32)}`, PASEO_ROOM_ROLE: 'peer', PASEO_ROOM_WORK_KIND: 'engineer', PASEO_ROOM_REPLY_WAIT_MS: '200' });
     const result = content(await client.request('tools/call', { name: 'handoff', arguments: {} }));
     expect(result).toMatchObject({ isError: true, body: { error: { code: 'report_uncertain', retryable: true } } });
+  });
+});
+
+describe('spool handling', () => {
+  const lead = `cor_${'f'.repeat(32)}`;
+  const peer = `cor_${'0'.repeat(32)}`;
+  const callers = { [lead]: { kind: 'action' as const, role: 'lead' as const }, [peer]: { kind: 'peer' as const, role: 'peer' as const } };
+
+  async function request(root: string, id: string, correlation: string, operation: string, ageMs = 0): Promise<void> {
+    await mkdir(join(root, 'spool', 'requests'), { recursive: true });
+    const path = join(root, 'spool', 'requests', `${id}.json`);
+    await writeFile(path, JSON.stringify({ protocol: 1, requestId: id, operation, payload: {}, correlation }));
+    const at = new Date(Date.now() - ageMs);
+    await utimes(path, at, at);
+  }
+
+  const reply = async (root: string, id: string): Promise<{ ok: boolean; result: { error?: { code: string; retryable: boolean } } }> =>
+    JSON.parse(await readFile(join(root, 'spool', 'replies', `${id}.json`), 'utf8')) as { ok: boolean; result: { error?: { code: string; retryable: boolean } } };
+
+  it('lets a Supervisor or Lead call expire unrun, keeps a Peer report, and takes the oldest first', async () => {
+    const root = await runtimeRoot();
+    const ran: string[] = [];
+    const record = (name: string) => (request: { requestId: string }) => { ran.push(`${name}:${request.requestId}`); return Promise.resolve({ ok: true, result: {} }); };
+    await request(root, 'req_stale0001', lead, 'assignment_status', ACTION_START_DEADLINE_MS + 5_000);
+    await request(root, 'req_peerold01', peer, 'handoff', ACTION_START_DEADLINE_MS + 4_000);
+    await request(root, 'req_fresh0002', lead, 'assignment_status', 2_000);
+    await request(root, 'req_fresh0001', lead, 'assignment_status', 3_000);
+    const running = await spool(root, callers, { supervisor: {}, lead: { assignment_status: record('lead') }, peer: { handoff: record('peer') } });
+
+    expect(await reply(root, 'req_stale0001')).toMatchObject({ ok: false, result: { error: { code: 'request_expired', retryable: true } } });
+    expect(ran).toEqual(['peer:req_peerold01', 'lead:req_fresh0001', 'lead:req_fresh0002']);
+    expect(await running.backlog()).toEqual({ unanswered: 0, oldestSeconds: 0, expired: 1 });
+  });
+
+  it('answers a call whose handler fails once, never runs it again, and does not invite a blind retry of an action', async () => {
+    const root = await runtimeRoot();
+    let runs = 0;
+    const failing = () => { runs += 1; return Promise.reject(new Error('boom')); };
+    await request(root, 'req_failact01', lead, 'assignment_status');
+    await request(root, 'req_failpeer1', peer, 'ask');
+    const running = await spool(root, callers, { supervisor: {}, lead: { assignment_status: failing }, peer: { ask: failing } });
+    await running.schedule();
+
+    expect(await reply(root, 'req_failact01')).toMatchObject({ ok: false, result: { error: { code: 'internal_error', retryable: false } } });
+    // The Peer handler answers its own failures (handlers/peer.ts); one that throws anyway is answered like any other.
+    expect(await reply(root, 'req_failpeer1')).toMatchObject({ ok: false, result: { error: { code: 'internal_error' } } });
+    expect(runs).toBe(2);
+    expect(await running.unresolved()).toEqual([]);
+  });
+
+  it('prunes answered pairs past retention, request first, and keeps every unanswered request', async () => {
+    const root = await runtimeRoot();
+    // No spool drains here, so nothing answers the requests below behind the test's back.
+    const idle = new Spool({ root: join(root, 'spool'), resolve: () => Promise.resolve(undefined), registries: { supervisor: {}, lead: {}, peer: {} } });
+    const old = new Date(Date.now() - SPOOL_RETENTION_MS - 60_000);
+    await mkdir(join(root, 'spool', 'replies'), { recursive: true });
+    for (const id of ['req_oldpair01', 'req_newpair01']) {
+      await request(root, id, lead, 'assignment_status');
+      await writeFile(join(root, 'spool', 'replies', `${id}.json`), JSON.stringify({ protocol: 1, requestId: id, ok: true, result: {} }));
+    }
+    await utimes(join(root, 'spool', 'replies', 'req_oldpair01.json'), old, old);
+    await request(root, 'req_waiting01', lead, 'assignment_status', SPOOL_RETENTION_MS + 60_000);
+
+    expect(await idle.prune()).toBe(1);
+    expect((await readdir(join(root, 'spool', 'requests'))).sort()).toEqual(['req_newpair01.json', 'req_waiting01.json']);
+    expect(await readdir(join(root, 'spool', 'replies'))).toEqual(['req_newpair01.json']);
+    expect((await idle.backlog()).unanswered).toBe(1);
+    expect((await idle.backlog()).oldestSeconds).toBeGreaterThanOrEqual(SPOOL_RETENTION_MS / 1_000);
   });
 });

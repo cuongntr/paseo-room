@@ -23,6 +23,8 @@ export const runtimeHealthRpc = defineRpc({
   output: answer(z.strictObject({
     plugin: z.strictObject({ id: z.string(), manifest: z.enum(['ready', 'paused']), reason: z.string().optional() }),
     projects: z.array(z.strictObject({ projectId: z.string(), canonicalRoot: z.string(), health: z.string(), findings: z.number().int() })),
+    /** Bridge calls not yet answered, how long the oldest has waited, and calls let expire since the plugin started. */
+    spool: z.strictObject({ unanswered: z.number().int(), oldestSeconds: z.number().int(), expired: z.number().int() }).optional(),
   })),
 });
 

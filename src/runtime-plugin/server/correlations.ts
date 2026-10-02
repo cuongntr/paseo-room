@@ -58,6 +58,12 @@ export class CorrelationRegistry {
   private readonly provisional = new Map<string, Correlation>();
   private readonly expected = new Map<string, ExpectedPeerCreate>();
   private readonly byAssignment = new Map<string, string>();
+  /**
+   * Associations read so far. One is published once and never replaced, so it is read once; finding
+   * a Peer's by assignment read every association file in turn, at each Peer turn end (2026-10-02).
+   * Absence is never kept: a correlation may be associated later.
+   */
+  private readonly known = new Map<string, Association>();
 
   constructor(
     private readonly directory: string,
@@ -127,9 +133,13 @@ export class CorrelationRegistry {
   /** The durable association, surviving plugin restarts; never a provisional correlation. */
   async lookup(id: string): Promise<Association | undefined> {
     if (!/^cor_[0-9a-f]{32}$/.test(id)) return undefined;
+    const known = this.known.get(id);
+    if (known !== undefined) return known;
     try {
       const parsed = associationSchema.safeParse(JSON.parse(await readFile(this.path(id), 'utf8')));
-      return parsed.success ? parsed.data : undefined;
+      if (!parsed.success) return undefined;
+      this.known.set(id, parsed.data);
+      return parsed.data;
     } catch {
       return undefined;
     }

@@ -31,6 +31,15 @@ class Refusal extends Error {
   }
 }
 
+/**
+ * A failure the runtime did not expect. Its detail goes to the plugin log, never to the Peer or the
+ * ledger; the report may or may not be recorded, and its receipt makes a retry safe.
+ */
+function failed(requestId: string, thrown: unknown): Refusal {
+  console.error(`[paseo-room-runtime] Report ${requestId} failed: ${thrown instanceof Error ? thrown.message : String(thrown)}`);
+  return new Refusal('report_uncertain', 'The runtime failed while recording this report; it may or may not have been recorded. Retry the same call.', true);
+}
+
 function reply(refusal: Refusal): HandlerReply {
   return { ok: false, result: { schema: 1, error: { code: refusal.code, message: refusal.message.slice(0, 1_000), retryable: refusal.retryable } } };
 }
@@ -53,7 +62,9 @@ function bindingGeneration(loaded: LoadedProject, assignmentId: string): string 
  * generation is uncertain settles that generation once nothing from the turn is left (§3.4).
  */
 export function createPeerHandlers(controller: Controller, unresolvedFor?: (correlation: string) => Promise<string[]>): Record<Tool, OperationHandler> {
-  const handle = (tool: Tool): OperationHandler => async request => {
+  // A failure before the project's lane is reached is answered too: the spool must never run a report again.
+  const handle = (tool: Tool): OperationHandler => request => receive(tool, request).catch((thrown: unknown) => reply(failed(request.requestId, thrown)));
+  const receive = async (tool: Tool, request: BridgeRequestV1): Promise<HandlerReply> => {
     const association = await controller.deps.correlations.lookup(request.correlation);
     if (association?.kind !== 'peer' || association.assignmentId === undefined || association.workKind === undefined) {
       return reply(new Refusal('report_unauthorized', 'This bridge is not bound to a runtime assignment.'));
@@ -63,21 +74,34 @@ export function createPeerHandlers(controller: Controller, unresolvedFor?: (corr
     return await controller.serial(store.meta.projectId, async () => {
       const loaded = await controller.load(store);
       if (!loaded.ok) return reply(new Refusal('report_uncertain', 'The runtime project is paused; nothing can be recorded now.', true));
+      let current = loaded.value;
       let answer: HandlerReply;
       try {
-        answer = await accept(controller, loaded.value, association, tool, request);
-      } catch (error) {
-        if (!(error instanceof Refusal)) throw error;
-        await controller.append(loaded.value, {
+        answer = await accept(controller, current, association, tool, request);
+      } catch (thrown) {
+        let error: Refusal;
+        if (thrown instanceof Refusal) error = thrown;
+        else {
+          error = failed(request.requestId, thrown);
+          // The ledger decides, not this projection: an event can be published and its append still fail.
+          const fresh = await controller.load(store);
+          if (!fresh.ok) return reply(error);
+          current = fresh.value;
+          // A failure after the report was recorded, such as its scope evidence, still answers its receipt.
+          const recorded = current.state.assignments.get(association.assignmentId ?? '')?.reports.find(report => report.requestId === request.requestId);
+          if (recorded !== undefined) return { ok: true, result: recorded.receipt };
+        }
+        // Answered like any refusal, it leaves evidence, and the turn's uncertain generation still settles below.
+        await controller.append(current, {
           type: 'report.refused', payloadVersion: 1, assignmentId: association.assignmentId,
           actor: { source: 'seat', role: 'peer', agentId: association.agentId, providerId: association.providerId },
           data: { tool, requestId: request.requestId, code: error.code, reason: error.message.slice(0, 1_000) },
         }).catch(() => undefined);
         answer = reply(error);
       }
-      const view = loaded.value.state.assignments.get(association.assignmentId ?? '');
+      const view = current.state.assignments.get(association.assignmentId ?? '');
       if (unresolvedFor !== undefined && view !== undefined) {
-        await settleUncertainReport(controller, unresolvedFor, loaded.value, view, request.requestId).catch(() => false);
+        await settleUncertainReport(controller, unresolvedFor, current, view, request.requestId).catch(() => false);
       }
       return answer;
     });

@@ -174,4 +174,26 @@ describe('refusals change nothing', () => {
     await s.h.controller.abandon(s.h.lead, { assignmentId: s.id, reason: 'stop' });
     expect(['report_stale', 'report_state']).toContain(code(await call(s, 'handoff', complete())));
   });
+
+  it('answers an unexpected failure as a recorded uncertain refusal, and a failure after recording with the receipt', async () => {
+    const failing = await seat();
+    await commitWork(failing);
+    Object.assign(failing.h.controller.deps.git, { deriveCandidate: () => Promise.reject(new Error('git died')) });
+    const refused = await call(failing, 'handoff', complete());
+    expect(refused).toMatchObject({ ok: false, result: { error: { code: 'report_uncertain', retryable: true } } });
+    const after = await snapshot(failing);
+    expect(after.view?.state).toBe('active');
+    expect(after.events.at(-1)).toMatchObject({ type: 'report.refused', data: { code: 'report_uncertain' } });
+
+    const late = await seat();
+    const append = late.h.controller.append.bind(late.h.controller);
+    late.h.controller.append = async (loaded, event) => {
+      const persisted = await append(loaded, event);
+      if (event.type === 'report.accepted') throw new Error('disk full after the report');
+      return persisted;
+    };
+    const answered = await call(late, 'ask', ask);
+    expect(answered.ok).toBe(true);
+    expect((await snapshot(late)).events.some(event => event.type === 'report.refused')).toBe(false);
+  });
 });

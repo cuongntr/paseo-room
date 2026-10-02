@@ -9,6 +9,14 @@ export const MAX_ARRAY_ITEMS = 64;
 export const MAX_STRING_BYTES = 8 * 1024;
 export const MAX_COMMAND_BYTES = 16 * 1024;
 export const MAX_GATE_TIMEOUT_SECONDS = 3_600;
+/**
+ * How long a Supervisor or Lead bridge call may wait to start before it is refused unrun
+ * (docs/design/runtime-coordination.md §3.4). Its bridge gives up at 60 s (`PASEO_ROOM_REPLY_WAIT_MS`,
+ * never set by the room); past this, it most likely has. The spool runs one request at a time, so the
+ * margin also keeps a call queued behind a slow dispatch (26 s at most in a week of cmdb) from expiring
+ * while its seat still waits.
+ */
+export const ACTION_START_DEADLINE_MS = 50_000;
 /** A Lead's reviewed handoff (seat context delta K-D5 step 3), above the 8 KB string default. */
 export const MAX_HANDOFF_BYTES = 64 * 1024;
 

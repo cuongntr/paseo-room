@@ -8,7 +8,7 @@
  * because rename silently replaces an existing target.
  */
 import { randomBytes } from 'node:crypto';
-import { chmod, link, lstat, mkdir, open, readdir, unlink } from 'node:fs/promises';
+import { chmod, link, lstat, mkdir, open, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 
 export const TEMPORARY_PREFIX = '.tmp-';
@@ -133,10 +133,4 @@ export async function publishAllocating(
   const path = await publishWith(directory, content, attempt => (attempt < maxAttempts ? allocate(attempt) : undefined), options.hook);
   if (path === '') throw new Error(`Could not allocate a free name in ${directory} after ${String(maxAttempts)} attempts.`);
   return path;
-}
-
-/** Temporary files a crash left behind. They are never read as state; callers report them. */
-export async function staleTemporaries(directory: string): Promise<string[]> {
-  const names = await readdir(directory);
-  return names.filter(name => name.startsWith(TEMPORARY_PREFIX)).sort();
 }

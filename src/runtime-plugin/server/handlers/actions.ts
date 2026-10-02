@@ -17,12 +17,12 @@ import type { Succession } from '../attention/succession.js';
 import { LEAD_ACTION_SCHEMAS, SUPERVISOR_ACTION_SCHEMAS } from '../contracts/actions.js';
 import type { BridgeRequestV1 } from '../contracts/envelope.js';
 import type { Caller, Controller, ControllerResult } from '../controller.js';
-import { project } from '../domain/state.js';
 import {
   assignmentDetailView, findings, leanAssignmentView, projectStatusView, quietlySettled, revision, settledAssignmentLine, type StatusInput,
 } from '../domain/views.js';
 import { SUPERVISOR_MESSAGE_PREFIX } from '../notices.js';
 import { projectLeads } from '../ownership.js';
+import { snapshot } from '../projection.js';
 import type { HandlerReply, OperationHandler } from '../spool.js';
 import { ProjectStore } from '../store/project.js';
 
@@ -59,11 +59,10 @@ async function statusInputs(controller: Controller, projects: readonly Project[]
   const inputs: StatusInput[] = [];
   for (const store of await ProjectStore.list(controller.deps.runtimeRoot, controller.deps.now)) {
     if (!keys.has(store.meta.gitCommonDir)) continue;
-    const replay = await store.replay();
-    const projection = project(store.meta.projectId, replay.events);
+    const { replay, state, violations } = await snapshot(store);
     inputs.push({
-      projectId: store.meta.projectId, canonicalRoot: store.meta.canonicalRoot, replay, violations: projection.violations,
-      state: projection.state, events: replay.events, liveAvailable: true, present: existsSync,
+      projectId: store.meta.projectId, canonicalRoot: store.meta.canonicalRoot, replay, violations,
+      state, events: replay.events, liveAvailable: true, present: existsSync,
     });
   }
   return inputs;

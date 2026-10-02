@@ -20,7 +20,7 @@ import { evaluateAcceptance, rerunRedReason } from './domain/acceptance.js';
 import { sha256 } from './domain/receipts.js';
 import { normalizeScope, parseScope } from './domain/scope.js';
 import {
-  activeLeases, applyEvent, checkEvent, leadWorkspaceWriter, leaseCollision, project, reclaimCheck, scopeContest, type AssignmentView, type ProjectState, type WorkspaceRecord,
+  activeLeases, applyEvent, checkEvent, leadWorkspaceWriter, leaseCollision, reclaimCheck, scopeContest, type AssignmentView, type ProjectState, type WorkspaceRecord,
 } from './domain/state.js';
 import { validateAssignmentCreate } from './domain/validate.js';
 import { EVENT_SCHEMA, type GateResultV1, type RuntimeEventV1 } from './events/schema.js';
@@ -33,6 +33,7 @@ import {
   ASSIGNMENT_LABEL, CreationConflictError, PARENT_AGENT_ID_LABEL, peerStopped, type AgentSnapshot, type PaseoPort, type PeerLaunch, type ThinkingOption, type WorkspaceSnapshot,
   type WorktreeWorkspaceRequest,
 } from './paseo-port.js';
+import { snapshot } from './projection.js';
 import type { Recognition } from './recognition.js';
 import { ProjectStore, type NewEvent } from './store/project.js';
 
@@ -149,7 +150,9 @@ export class Controller {
     const known = this.assignmentProjects.get(assignmentId);
     const ordered = known === undefined ? stores : [...stores.filter(store => store.meta.projectId === known), ...stores.filter(store => store.meta.projectId !== known)];
     for (const store of ordered) {
-      const { events } = await store.replay();
+      // Through the kept projection, whose loads take turns, rather than a replay of its own; by its
+      // events, so an assignment of a paused or inconsistent ledger is still found, and refused as paused.
+      const { events } = (await snapshot(store)).replay;
       if (events.some(event => event.type === 'assignment.created' && event.assignmentId === assignmentId)) {
         this.assignmentProjects.set(assignmentId, store.meta.projectId);
         return store;
@@ -160,15 +163,14 @@ export class Controller {
 
   /** Replays a project; a paused or inconsistent ledger refuses every mutation. */
   async load(store: ProjectStore): Promise<ControllerResult<LoadedProject>> {
-    const replay = await store.replay();
+    const { replay, state, violations } = await snapshot(store);
     if (replay.status !== 'ok') {
       return refuse('project_paused', `Project ${store.meta.projectId} is paused: ${replay.problems.map(problem => `${problem.file} ${problem.reason}`).join('; ')}.`);
     }
-    const projection = project(store.meta.projectId, replay.events);
-    if (projection.violations.length > 0) {
-      return refuse('project_paused', `Project ${store.meta.projectId} has an inconsistent ledger at ${projection.violations[0]?.eventId ?? 'unknown'}.`);
+    if (violations.length > 0) {
+      return refuse('project_paused', `Project ${store.meta.projectId} has an inconsistent ledger at ${violations[0]?.eventId ?? 'unknown'}.`);
     }
-    return done({ store, state: projection.state, events: [...replay.events] });
+    return done({ store, state, events: [...replay.events] });
   }
 
   /** Checks an event against the projection, persists it, and folds it in. */

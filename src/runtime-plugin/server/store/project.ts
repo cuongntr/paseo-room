@@ -11,7 +11,7 @@ import { basename, join } from 'node:path';
 import { z } from 'zod';
 import { EVENT_SCHEMA, readEvent, validateForWrite, type RuntimeEventV1 } from '../events/schema.js';
 import {
-  AlreadyPublishedError, ensurePrivateDirectory, PRIVATE_FILE_MODE, publishOnce, staleTemporaries,
+  AlreadyPublishedError, ensurePrivateDirectory, PRIVATE_FILE_MODE, publishOnce, TEMPORARY_PREFIX,
 } from './publish.js';
 
 export const RUNTIME_LAYOUT_VERSION = 'v1';
@@ -52,56 +52,51 @@ export interface ReplayResult {
 /** An event as a writer supplies it; the store assigns envelope identity and order. */
 export type NewEvent = Omit<RuntimeEventV1, 'schema' | 'version' | 'id' | 'sequence' | 'projectId' | 'occurredAt'>;
 
-type JsonFile = { readonly value: unknown } | { readonly error: string };
+/** One event file as read and checked: the event, or why it cannot be one. */
+type Checked = { readonly event: RuntimeEventV1 } | { readonly reason: ReplayProblem['reason']; readonly detail: string };
 
-/**
- * Reads and parses each named file, `REPLAY_READS_IN_FLIGHT` at a time. A file that cannot be read
- * or parsed carries the reason instead of a value.
- */
-async function readJsonFiles(directory: string, names: readonly string[]): Promise<Map<string, JsonFile>> {
-  const files = new Map<string, JsonFile>();
-  const pending = names.values();
-  const reader = async (): Promise<void> => {
-    // Every reader draws from the one iterator, so each file is read exactly once.
-    for (const name of pending) {
-      try {
-        files.set(name, { value: JSON.parse(await readFile(join(directory, name), 'utf8')) as unknown });
-      } catch (error) {
-        files.set(name, { error: error instanceof Error ? error.message : String(error) });
-      }
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(REPLAY_READS_IN_FLIGHT, names.length) }, reader));
-  return files;
+const NOT_READ: Checked = { reason: 'unreadable', detail: 'The event file was not read.' };
+
+async function readChecked(path: string): Promise<Checked> {
+  try {
+    const read = readEvent(JSON.parse(await readFile(path, 'utf8')));
+    return read.ok ? { event: read.event } : { reason: read.reason, detail: read.detail };
+  } catch (error) {
+    return { reason: 'unreadable', detail: error instanceof Error ? error.message : String(error) };
+  }
 }
 
 /**
- * Event files already read, per events directory, for the life of the plugin process. An event
- * file is published once and never rewritten, so a replay reads only the files it has not seen,
- * and concurrent replays share one read of each. Reading the whole ledger on every operation let
- * replays pile up on a ledger of thousands of events until the runtime stopped answering
- * (cmdb, 2026-10-01). A failed read is not kept, so the next replay tries the file again.
+ * Event files already read and checked, per events directory, for the life of the plugin process. An
+ * event file is published once and never rewritten, so a replay reads and checks only the files it
+ * has not seen, and concurrent replays share one read of each, the same object for the same file.
+ * Reading the whole ledger on every operation let replays pile up on a ledger of thousands of events
+ * until the runtime stopped answering (cmdb, 2026-10-01); checking it again each time still cost 30 ms
+ * of every load (2026-10-02). A file that could not be read is not kept, so the next replay tries it
+ * again, and one that left the directory, such as one quarantined, is forgotten with it.
  */
-const READS = new Map<string, Map<string, Promise<JsonFile>>>();
+const CHECKED = new Map<string, Map<string, Promise<Checked>>>();
 
-async function readEventFiles(directory: string, names: readonly string[]): Promise<Map<string, JsonFile>> {
-  let known = READS.get(directory);
-  if (known === undefined) { known = new Map(); READS.set(directory, known); }
-  // A file that left the directory, such as one quarantined, is forgotten with it.
+async function checkedFiles(directory: string, names: readonly string[]): Promise<Map<string, Checked>> {
+  const known = CHECKED.get(directory) ?? new Map<string, Promise<Checked>>();
+  CHECKED.set(directory, known);
   const present = new Set(names);
   for (const name of known.keys()) if (!present.has(name)) known.delete(name);
-  const missing = names.filter(name => !known.has(name));
-  if (missing.length > 0) {
-    const read = readJsonFiles(directory, missing);
-    for (const name of missing) {
-      const file = read.then(files => files.get(name) ?? { error: 'The event file was not read.' });
-      known.set(name, file);
-      void file.then(result => { if ('error' in result && known.get(name) === file) known.delete(name); });
-    }
-  }
-  const files = new Map<string, JsonFile>();
-  for (const name of names) files.set(name, await (known.get(name) ?? Promise.resolve({ error: 'The event file was not read.' })));
-  return files;
+  const missing = names.filter(name => !known.has(name)).map(name => {
+    let settle!: (result: Checked) => void;
+    const result = new Promise<Checked>(resolve => { settle = resolve; });
+    known.set(name, result);
+    void result.then(found => { if ('reason' in found && found.reason === 'unreadable' && known.get(name) === result) known.delete(name); });
+    return { name, settle };
+  });
+  // Every reader draws from the one iterator, so each file is read exactly once.
+  const queue = missing.values();
+  const reader = async (): Promise<void> => {
+    for (const { name, settle } of queue) settle(await readChecked(join(directory, name)));
+  };
+  void Promise.all(Array.from({ length: Math.min(REPLAY_READS_IN_FLIGHT, missing.length) }, reader));
+  const results = await Promise.all(names.map(name => known.get(name) ?? Promise.resolve(NOT_READ)));
+  return new Map(names.map((name, index) => [name, results[index] ?? NOT_READ]));
 }
 
 function eventName(sequence: number): string {
@@ -173,19 +168,18 @@ export class ProjectStore {
   /** Reads every event strictly. Any unreadable file pauses the project; nothing is moved. */
   async replay(): Promise<ReplayResult> {
     const names = (await readdir(this.eventsDirectory)).sort();
-    const files = await readEventFiles(this.eventsDirectory, names.filter(name => EVENT_FILE.test(name)));
+    const eventNames = names.filter(name => EVENT_FILE.test(name));
+    const files = await checkedFiles(this.eventsDirectory, eventNames);
     const problems: ReplayProblem[] = [];
     const events: RuntimeEventV1[] = [];
     const ids = new Map<string, string>();
     for (const name of names) {
-      if (name.startsWith('.tmp-')) continue;
+      if (name.startsWith(TEMPORARY_PREFIX)) continue;
       const match = EVENT_FILE.exec(name);
       if (!match) { problems.push({ file: name, reason: 'unexpected-file', detail: 'Not a runtime event file name.' }); continue; }
-      const file = files.get(name) ?? { error: 'The event file was not read.' };
-      if ('error' in file) { problems.push({ file: name, reason: 'unreadable', detail: file.error }); continue; }
-      const read = readEvent(file.value);
-      if (!read.ok) { problems.push({ file: name, reason: read.reason, detail: read.detail }); continue; }
-      const event = read.event;
+      const file = files.get(name) ?? NOT_READ;
+      if ('reason' in file) { problems.push({ file: name, reason: file.reason, detail: file.detail }); continue; }
+      const event = file.event;
       if (event.sequence !== Number(match[1])) {
         problems.push({ file: name, reason: 'sequence-mismatch', detail: `File name does not match sequence ${String(event.sequence)}.` });
         continue;
@@ -208,14 +202,16 @@ export class ProjectStore {
       for (; expected < event.sequence; expected += 1) gaps.push(expected);
       expected = event.sequence + 1;
     }
-    const highest = names.map(name => EVENT_FILE.exec(name)?.[1]).filter((value): value is string => value !== undefined).map(Number);
-    this.lastSequence = Math.max(this.lastSequence, 0, ...highest);
+    // Names are zero-padded and sorted, so the last event file name holds the highest sequence. Spreading
+    // every sequence into Math.max would exceed the argument limit on a large ledger.
+    const highest = Number(EVENT_FILE.exec(eventNames.at(-1) ?? '')?.[1] ?? 0);
+    this.lastSequence = Math.max(this.lastSequence, highest);
     return {
       status: problems.length === 0 ? 'ok' : 'paused',
       events,
       problems,
       gaps,
-      staleTemporaries: await staleTemporaries(this.eventsDirectory),
+      staleTemporaries: names.filter(name => name.startsWith(TEMPORARY_PREFIX)),
     };
   }
 
@@ -269,7 +265,7 @@ export class ProjectStore {
 
   /** Moves one named event file aside. Only an explicit operator action calls this. */
   async quarantine(file: string): Promise<void> {
-    if (!EVENT_FILE.test(file) && !file.startsWith('.tmp-')) throw new Error(`${file} is not a runtime event file.`);
+    if (!EVENT_FILE.test(file) && !file.startsWith(TEMPORARY_PREFIX)) throw new Error(`${file} is not a runtime event file.`);
     await ensurePrivateDirectory(this.quarantineDirectory);
     await rename(join(this.eventsDirectory, file), join(this.quarantineDirectory, file));
   }

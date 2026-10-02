@@ -49,6 +49,18 @@ const data = (answer: unknown): Record<string, unknown> => (answer as { data: Re
 const failure = (answer: unknown): { code: string } | undefined => (answer as { error?: { code: string } }).error;
 
 describe('room RPCs (attention delta §8)', () => {
+  it('says the runtime is not answering only once a bridge call has waited a minute', async () => {
+    const { h, attention } = await room();
+    const backlog = { unanswered: 0, oldestSeconds: 0, expired: 0 };
+    const rpc = createRpcHandlers({ controller: h.controller, recovery: new Recovery(h.controller), handle: new PaseoHandle(), attention, spool: { backlog: () => Promise.resolve(backlog) } });
+    expect(data(await rpc.room()).spool).toBeUndefined();
+    Object.assign(backlog, { unanswered: 1, oldestSeconds: 59 });
+    expect(data(await rpc.room()).spool).toBeUndefined();
+    Object.assign(backlog, { unanswered: 3, oldestSeconds: 75, expired: 2 });
+    expect(data(await rpc.room()).spool).toEqual({ unanswered: 3, oldestSeconds: 75, expired: 2 });
+    expect(data(await rpc.health()).spool).toEqual({ unanswered: 3, oldestSeconds: 75, expired: 2 });
+  });
+
   it('shows the observed room with the room providers by role', async () => {
     const { rpc } = await room();
     const view = data(await rpc.room());

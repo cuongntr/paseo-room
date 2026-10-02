@@ -15,11 +15,12 @@ import { unwrap, usePolled, useRuntimeRpcs, type Unwrapped } from './data.js';
 import { PeerThinkingSection } from './effort-settings.js';
 import { AssignSupervisorModal, NewProjectModal, NewSupervisorModal, StartLeadModal } from './forms.js';
 import { Button, Callout, Loading, Page, Pill, SPACE, Title, type Theme } from './kit.js';
-import { accountLetters, accountLine, agentLabel, sentence, type AccountView, type RoomView } from './model.js';
+import { ACTION_START_DEADLINE_MS } from '../shared/limits.js';
+import { accountLetters, accountLine, agentLabel, plural, sentence, type AccountView, type RoomView } from './model.js';
 import { AssignmentDetailView } from './record.js';
 import { ProjectScreen, RoomScreen, type RoomActions } from './room.js';
 import { ReplaceLeadModal } from './succession.js';
-import { whenLabel } from './time.js';
+import { duration, whenLabel } from './time.js';
 
 type Route =
   | { readonly screen: 'room' }
@@ -97,9 +98,15 @@ function Runtime(props: { readonly theme: Theme; readonly compact: boolean; read
     }
   }
 
+  const stalled = room?.spool === undefined ? null : (
+    <Callout theme={theme} tone="danger" icon="TriangleAlert" title="The runtime is not answering its seats">
+      {`${plural(room.spool.unanswered, 'bridge call')} unanswered; the oldest has waited ${duration(room.spool.oldestSeconds * 1_000)}. Seats are told the runtime is unavailable, and a Supervisor or Lead call not started within ${duration(ACTION_START_DEADLINE_MS)} is not run later. Reload the runtime plugin if this lasts.`}
+    </Callout>
+  );
+
   return (
     <ScrollView style={{ flex: 1, backgroundColor: theme.colors.surface0 }} contentContainerStyle={{ flexGrow: 1 }}>
-      <Page theme={theme} compact={props.compact}>{body}</Page>
+      <Page theme={theme} compact={props.compact}>{stalled}{body}</Page>
       {room === undefined ? null : (
         <>
           <NewSupervisorModal theme={theme} room={room} open={modal?.kind === 'supervisor'} onClose={() => { setModal(undefined); }} onDone={polled.reload} />

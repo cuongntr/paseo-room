@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
-  AlreadyPublishedError, ensurePrivateDirectory, publishAllocating, publishOnce, staleTemporaries,
+  AlreadyPublishedError, ensurePrivateDirectory, publishAllocating, publishOnce, TEMPORARY_PREFIX,
   type PublishStep,
 } from '../src/runtime-plugin/server/store/publish.js';
 
@@ -26,7 +26,7 @@ describe('no-clobber runtime publication', () => {
     expect(await readFile(path, 'utf8')).toBe('{"a":1}\n');
     expect((await stat(path)).mode & 0o777).toBe(0o600);
     expect((await stat(dir)).mode & 0o777).toBe(0o700);
-    expect(await staleTemporaries(dir)).toEqual([]);
+    expect((await readdir(dir)).filter(name => name.startsWith(TEMPORARY_PREFIX))).toEqual([]);
   });
 
   it('never replaces a published name', async () => {
@@ -52,7 +52,7 @@ describe('no-clobber runtime publication', () => {
     await publishOnce(dir, 'only.json', 'kept');
     await expect(publishAllocating(dir, 'new', () => 'only.json', { maxAttempts: 3 })).rejects.toThrow('Could not allocate');
     expect(await readFile(join(dir, 'only.json'), 'utf8')).toBe('kept');
-    expect(await staleTemporaries(dir)).toEqual([]);
+    expect((await readdir(dir)).filter(name => name.startsWith(TEMPORARY_PREFIX))).toEqual([]);
   });
 
   it('leaves either nothing or one complete file when interrupted at any step', async () => {
@@ -63,7 +63,7 @@ describe('no-clobber runtime publication', () => {
       if (step === 'temporary-written' || step === 'temporary-synced') {
         expect(names).toEqual([]);
         // The interrupted temporary is visible to diagnostics and is never read as state.
-        expect(await staleTemporaries(dir)).toHaveLength(1);
+        expect((await readdir(dir)).filter(name => name.startsWith(TEMPORARY_PREFIX))).toHaveLength(1);
       } else {
         expect(names).toEqual(['event.json']);
         expect(await readFile(join(dir, 'event.json'), 'utf8')).toBe('complete');

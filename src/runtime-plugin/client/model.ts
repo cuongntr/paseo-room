@@ -57,6 +57,8 @@ export interface RoomView {
   readonly supervisors: readonly SupervisorView[];
   readonly panelIncidents: readonly IncidentView[];
   readonly providers: readonly { readonly providerId: string; readonly agent: string; readonly role: string }[];
+  /** Present only while a bridge call has waited a minute or more: the runtime is not answering its seats. */
+  readonly spool?: { readonly unanswered: number; readonly oldestSeconds: number; readonly expired: number };
 }
 
 /**
@@ -395,7 +397,7 @@ export function accountLetters(seats: readonly AccountView[]): ReadonlyMap<strin
 const LEVEL_WORD: Readonly<Record<string, string>> = { page: 'urgent', now: 'now', digest: 'digest' };
 const TURN_WORD: Readonly<Record<string, string>> = { now: 'woke the Supervisor', digest: 'went to a digest', record: 'only recorded' };
 
-const plural = (count: number, word: string): string => `${String(count)} ${word}${count === 1 ? '' : 's'}`;
+export const plural = (count: number, word: string): string => `${String(count)} ${word}${count === 1 ? '' : 's'}`;
 
 /** `9 letters sent (1 urgent, 3 now, 5 digest) · 6 incidents · 12 Lead turns: 3 woke the Supervisor · 2 marked noise`. */
 export function lettersLine(tally: LetterTally): string {

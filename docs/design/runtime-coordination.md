@@ -469,6 +469,28 @@ spool and waits for the matching atomic reply. The plugin watches the request di
 on startup, so a missed filesystem notification does not lose a request. No periodic status polling
 is required.
 
+The drain takes requests oldest first, and every request receives exactly one reply, published again
+rather than recomputed if publishing failed. A handler that fails unexpectedly answers
+`internal_error`, not retryable, since it may have acted: the seat checks the effect before sending
+again. A Peer report that fails so is refused `report_uncertain` like any refusal, with evidence but
+without the failure's detail, and settles an uncertain generation as a refusal would; its receipt
+makes a retry safe. Whether the report was recorded is read again from the ledger first, since an
+event can be published and its append still fail: one that was answers its receipt. A failure before
+the project can be read at all is answered `report_uncertain` with no evidence, and recovery settles
+its generation. Left unanswered,
+such a request ran again at every drain and could hold a generation open for good. A Supervisor or
+Lead request that has not started within 50 s of being written is answered `request_expired` and
+not run then; a previous plugin process may have started it before a restart, so the reply asks the
+seat to check its effect before sending again. Its bridge gives up at 60 s and tells the seat to retry, so running it later acts on a
+stale instruction, and twice if the seat did retry; a request already started when its bridge gives
+up still completes, as before. The drain is sequential, and the margin keeps a call queued behind a
+slow dispatch (26 s at most in a week of cmdb) from expiring. A Peer report has no
+deadline: its generation fence and receipt decide whether it still counts. A request and its reply
+are deleted 7 days after the reply, the request first, so a request is never left without its reply;
+the ledger, not the spool, is the record. The panel and `runtime.health` show how long the oldest
+unanswered request not yet in hand has waited (amended 2026-10-02: after the 2026-10-01 stall, 15 requests ran
+3–4.5 h late, and Lead received the same relayed Human answer four times).
+
 A transport envelope carries protocol version, a bridge-generated request ID, operation, strict typed
 payload and an opaque correlation. Peer tool input contains none of the envelope identity. The
 controller resolves a Peer correlation through two server-owned records:
@@ -735,9 +757,18 @@ On replay:
 - an unknown event type or unsupported payload version pauses that project;
 - an invalid file moves nothing automatically. The project is marked degraded and the operator may
   inspect or explicitly quarantine it; it is never read as an empty ledger.
-- a plugin process keeps each event file it has read, since a published file is never rewritten: a
-  replay reads only files it has not seen, and concurrent replays share one read of each. A failed
-  read is not kept, and a file that leaves the directory, such as one quarantined, is forgotten.
+- a plugin process keeps each event file it has read and checked, since a published file is never
+  rewritten: a replay reads and checks only files it has not seen, and concurrent replays share one
+  read of each. A failed read is not kept, and a file that leaves the directory, such as one
+  quarantined, is forgotten.
+- a plugin process likewise keeps each project's projection and folds onto it only the events
+  published since, with the same checks a full fold applies. Each load receives its own copy of the
+  projection's maps; a projected record is replaced, never changed in place, so the copy is
+  independent. Loads of one project take turns, so no event is folded twice. A ledger that no longer
+  extends what was folded — a file quarantined, or one published late below a sequence already
+  folded, or replaced in place — is folded again from the start. The fold is kept only while a replay
+  begins with exactly the events it consumed, object for object, since the store returns the same
+  object for a file it already read.
 
 ### 4.3 Assignment record
 
@@ -1287,6 +1318,8 @@ exported and explicitly reset. The CLI never downgrades state silently.
 | worktree setup/teardown fails | Paseo result/live workspace | block Peer launch or reuse; leave evidence and manual/native recovery |
 | carrier/runtime hook conflict | permutation integration tests | release blocker; runtime never owns system prompt |
 | disk full | write/publish/fsync failure | no transition; surface project degraded and preserve prior state |
+| runtime stalls, then recovers | age of the oldest unanswered spool request not yet in hand, shown in the panel past 60 s and in `runtime.health` | a Supervisor or Lead request not started within 50 s is answered `request_expired` and not run; a Peer report is still judged by its generation fence |
+| handler fails unexpectedly | exception in the spool drain or the Peer handler | one `internal_error` reply, not retryable, for an action; a recorded `report_uncertain` refusal for a Peer report; the request never runs again |
 
 No failure causes automated branch deletion, force reset, `git clean`, credential mutation, or
 operator-home rewrite.
@@ -1707,6 +1740,7 @@ Q-011 do not block Phases 0–1 because those phases contain no sensor and no wo
 
 | Date | Author | Change |
 |---|---|---|
+| 2026-10-02 | Repository owner / Bytes | §3.4: a Supervisor or Lead request not started within 50 s is answered `request_expired` and not run; every request gets exactly one reply, also when its handler fails (`internal_error`, not retryable; a Peer report is refused `report_uncertain` with evidence and its generation settles); requests are taken oldest first; answered pairs are deleted after 7 days; the panel and `runtime.health` show the oldest unanswered request. After the 2026-10-01 stall, 15 requests ran 3–4.5 h late and Lead got one relayed Human answer four times. §4.2: a plugin process keeps each project's projection and folds only new events, again from the start once a replay no longer begins with the events it folded; a cmdb load fell from about 185 ms (130 ms of it re-checking worktree lease collisions) to about 8 ms. Grants and removes no authority; adds the refusal codes `request_expired` and `internal_error`; no event or tool change. |
 | 2026-10-01 | Repository owner / Bytes | §3.4: a generation held `uncertain` by an unresolved report now accepts that report when it is answered, and becomes `report.missing` with a Lead notice once nothing from the turn is left in the spool, both after the answer and on plugin start. Before, the report it waited for was refused as uncertain, so was every retry, and the assignment could be neither reported, answered nor abandoned (cmdb, after the replay stall). No authority or tool change; the design always said uncertain lasts only until the spool entries are terminal. |
 | 2026-10-01 | Repository owner / Bytes | §4.2: replay keeps each event file a plugin process has read, and concurrent replays share one read. Every operation had read the whole ledger again; on cmdb's 7,600 events about 320 replays piled up, holding 10,000 open files and 3 GB, and the runtime stopped answering hooks, `message_lead` and `room_status` for about 20 minutes until the plugin was reloaded. A warm replay of that ledger now takes about 50 ms instead of 450 ms. Strict replay is unchanged. No event, authority or tool change. |
 | 2026-10-01 | Repository owner / Bytes | D4: Human no longer configures an attention sensor; the [attention delta](runtime-coordination-attention.md)'s 2026-10-01 amendment removes it. The Phase 5 rows below record what was built. No seat gains or loses authority; no event, validation step or tool changes. |
