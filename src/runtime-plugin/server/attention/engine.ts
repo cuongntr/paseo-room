@@ -14,7 +14,7 @@ import type { PaseoPort } from '../paseo-port.js';
 import type { Recognition } from '../recognition.js';
 import { ProjectStore } from '../store/project.js';
 import { Delivery, LETTER_PREFIX, keepNewest, letterId } from './delivery.js';
-import { AttentionLog } from './log.js';
+import { AttentionLog, type LogRecord } from './log.js';
 import { head, mask, tail } from './mask.js';
 import { Observer, type Checkout, type Seat, type TurnFacts } from './observer.js';
 import { Portfolio, type Resolution } from './portfolio.js';
@@ -32,6 +32,10 @@ const LETTER_EXCERPT = 240;
 const REPLY_EXCERPT = 1_500;
 /** Marker lines quoted in one letter item, each whole up to the parser's bound. */
 const LETTER_MARKERS = 3;
+/** A seat view's window over the attention log, how many of its lines it lists, and how much of a turn's message. */
+const SEAT_LOG_HOURS = 24;
+const SEAT_LOG_ITEMS = 20;
+const SEAT_SAID = 600;
 /** Relayed marker lines remembered per Lead. */
 const RELAYED_MARKERS = 100;
 
@@ -474,17 +478,18 @@ export class AttentionEngine {
     return [...this.observer.projects().keys()].filter(key => this.supervisorOf(key).supervisorAgentId === supervisorAgentId);
   }
 
-  /** The room as the panel and Supervisor tools read it; `only` limits it to some projects. */
-  roomView(only?: readonly string[]): RoomView {
+  /** A seat as the room view shows it; `panel` adds what only the operator's panel reads. */
+  private seatView(seat: Seat, panel: boolean): SeatView {
     const now = this.time;
     const budgets = this.contextSettings();
-    const seatView = (seat: Seat): SeatView => ({
+    return {
       agentId: seat.agentId, role: seat.role, provider: seat.provider, title: seat.title, model: seat.model, thinking: seat.thinking, state: seat.state, cwd: seat.cwd,
       displayCwd: homeRelative(seat.cwd), workspaceId: seat.workspaceId, parentAgentId: seat.parentAgentId, pendingPermissions: seat.pending.size,
       ...(seat.checkout === undefined ? {} : { checkout: { ...seat.checkout, displayRoot: homeRelative(seat.checkout.root) } }),
       ...(seat.lastTurn === undefined ? {} : {
         lastTurn: { outcome: seat.lastTurn.outcome, endedAgo: age(now - seat.lastTurn.endedAt), endedAt: new Date(seat.lastTurn.endedAt).toISOString() },
       }),
+      ...(panel && seat.turnStartedAt !== undefined && (seat.state === 'running' || seat.state === 'permission') ? { turnStartedAt: new Date(seat.turnStartedAt).toISOString() } : {}),
       ...(seat.usage === null ? {} : {
         context: {
           used: seat.usage.used, max: seat.usage.max, percent: contextPercent(seat.usage.used, seat.usage.max),
@@ -500,7 +505,15 @@ export class AttentionEngine {
           ...(seat.compaction.lastPreTokens === undefined ? {} : { lastPreTokens: seat.compaction.lastPreTokens }),
         },
       }),
-    });
+    };
+  }
+
+  /**
+   * The room as the panel and Supervisor tools read it; `only` limits it to some projects. `panel`
+   * adds when each running seat's turn began, which no seat's tool carries.
+   */
+  roomView(only?: readonly string[], options: { readonly panel?: boolean } = {}): RoomView {
+    const seatView = (seat: Seat): SeatView => this.seatView(seat, options.panel === true);
     const projectKeys = [...this.observer.projects().keys()];
     const projects = [...this.observer.projects().values()]
       .filter(project => only === undefined || only.includes(project.key))
@@ -523,6 +536,39 @@ export class AttentionEngine {
       panelIncidents: this.openIncidents('panel').filter(incident => !projects.some(project => project.key === incident.projectKey)).map(incidentView),
     };
   }
+
+  /**
+   * One seat as the panel's seat view reads it (panel delta 2026-10-02): the seat, its latest turns,
+   * and what attention did about it over the last day — a Supervisor's letters sent and held, a
+   * Lead's turns triaged. Every excerpt is masked; undefined for an agent that is not a room seat.
+   */
+  async seatDetail(agentId: string): Promise<SeatDetail | undefined> {
+    const seat = this.observer.seat(agentId);
+    if (seat === undefined || seat.state === 'archived') return undefined;
+    const turns = [...seat.recentTurns].reverse().map(turn => ({
+      startedAt: new Date(turn.startedAt).toISOString(), endedAt: new Date(turn.endedAt).toISOString(), outcome: turn.outcome, trigger: turn.trigger,
+      files: turn.writes.length, ...(turn.lastMessage === undefined || turn.lastMessage.trim() === '' ? {} : { said: head(mask(turn.lastMessage.trim()), SEAT_SAID) }),
+    }));
+    const project = seat.role === 'supervisor' ? undefined : { key: seat.project.key, name: seat.project.name };
+    const types = new Set<LogRecord['type']>(seat.role === 'supervisor' ? ['letter.sent', 'letter.failed'] : seat.role === 'lead' ? ['lead-turn'] : []);
+    // A log that cannot be read costs only these lines.
+    const records = types.size === 0 ? [] : (await this.log.recent(SEAT_LOG_HOURS, types).catch(() => undefined))?.records ?? [];
+    const at = (record: LogRecord): string => (record as { readonly at?: string }).at ?? '';
+    if (seat.role === 'supervisor') {
+      const letters = records.flatMap(record => (record.type === 'letter.sent' || record.type === 'letter.failed') && record.supervisorAgentId === agentId
+        ? [{ at: at(record), level: record.level, sent: record.type === 'letter.sent', items: record.items.length, ...(record.lines === undefined ? {} : { lines: record.lines }) }]
+        : []).reverse().slice(0, SEAT_LOG_ITEMS);
+      const held = this.delivery.held(agentId).map(item => ({ level: item.level, line: item.line, createdAt: new Date(item.createdAt).toISOString() }));
+      const watches = this.portfolioOf(agentId).flatMap(key => {
+        const watched = this.observer.projects().get(key);
+        return watched === undefined ? [] : [{ key, name: watched.name }];
+      });
+      return { seat: this.seatView(seat, true), turns, watches, letters, held };
+    }
+    const triaged = records.flatMap(record => (record.type === 'lead-turn' && record.leadAgentId === agentId ? [{ at: at(record), decision: record.decision, reason: record.reason }] : []))
+      .reverse().slice(0, SEAT_LOG_ITEMS);
+    return { seat: this.seatView(seat, true), turns, ...(project === undefined ? {} : { project }), ...(seat.role === 'lead' ? { triaged } : {}) };
+  }
 }
 
 export interface SeatView {
@@ -541,6 +587,8 @@ export interface SeatView {
   /** The checkout the seat works in, where Git says: a linked worktree or the main checkout, and its branch. */
   readonly checkout?: Checkout & { readonly displayRoot: string };
   readonly lastTurn?: { readonly outcome: string; readonly endedAgo: string; readonly endedAt: string };
+  /** When the running turn began; the panel's view alone. */
+  readonly turnStartedAt?: string;
   /**
    * The seat's latest model call, and its role's marks in percent (seat context delta §5.1); the
    * compact mark only where it applies to this seat.
@@ -548,6 +596,28 @@ export interface SeatView {
   readonly context?: { readonly used: number; readonly max: number; readonly percent: number; readonly rotateAtPercent: number | null; readonly compactAtPercent: number | null };
   /** Compactions seen since the runtime started. */
   readonly compaction?: { readonly lastAt: string; readonly lastAgo: string; readonly lastTrigger?: 'auto' | 'manual'; readonly lastPreTokens?: number; readonly seen: number };
+}
+
+/** A seat's turn as its seat view lists it, newest first. */
+export interface SeatTurn {
+  readonly startedAt: string; readonly endedAt: string; readonly outcome: string; readonly trigger: string;
+  /** Files the turn wrote or edited in its working tree. */
+  readonly files: number;
+  /** The start of its last message, masked. */
+  readonly said?: string;
+}
+
+export interface SeatDetail {
+  readonly seat: SeatView;
+  readonly turns: readonly SeatTurn[];
+  /** A Lead's or Peer's project. */
+  readonly project?: { readonly key: string; readonly name: string };
+  /** A Supervisor's portfolio, its letters of the last day, newest first, and the items waiting for it. */
+  readonly watches?: readonly { readonly key: string; readonly name: string }[];
+  readonly letters?: readonly { readonly at: string; readonly level: string; readonly sent: boolean; readonly items: number; readonly lines?: readonly string[] }[];
+  readonly held?: readonly { readonly level: string; readonly line: string; readonly createdAt: string }[];
+  /** A Lead's turns of the last day as attention decided them: kept on record, or told to the Supervisor. */
+  readonly triaged?: readonly { readonly at: string; readonly decision: string; readonly reason: string }[];
 }
 
 export interface IncidentView {

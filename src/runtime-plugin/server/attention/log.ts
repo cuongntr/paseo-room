@@ -22,7 +22,9 @@ export const TALLIED: ReadonlySet<LogRecord['type']> = new Set(['letter.sent', '
 
 export type LogRecord =
   | { readonly type: 'incident.opened' | 'incident.updated' | 'incident.closed'; readonly id: string; readonly kind: string; readonly level: string; readonly projectKey: string; readonly subjects: readonly string[]; readonly count: number; readonly text?: string }
-  | { readonly type: 'letter.held' | 'letter.sent' | 'letter.failed'; readonly id: string; readonly supervisorAgentId?: string; readonly level: string; readonly items: readonly string[]; readonly reason?: string }
+  | { readonly type: 'letter.held' | 'letter.sent' | 'letter.failed'; readonly id: string; readonly supervisorAgentId?: string; readonly level: string; readonly items: readonly string[]; readonly reason?: string;
+    /** A sent letter's item lines, already masked, for the panel's Supervisor view. */
+    readonly lines?: readonly string[] }
   | { readonly type: 'lead-turn'; readonly id: string; readonly projectKey: string; readonly leadAgentId: string; readonly decision: string; readonly reason: string }
   | { readonly type: 'feedback.recorded'; readonly id: string; readonly verdict: 'useful' | 'noise' | 'unknown'; readonly by: string }
   /** A Lead succession's step (seat context delta §5.4); never its handoff text. */

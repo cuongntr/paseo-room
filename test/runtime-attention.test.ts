@@ -649,6 +649,44 @@ describe('attention signals and letters', () => {
     expect(engine.portfolioOf('sup')).toEqual([view.projects[0]?.key]);
   });
 
+  it('gives the panel alone when a turn began, and each seat\'s turns, letters and triaged Lead turns for its seat view', async () => {
+    await settle();
+    await engine.onTurnStarted('lead');
+    const started = clock.toISOString();
+    expect(engine.roomView().projects[0]?.seats.find(seat => seat.agentId === 'lead')?.turnStartedAt).toBeUndefined();
+    expect(engine.roomView(undefined, { panel: true }).projects[0]?.seats.find(seat => seat.agentId === 'lead')?.turnStartedAt).toBe(started);
+    advance(3 * MINUTE);
+    await engine.onTurnEnded('lead', { kind: 'completed' }, [
+      { type: 'user_message', text: 'Human: ship it' },
+      { type: 'assistant_message', text: 'Deployed v1.2 to dev. Token=abc123secretvalue was rotated.' },
+    ]);
+    advance(16 * MINUTE);
+    await settle();
+    expect(letters()).toHaveLength(1);
+
+    const lead = await engine.seatDetail('lead');
+    expect(lead?.seat.turnStartedAt).toBeUndefined();
+    expect(lead?.project?.name).toBe('shop');
+    expect(lead?.turns).toEqual([{ startedAt: started, endedAt: new Date(Date.parse(started) + 3 * MINUTE).toISOString(), outcome: 'completed', trigger: 'message', files: 0, said: 'Deployed v1.2 to dev. Token=[secret] was rotated.' }]);
+    expect(lead?.triaged).toEqual([{ at: expect.any(String) as unknown, decision: 'digest', reason: expect.any(String) as unknown }]);
+    expect(lead?.letters).toBeUndefined();
+
+    const sup = await engine.seatDetail('sup');
+    expect(sup?.watches).toEqual([{ key: engine.portfolioOf('sup')[0], name: 'shop' }]);
+    expect(sup?.held).toEqual([]);
+    expect(sup?.letters).toHaveLength(1);
+    expect(sup?.letters?.[0]).toMatchObject({ level: 'digest', sent: true, items: 1 });
+    expect(sup?.letters?.[0]?.lines?.[0]).toContain('"Deployed v1.2 to dev. Token=[secret] was rotated."');
+    expect(JSON.stringify(sup)).not.toContain('abc123secretvalue');
+
+    // A seat keeps its latest eight turns, newest first.
+    for (let turn = 1; turn <= 9; turn += 1) await engine.onTurnEnded('peer', { kind: 'completed' }, [{ type: 'user_message', text: 'go' }, { type: 'assistant_message', text: `turn ${String(turn)}` }]);
+    const peer = await engine.seatDetail('peer');
+    expect(peer?.turns.map(turn => turn.said)).toEqual(['turn 9', 'turn 8', 'turn 7', 'turn 6', 'turn 5', 'turn 4', 'turn 3', 'turn 2']);
+    expect(peer?.triaged).toBeUndefined();
+    expect(await engine.seatDetail('nobody')).toBeUndefined();
+  });
+
   it('gives every live seat a role pill in its own workspace', async () => {
     await settle();
     const pills = rolePills({ ...engine.roomView(), providers: [] });

@@ -18,7 +18,8 @@ frequency:
    first, each with a way to reach the agent concerned.
 2. **What is each project doing?** Which Lead, how many Peers are working, who supervises it, and
    when something last happened.
-3. **Jump to an agent.** From any seat, straight into its Paseo conversation.
+3. **Look at one seat, or jump to it.** What a seat is doing, what it was told and what it runs;
+   from any seat, straight into its Paseo conversation.
 4. **Set up the room.** Start a Supervisor, start a project Lead under a Supervisor, and move a
    project under a Supervisor. This is rare, deliberate and error-prone, so it is guided.
 5. **Inspect the runtime record.** Assignments, isolated writers, findings and recovery. This is
@@ -95,6 +96,11 @@ Room (surface root)                         Project (pushed)                   A
                                              └─ Isolated writers (reclaim, close)
 ```
 
+A **Seat** screen is pushed from any seat or Supervisor row and goes back to where it came from:
+header (name, role · project · agent · model, activity pill, **Open in Paseo**) · facts (where it
+works, context, last turn, waiting permissions) · the role's own section · recent turns. The same
+screen is the **Room seat** panel beside an agent's conversation.
+
 The **workspace panel** opens straight onto the project of its workspace, when that workspace
 belongs to an observed project, and falls back to Room otherwise. Row order:
 
@@ -126,20 +132,42 @@ belongs to an observed project, and falls back to Room otherwise. Row order:
   than one, when it last did something, and a chevron. The path shows only when two projects share
   a name. Projects with no live seat fold into *N inactive projects*, unless a Lead replacement is
   open or a dispatched assignment is still undecided: those stay in the list, as *No live seats · 1
-  open*. A leftover draft alone does not keep a project in the list.
+  open*. A leftover draft alone does not keep a project in the list. A running Lead reads *Lead
+  working 6 min*. A project with work in flight adds a third line naming the most recently moved
+  dispatched assignment and what it is doing — `“Fix Redis eviction” working 14 min · +2 more`,
+  *gate running*, *handed back* — so the row says what is happening, not only that something is.
 - **Supervisor row.** Name, `Watches cmdb, gitops, paseo-beads` (three names, then `+N`), its folder
-  and last compaction, a context bar, a state pill and **Open**. The section header offers *New
-  Supervisor*.
+  and last compaction, a context bar, a state pill and an **Open in Paseo** icon. Pressing the row
+  opens its Seat screen. The section header offers *New Supervisor*.
 - **Seat row** (a project's Lead → Peer tree). The seat's name, then `role · agent · model ·
   thinking <option>` as Paseo reports them, any waiting permissions, then where it works — *Worktree
   on paseo-room/asg_… · ~/.paseo/worktrees/…* or *Main checkout on main* (*at a detached HEAD* when
   HEAD names no branch) — then the last turn and last compaction, a context bar, a state pill and
   **Open**. The role is left out of the second line when the seat's title ends with it, as
   `cmdb — Lead` does. The main checkout is the
-  project's own folder, so only a worktree names its path. A runtime-dispatched Peer is named `<Disposition> · <outcome gist> · <assignment id>`, so
-  the tree says what each Peer is doing without opening it. The Seats header offers **Replace
-  Lead…** for the project's Lead while no replacement is open; it sits beside the rows rather than in
-  one, because pressing a row opens its agent.
+  project's own folder, so only a worktree names its path. A runtime-dispatched Peer is named `<Disposition> · <outcome gist> · <assignment id>`, and
+  its second line starts with where that assignment stands when the state pill does not already say
+  it (*Handed back*, *Gate running*), led by the assignment's gist when the Peer's title lacks it. The state pill says how long a running turn has run (*working 6 min*). Pressing a
+  row opens the seat's Seat screen; its **Open in Paseo** icon opens the agent. The Seats header
+  offers **Replace Lead…** for the project's Lead while no replacement is open; it sits beside the
+  rows rather than in one.
+- **Seat screen.** For every seat: where it works, its context with the bar, its last turn and any
+  waiting permission, then its latest turns, newest first — outcome, how long it ran, what started it
+  (*after a message*, *after a runtime notice*, *from Paseo*), the start of its last message, masked,
+  and how many files it edited. The runtime keeps eight turns per seat in memory, so the list starts
+  again after a plugin reload; the conversation is the full record. Then, by role:
+  - *Peer*: its assignment, opening the Assignment screen;
+  - *Lead*: *In flight*, its project's dispatched, undecided assignments with their latest gate (or *No
+    runtime record yet*), and
+    *Its turns, as attention saw them*: each Lead turn of the last 24 hours and whether it was kept on
+    record, told in a digest or told at once, with the reason;
+  - *Supervisor*: *Watches* (each opens its project), *Waiting to be sent* (items held for it, with
+    their level and when each goes) and *Letters · last 24 h*, each with its level, item count, time and the
+    lines it carried.
+- **Room seat panel** (beside an agent's conversation). The Seat screen without **Open in Paseo**,
+  plus Paseo's own live facts for that agent where the host supplies them: its last activity and, in
+  a worktree, its uncommitted `+N −N`. An assignment opens in place with a way back. An agent that is
+  not a room seat says so. A host without agent panels skips the registration.
 - **Context bar** (seat and Supervisor rows). A short bar filled to the seat's context percent, with
   its percent beside it and a tick at its role's rotation mark (else its compact mark), from Paseo's
   figure for the seat's latest model call ([seat context delta](runtime-coordination-seat-context.md)
@@ -284,6 +312,8 @@ belongs to an observed project, and falls back to Room otherwise. Row order:
 - for seats, `checkout` — `{ root, displayRoot, linked, branch? }` — the checkout the seat works in,
   read from Git at each snapshot and turn end ([attention delta](runtime-coordination-attention.md)
   §4); absent outside Git;
+- for seats, `turnStartedAt` (ISO) while a turn runs — in the panel's answer only, never in a
+  Supervisor's `room_status`;
 - for projects, `succession` — `{ id, step, fromAgentId, fromTitle, canFinish, canCancel, failure? }`
   — while a Lead replacement is not finished. A project whose last seat that replacement archived
   stays listed.
@@ -301,7 +331,17 @@ a seat tool's answer:
 - `runtime.assignment` adds the same times and `timeline`, every milestone of that assignment,
   oldest first;
 - `runtime.room` gives each project's `runtime` record `undecided` (not yet decided, drafts
-  included), `waiting` (open assignments handed back, asking, or stopped) and `lastEventAt`;
+  included), `waiting` (open assignments handed back, asking, or stopped), `lastEventAt` and
+  `inFlight`: up to eight dispatched, undecided assignments, the most recently moved first, each an
+  `AssignmentLine` — `{ id, gist, kind, state, createdAt?, updatedAt?, settledAt?, isolated?,
+  peerAgentId?, gate? }`, `gate` being the latest runtime gate as `running`, `passed`, `failed` or
+  `unknown`;
+- `runtime.seat-view` (`{ agentId }`) answers one live room seat: the seat as `runtime.room` shows it,
+  its latest turns `{ startedAt, endedAt, outcome, trigger, files, said? }`, its `project`, and by
+  role: a Lead's `assignments` in flight (up to twelve) and `triaged` Lead turns of the last 24
+  hours; a Peer's latest assignment; a Supervisor's `watches`, `held` items and `letters` of the last
+  24 hours. `seat_unknown` answers an agent that is not a live room seat. Excerpts are masked as
+  letters are;
 - `runtime.attention-status` adds `letters`, the last 24 hours of the attention log tallied: letters
   sent by level, failed, incidents opened, Lead turns by decision, and the latest rating of each
   rated item as `useful` and `noise` counts, `partial` when a day file was too large to read back.
@@ -342,3 +382,4 @@ also titles its Peer and worktree.
 | 2026-09-28 | Bytes | Seat rows and role pills say which checkout each Lead and Peer works in — a linked worktree with its branch and path, or the main checkout with its branch — so a worktree Peer can be told apart from one in the Lead's folder. |
 | 2026-09-29 | Bytes | Review in live use (§2): one-line project rows with shape-coded status marks and an *asleep* state, inactive projects folded, colour only for exceptions; a Supervisor line in the project header; the runtime record shown only when something is wrong; recent activity; assignments newest first with times, *Open / Finished* and finished ones by day; an assignment screen titled by its gist with its history; context bars; Room attention reordered by setup with a 24-hour letter tally; Room seats with account letters and thinking chips, reachable from the panel. Panel-only read fields (§6). |
 | 2026-09-29 | Bytes | *Seat context* hints give *report at* in tokens too, and say *not applied* where a mark comes to less than 150k on a window (seat context delta K-D2, amended). |
+| 2026-10-02 | Bytes | The panel says what is happening, not only state: a project row names its work in flight and a running seat how long its turn has run; seat and Supervisor rows open a Seat screen (turns, a Peer's assignment, a Lead's assignments and triaged turns, a Supervisor's letters and held items), also shown as the **Room seat** panel beside an agent's conversation with Paseo's live facts. `runtime.seat-view`, `inFlight` and `turnStartedAt` are panel-only read fields (§6). |

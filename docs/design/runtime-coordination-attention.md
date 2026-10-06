@@ -604,6 +604,10 @@ runtime/v1/secrets/attention-key # 0600, write-only through RPC
 
 `assessment.recorded` stores:
 - the question-set version and the model id returned;
+`letter.sent` carries the letter's item lines as sent, already masked, so the panel's Supervisor
+view can show what a Supervisor was told after a plugin reload; they are the lines its conversation
+already holds.
+
 - per-question answers, probabilities and confidence;
 - latency and tokens;
 - the decision taken and the baseline decision;
@@ -744,6 +748,7 @@ files under `runtime/v1/attention` stay until `remove --apply`.
 |---|---|---|
 | 2026-10-01 | Repository owner / Bytes | The sensor is removed (amendment at the head of this document): 550 shadow answers would have raised 79 useful turns and lowered 62 useful ones, it was off since 2026-09-30, and it was the only egress path. `project-quiet` and `quietHours` go with it. Code alone triages. No authority is granted or removed. |
 | 2026-09-30 | Repository owner / Bytes | §7.4, §9.4: a Supervisor's `message_lead` waits for the Lead's turn to end, like every runtime notice; only a page steers. Claude Code cancels the running tool call for any steer it takes, and 13 of the 124 Supervisor messages sent to Leads had cut off the command the Lead was running. `message_lead` reaches a closed, unarchived Lead, which Paseo resumes. §6.2: masking after a plain word needs a credential-shaped value; its only two masks in a week had hidden prose. No authority is granted or removed. |
+| 2026-10-02 | Bytes | §11: `letter.sent` also logs the letter's masked item lines, for the panel's Supervisor seat view. Display only; letters, triage and authority are unchanged. |
 | 2026-09-30 | Repository owner / Bytes | §6.1, §7.2: a Lead turn that began with the runtime's notices and left a Peer working is progress. It rides along with the Supervisor's next letter and never wakes it alone. Replayed over six days, letters fall from 347 to 271, and none is added. A proposed half-hourly bulletin built from the ledger was dropped at review: it saved less and needed a setting, a renderer and a letter level. `attention_feedback`'s description asks the Supervisor to rate only noise, since 233 of its model calls in six days did nothing but rate. No authority is granted or removed. |
 | 2026-09-30 | Repository owner / Bytes | §6.1a, §7.2: a Lead turn that answers the Supervisor's `message_lead` is a reply, delivered once the Supervisor is idle, with up to 1,500 characters of the answer. It goes even with letters off and is never budgeted or superseded. A `NEEDS-HUMAN` item is exempt from the wake budget. In six days, 132 of 208 answers had gone to the digest: 63 arrived about five minutes late and 69 never arrived. 15 of 107 `NEEDS-HUMAN` items had overflowed the budget into the digest. `message_lead`'s description says the answer comes back as a letter. Code still chooses every class and recipient. No authority is granted or removed. |
 | 2026-09-29 | Bytes | §8.3: `runtime.attention-status` adds a 24-hour tally of the attention log for the settings screen. Display only; letters, triage and authority are unchanged. |

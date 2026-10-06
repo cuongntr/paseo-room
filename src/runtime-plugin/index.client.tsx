@@ -8,9 +8,22 @@ import type { PluginClientContext } from '@getpaseo/plugin/client';
 import { RoomAttentionSettings } from './client/attention-settings.js';
 import { ATTENTION_SETTINGS_SCREEN, SEATS_SETTINGS_SCREEN, bindHost } from './client/host.js';
 import { startRolePills } from './client/role-pills.js';
-import { RoomSeatsSettings, RuntimeSurface, RuntimeWorkspacePanel } from './client/views.js';
+import { RoomSeatPanel, RoomSeatsSettings, RuntimeSurface, RuntimeWorkspacePanel } from './client/views.js';
 
 const SURFACE = 'paseo-room-runtime';
+const SEAT_PANEL = 'paseo-room-seat';
+
+/**
+ * Beside a seat's conversation: what the seat is, does and is told. A host without agent panels
+ * refuses the registration; the rest of the plugin still loads.
+ */
+function seatPanel(client: PluginClientContext): () => void | Promise<void> {
+  try {
+    return client.addWorkspacePanel({ id: SEAT_PANEL, title: 'Room seat', icon: 'IdCard', context: 'agent', Component: RoomSeatPanel });
+  } catch {
+    return () => undefined;
+  }
+}
 
 // Hoisted on purpose; see the note in index.server.ts about Paseo's eager export copy.
 export default function contribute(client: PluginClientContext): () => Promise<void> {
@@ -20,6 +33,7 @@ export default function contribute(client: PluginClientContext): () => Promise<v
     client.addSurface(SURFACE, RuntimeSurface),
     client.addSidebarItem({ id: SURFACE, title: 'Room runtime', icon: 'Workflow', surface: SURFACE }),
     client.addWorkspacePanel({ id: SURFACE, title: 'Room runtime', icon: 'Workflow', context: 'workspace', Component: RuntimeWorkspacePanel }),
+    seatPanel(client),
     client.addSettingsScreen({ id: SEATS_SETTINGS_SCREEN, title: 'Room seats', icon: 'Users', Component: RoomSeatsSettings }),
     client.addSettingsScreen({ id: ATTENTION_SETTINGS_SCREEN, title: 'Room attention', icon: 'Bell', Component: RoomAttentionSettings }),
     // Each room seat's composer names its role; the agent keeps its own name.

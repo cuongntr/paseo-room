@@ -221,7 +221,7 @@ export class Delivery {
       queue.retry = undefined;
       this.sentLetters.set(id, { recipient: supervisorAgentId, items: ids });
       keepNewest(this.sentLetters, LETTER_MEMORY);
-      await this.deps.log.append({ type: 'letter.sent', id, supervisorAgentId, level, items: ids });
+      await this.deps.log.append({ type: 'letter.sent', id, supervisorAgentId, level, items: ids, lines: items.map(item => item.line) });
     };
     try {
       await this.deps.paseo.send(supervisorAgentId, text, id, 'steer');

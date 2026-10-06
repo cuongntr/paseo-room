@@ -129,6 +129,16 @@ export const runtimeRoomRpc = defineRpc({
   output: answer(view),
 });
 
+/**
+ * One room seat for the panel's seat view (panel delta 2026-10-02): its latest turns, a Supervisor's
+ * letters, a Lead's triaged turns and the assignments it runs or works on. Read-only.
+ */
+export const runtimeSeatViewRpc = defineRpc({
+  name: 'runtime.seat-view',
+  input: z.strictObject({ agentId }),
+  output: answer(view),
+});
+
 /** Human starts a Supervisor in an existing directory outside Git (attention delta §8.1). */
 export const runtimeStartSupervisorRpc = defineRpc({
   name: 'runtime.start-supervisor',
@@ -210,7 +220,7 @@ export const runtimeSuccessionCancelRpc = defineRpc({
 export const RUNTIME_RPCS = [
   runtimeHealthRpc, runtimeProjectRpc, runtimeAssignmentRpc, runtimeRecoverRpc, runtimeAbandonRpc,
   runtimeResolveOwnershipRpc, runtimeQuarantineRpc, runtimeWorkspaceCloseRpc, runtimeLeaseReclaimRpc,
-  runtimeSeatsRpc, runtimeRoomRpc, runtimeStartSupervisorRpc, runtimeProjectPreflightRpc, runtimeStartProjectRpc,
+  runtimeSeatsRpc, runtimeRoomRpc, runtimeSeatViewRpc, runtimeStartSupervisorRpc, runtimeProjectPreflightRpc, runtimeStartProjectRpc,
   runtimeAssignSupervisorRpc, runtimeIncidentFeedbackRpc, runtimeAttentionStatusRpc, runtimePeerEffortRpc,
   runtimeSuccessionPreflightRpc, runtimeSuccessionStartRpc, runtimeSuccessionStatusRpc, runtimeSuccessionCompleteRpc, runtimeSuccessionCancelRpc,
 ] as const;

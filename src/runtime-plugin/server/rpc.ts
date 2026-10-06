@@ -14,7 +14,7 @@ import type { z } from 'zod';
 import {
   runtimeAbandonRpc, runtimeAssignmentRpc, runtimeAssignSupervisorRpc, runtimeHealthRpc, runtimeIncidentFeedbackRpc, runtimeLeaseReclaimRpc,
   runtimeProjectPreflightRpc, runtimeProjectRpc, runtimeQuarantineRpc, runtimeRecoverRpc, runtimeResolveOwnershipRpc, runtimeRoomRpc,
-  runtimeAttentionStatusRpc, runtimePeerEffortRpc, runtimeSeatsRpc, runtimeStartProjectRpc, runtimeStartSupervisorRpc, runtimeWorkspaceCloseRpc,
+  runtimeAttentionStatusRpc, runtimePeerEffortRpc, runtimeSeatsRpc, runtimeSeatViewRpc, runtimeStartProjectRpc, runtimeStartSupervisorRpc, runtimeWorkspaceCloseRpc,
   runtimeSuccessionCancelRpc, runtimeSuccessionCompleteRpc, runtimeSuccessionPreflightRpc, runtimeSuccessionStartRpc, runtimeSuccessionStatusRpc,
 } from '../shared/rpc-contracts.js';
 import type { AttentionSettings } from '../shared/attention.js';
@@ -27,7 +27,7 @@ import { RUNTIME_PLUGIN_ID } from '../shared/identity.js';
 import type { Controller } from './controller.js';
 import { TERMINAL_STATES } from './domain/state.js';
 import { assignmentDetailView, projectStatusView, revision, type StatusInput } from './domain/views.js';
-import { assignmentTimes, milestones, recentActivity } from './panel.js';
+import { assignmentLine, assignmentTimes, inFlight, milestones, recentActivity, type AssignmentLine } from './panel.js';
 import { peerStopped, type PaseoApi, type PaseoHandle } from './paseo-port.js';
 import { snapshot } from './projection.js';
 import type { Recovery } from './recovery.js';
@@ -92,6 +92,9 @@ const STALLED_SECONDS = 60;
 const ACTIVITY_ITEMS = 30;
 /** The window the settings screen's letter tally covers. */
 const TALLY_HOURS = 24;
+/** Dispatched assignments a room view names per project, and those a Lead's seat view lists. */
+const IN_FLIGHT_ROOM = 8;
+const IN_FLIGHT_SEAT = 12;
 /** Open assignments that wait on their Lead: a handback, a question, or a Peer that stopped. */
 const WAITING_ON_LEAD = ['handed-back', 'questioned', 'blocked'];
 
@@ -272,7 +275,10 @@ export function createRpcHandlers(runtime: RpcRuntime) {
       const manifest = controller.deps.recognition.current.manifest;
       const providers = Object.entries(manifest?.providers ?? {}).map(([providerId, entry]) => ({ providerId, agent: entry.agent, role: entry.role }));
       // The runtime record of each observed project, joined by Git common directory.
-      type RecordSummary = { projectId: string; health: string; assignments: number; active: number; undecided: number; waiting: number; findings: number; lastEventAt?: string };
+      type RecordSummary = {
+        projectId: string; health: string; assignments: number; active: number; undecided: number; waiting: number; findings: number; lastEventAt?: string;
+        inFlight: AssignmentLine[];
+      };
       const records = new Map<string, { readonly summary: RecordSummary; readonly root: string }>();
       for (const store of await ProjectStore.list(controller.deps.runtimeRoot, controller.deps.now)) {
         const input = await statusInput(runtime, store);
@@ -285,11 +291,12 @@ export function createRpcHandlers(runtime: RpcRuntime) {
             projectId: view.projectId, health: view.health.value, assignments: view.assignments.length, active: open.length, undecided: undecided.length,
             waiting: open.filter(entry => WAITING_ON_LEAD.includes(entry.state.value)).length, findings: view.findings.length,
             ...(lastEventAt === undefined ? {} : { lastEventAt }),
+            inFlight: open.length === 0 ? [] : inFlight(input.state, assignmentTimes(input.events), IN_FLIGHT_ROOM),
           },
           root: store.meta.canonicalRoot,
         });
       }
-      const room = attention.roomView();
+      const room = attention.roomView(undefined, { panel: true });
       const record = (key: string): RecordSummary | undefined => records.get(key)?.summary;
       // A replacement that cannot be read never costs the room view.
       const successions = new Map((await runtime.succession?.summaries().catch(() => undefined) ?? []).map(summary => [summary.projectKey, summary]));
@@ -320,6 +327,25 @@ export function createRpcHandlers(runtime: RpcRuntime) {
       const spool = await runtime.spool?.backlog().catch(() => undefined);
       const stalled = spool !== undefined && spool.oldestSeconds >= STALLED_SECONDS ? { spool } : {};
       return answer(runtime, { ...room, projects, providers, ...stalled });
+    },
+
+    async seatView(input: z.infer<typeof runtimeSeatViewRpc.input>): Promise<Answer> {
+      const attention = runtime.attention;
+      if (attention === undefined) return unavailable();
+      await attention.run(() => attention.sweep());
+      const detail = await attention.seatDetail(input.agentId);
+      if (detail === undefined) return error('seat_unknown', 'This agent is not a live seat of the room.', 'Open a Supervisor, Lead or Peer of the room.');
+      const role = detail.seat.role;
+      const store = detail.project === undefined || role === 'supervisor' ? undefined
+        : (await ProjectStore.list(controller.deps.runtimeRoot, controller.deps.now)).find(entry => entry.meta.gitCommonDir === detail.project?.key);
+      if (store === undefined) return answer(runtime, detail);
+      const { state, events } = await statusInput(runtime, store);
+      const times = assignmentTimes(events);
+      // A Lead runs its project's open assignments; a Peer works on the latest one it was bound to.
+      const assignments = role === 'lead'
+        ? inFlight(state, times, IN_FLIGHT_SEAT)
+        : [...state.assignments.values()].filter(view => view.peerAgentId === input.agentId).slice(-1).map(view => assignmentLine(view, times.get(view.id)));
+      return answer(runtime, { ...detail, projectId: store.meta.projectId, assignments });
     },
 
     async projectPreflight(input: z.infer<typeof runtimeProjectPreflightRpc.input>): Promise<Answer> {
@@ -416,6 +442,7 @@ export function registerRpcs(server: Pick<PluginServerContext, 'handle'>, runtim
   server.handle(runtimeLeaseReclaimRpc, async (input, { paseo }) => { supply(paseo); return runtimeLeaseReclaimRpc.output.parse(await handlers.leaseReclaim(input)); });
   server.handle(runtimeSeatsRpc, async (_input, { paseo }) => { supply(paseo); return runtimeSeatsRpc.output.parse(await handlers.seats()); });
   server.handle(runtimeRoomRpc, async (_input, { paseo }) => { supply(paseo); return runtimeRoomRpc.output.parse(await handlers.room()); });
+  server.handle(runtimeSeatViewRpc, async (input, { paseo }) => { supply(paseo); return runtimeSeatViewRpc.output.parse(await handlers.seatView(input)); });
   server.handle(runtimeStartSupervisorRpc, async (input, { paseo }) => { supply(paseo); return runtimeStartSupervisorRpc.output.parse(await handlers.startSupervisor(input)); });
   server.handle(runtimeProjectPreflightRpc, async (input, { paseo }) => { supply(paseo); return runtimeProjectPreflightRpc.output.parse(await handlers.projectPreflight(input)); });
   server.handle(runtimeStartProjectRpc, async (input, { paseo }) => { supply(paseo); return runtimeStartProjectRpc.output.parse(await handlers.startProject(input)); });

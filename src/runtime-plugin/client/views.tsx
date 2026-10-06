@@ -5,7 +5,7 @@
  * controls: accounts, the thinking Lead may choose, and seat context budgets. React Native
  * primitives only; an operator surface, never authority evidence for a seat.
  */
-import { useWorkspace, type PluginSurfaceProps, type PluginWorkspacePanelProps } from '@getpaseo/plugin/client';
+import { useWorkspace, type PluginAgentPanelProps, type PluginSurfaceProps, type PluginWorkspacePanelProps } from '@getpaseo/plugin/client';
 import { ScrollView } from '@getpaseo/plugin/client/react-native';
 import { SettingsRow, SettingsSection } from '@getpaseo/plugin/client/ui';
 import { useEffect, useState } from 'react';
@@ -19,12 +19,14 @@ import { ACTION_START_DEADLINE_MS } from '../shared/limits.js';
 import { accountLetters, accountLine, agentLabel, plural, sentence, type AccountView, type RoomView } from './model.js';
 import { AssignmentDetailView } from './record.js';
 import { ProjectScreen, RoomScreen, type RoomActions } from './room.js';
+import { SeatScreen } from './seat.js';
 import { ReplaceLeadModal } from './succession.js';
 import { duration, whenLabel } from './time.js';
 
 type Route =
   | { readonly screen: 'room' }
   | { readonly screen: 'project'; readonly key: string }
+  | { readonly screen: 'seat'; readonly agentId: string; readonly from: Route }
   | { readonly screen: 'assignment'; readonly key: string; readonly projectId: string; readonly assignmentId: string };
 
 type ModalState =
@@ -60,6 +62,7 @@ function Runtime(props: { readonly theme: Theme; readonly compact: boolean; read
     startLead: key => { setModal({ kind: 'start-lead', key }); },
     replaceLead: (key, leadAgentId) => { setModal({ kind: 'replace-lead', key, ...(leadAgentId === undefined ? {} : { leadAgentId }) }); },
     assign: key => { setModal({ kind: 'assign', key }); },
+    openSeat: agentId => { setRoute({ screen: 'seat', agentId, from: route }); },
     reload: polled.reload,
     ...(openAgent === undefined ? {} : { openAgent: (agentId: string) => { openAgent({ agentId }); } }),
   };
@@ -76,6 +79,23 @@ function Runtime(props: { readonly theme: Theme; readonly compact: boolean; read
       );
   } else if (route.screen === 'room') {
     body = <RoomScreen theme={theme} room={room} actions={actions} />;
+  } else if (route.screen === 'seat') {
+    const { from } = route;
+    const back = from.screen === 'project' ? room.projects.find(entry => entry.key === from.key)?.name ?? 'Project' : 'Room';
+    body = (
+      <View>
+        <View style={{ alignSelf: 'flex-start', marginBottom: SPACE.md }}>
+          <Button theme={theme} small variant="ghost" label={back} icon="ArrowLeft" onPress={() => { setRoute(from); }} />
+        </View>
+        <SeatScreen theme={theme} agentId={route.agentId}
+          openAssignment={(projectId, assignmentId) => {
+            const project = room.projects.find(entry => entry.runtime?.projectId === projectId);
+            if (project !== undefined) setRoute({ screen: 'assignment', key: project.key, projectId, assignmentId });
+          }}
+          openProject={key => { setRoute({ screen: 'project', key }); }}
+          {...(actions.openAgent === undefined ? {} : { openAgent: actions.openAgent })} />
+      </View>
+    );
   } else {
     const project = room.projects.find(entry => entry.key === route.key);
     if (project === undefined) {
@@ -129,6 +149,33 @@ function Runtime(props: { readonly theme: Theme; readonly compact: boolean; read
 
 export function RuntimeSurface(props: PluginSurfaceProps) {
   return <Runtime theme={props.theme} compact={props.layout.compact} navigation={props.navigation} />;
+}
+
+/**
+ * The Room seat panel beside an agent's conversation: the seat's own view, with Paseo's live facts
+ * for it, and an assignment opened in place.
+ */
+export function RoomSeatPanel(props: PluginAgentPanelProps) {
+  const [assignment, setAssignment] = useState<{ readonly projectId: string; readonly assignmentId: string }>();
+  const { theme } = props;
+  const openAgent = props.navigation?.openAgent;
+  const open = openAgent === undefined ? {} : { openAgent: (agentId: string) => { openAgent({ agentId }); } };
+  return (
+    <ScrollView style={{ flex: 1, backgroundColor: theme.colors.surface0 }} contentContainerStyle={{ flexGrow: 1 }}>
+      <Page theme={theme} compact>
+        {assignment === undefined
+          ? <SeatScreen theme={theme} agentId={props.agentId} live openAssignment={(projectId, assignmentId) => { setAssignment({ projectId, assignmentId }); }} />
+          : (
+            <View>
+              <View style={{ alignSelf: 'flex-start', marginBottom: SPACE.md }}>
+                <Button theme={theme} small variant="ghost" label="Seat" icon="ArrowLeft" onPress={() => { setAssignment(undefined); }} />
+              </View>
+              <AssignmentDetailView theme={theme} projectId={assignment.projectId} assignmentId={assignment.assignmentId} {...open} />
+            </View>
+          )}
+      </Page>
+    </ScrollView>
+  );
 }
 
 export function RuntimeWorkspacePanel(props: PluginWorkspacePanelProps) {

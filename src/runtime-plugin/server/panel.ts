@@ -4,8 +4,10 @@
  * Derived from the events alone, so an answer's revision stays stable until the ledger changes.
  * No seat tool returns any of it; the views a Lead or Supervisor reads are unchanged.
  */
-import type { Milestone, MilestoneTone } from '../shared/panel.js';
+import { outcomeGist } from '../shared/names.js';
+import type { AssignmentLine, Milestone, MilestoneTone } from '../shared/panel.js';
 import { SETTLED_STATES } from '../shared/states.js';
+import { TERMINAL_STATES, type AssignmentView, type ProjectState } from './domain/state.js';
 import type { RuntimeEventV1 } from './events/schema.js';
 
 export interface AssignmentTimes {
@@ -17,7 +19,35 @@ export interface AssignmentTimes {
   readonly isolated?: boolean;
 }
 
-export type { Milestone } from '../shared/panel.js';
+export type { AssignmentLine, Milestone } from '../shared/panel.js';
+
+/** An assignment's latest runtime gate as a reader names it; none before its first. */
+function gateOf(view: AssignmentView): AssignmentLine['gate'] {
+  const gate = view.gates.at(-1);
+  if (gate === undefined) return undefined;
+  if (gate.status === 'running') return 'running';
+  if (gate.status === 'uncertain') return 'unknown';
+  return gate.result?.exitCode === 0 && !gate.result.timedOut ? 'passed' : 'failed';
+}
+
+/** One assignment in a line: its gist, state, times, Peer and latest gate. */
+export function assignmentLine(view: AssignmentView, times: AssignmentTimes | undefined): AssignmentLine {
+  const gate = gateOf(view);
+  return {
+    id: view.id, gist: outcomeGist(view.input.outcome), kind: view.input.kind, state: view.state, ...times,
+    ...(view.peerAgentId === undefined ? {} : { peerAgentId: view.peerAgentId }),
+    ...(gate === undefined ? {} : { gate }),
+  };
+}
+
+/** A project's dispatched, undecided assignments, the most recently moved first, at most `limit`. */
+export function inFlight(state: ProjectState, times: ReadonlyMap<string, AssignmentTimes>, limit: number): AssignmentLine[] {
+  return [...state.assignments.values()]
+    .filter(view => view.state !== 'draft' && !TERMINAL_STATES.includes(view.state))
+    .map(view => assignmentLine(view, times.get(view.id)))
+    .sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''))
+    .slice(0, limit);
+}
 
 const SETTLED = new Set<string>(SETTLED_STATES.map(state => `assignment.${state}`));
 

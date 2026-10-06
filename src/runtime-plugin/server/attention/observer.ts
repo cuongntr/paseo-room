@@ -30,6 +30,8 @@ type AgentTimelineItem = PluginLifecycleEvents['agent.turn_ended']['timeline'][n
 type TurnOutcome = PluginLifecycleEvents['agent.turn_ended']['outcome'];
 
 export const MESSAGE_TAIL = 4_000;
+/** Turns a seat keeps for the panel's seat view. */
+const RECENT_TURNS = 8;
 /** Timeline entries read back to find one turn's items; a longer turn is judged by its tail. */
 const TURN_READ = 300;
 const WRITE_WINDOW_MS = 2 * 60 * 60 * 1_000;
@@ -98,6 +100,8 @@ export interface Seat {
   archivedAt: string | null;
   turnStartedAt: number | undefined;
   lastTurn: TurnFacts | undefined;
+  /** The seat's latest turns since the runtime started, oldest first, for the panel's seat view. */
+  recentTurns: readonly TurnFacts[];
   /** Recent failed turns, newest last, for repeated-failure detection. */
   failures: { readonly at: number; readonly key: string }[];
   /** Pending permission ids and when the Observer first saw each. */
@@ -201,7 +205,7 @@ export class Observer {
     const seat: Seat = known ?? {
       agentId: snapshot.id, role: recognized.role, agent: recognized.agent, provider: snapshot.provider, title: snapshot.title, model: snapshot.model, thinking: snapshot.thinking, cwd: snapshot.cwd, workspaceId: snapshot.workspaceId, project, checkout,
       parentAgentId: snapshot.parentAgentId, state: stateOf(snapshot), archivedAt: snapshot.archivedAt,
-      turnStartedAt: undefined, lastTurn: undefined, failures: [], pending: new Map(), writeTurns: [], usage: snapshot.usage, compaction: undefined, refreshedAt: this.time,
+      turnStartedAt: undefined, lastTurn: undefined, recentTurns: [], failures: [], pending: new Map(), writeTurns: [], usage: snapshot.usage, compaction: undefined, refreshedAt: this.time,
     };
     seat.title = snapshot.title;
     seat.model = snapshot.model;
@@ -293,6 +297,7 @@ export class Observer {
     if (read !== null) seat.usage = read;
     seat.checkout = await checkout;
     seat.lastTurn = turn;
+    seat.recentTurns = [...seat.recentTurns, turn].slice(-RECENT_TURNS);
     seat.turnStartedAt = undefined;
     if (seat.state !== 'archived' && seat.state !== 'closed') seat.state = seat.pending.size > 0 ? 'permission' : 'idle';
     if (turn.errorKey !== undefined) seat.failures = [...seat.failures, { at: now, key: turn.errorKey }].slice(-5);

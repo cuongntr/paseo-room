@@ -12,7 +12,7 @@ import { ConfirmModal } from './forms.js';
 import type { Milestone } from '../shared/panel.js';
 import { Button, Callout, Card, Empty, Facts, Glyph, GroupLabel, Loading, MutedText, Pill, Row, SPACE, SectionLabel, Segmented, Title, type Theme, type Tone } from './kit.js';
 import {
-  assignmentGist, byDay, finishedAssignments, isFinished, openAssignments, providerLabel, sentence, workplace, type AssignmentEntry,
+  ASSIGNMENT_WORDS, assignmentGist, byDay, finishedAssignments, isFinished, openAssignments, providerLabel, sentence, workplace, type AssignmentEntry,
 } from './model.js';
 import { ago, duration, hourMinute, whenLabel } from './time.js';
 
@@ -45,14 +45,9 @@ export function assignmentTone(state: string): Tone {
 
 export const healthTone = (health: string): Tone => (health === 'healthy' ? 'success' : health === 'paused' ? 'danger' : 'warning');
 
-/** An assignment's state as a reader says it. */
-const STATE_WORDS: Readonly<Record<string, string>> = {
-  draft: 'not dispatched', dispatching: 'starting', active: 'working', questioned: 'asked a question', blocked: 'stopped', 'handed-back': 'handed back',
-  rework: 'reworking', 'awaiting-permission': 'waits on a permission', accepted: 'accepted', rejected: 'rejected', abandoned: 'abandoned', uncertain: 'uncertain',
-};
-const stateWord = (state: string): string => STATE_WORDS[state] ?? state;
+export const stateWord = (state: string): string => ASSIGNMENT_WORDS[state] ?? state;
 
-const TONE_ICON: Readonly<Record<string, string>> = { success: 'CircleCheck', danger: 'CircleX', warning: 'TriangleAlert', accent: 'CircleDot', muted: 'Circle', neutral: 'Circle' };
+export const TONE_ICON: Readonly<Record<string, string>> = { success: 'CircleCheck', danger: 'CircleX', warning: 'TriangleAlert', accent: 'CircleDot', muted: 'Circle', neutral: 'Circle' };
 const BY: Readonly<Record<Milestone['by'], string>> = { human: 'you', lead: 'Lead', peer: 'Peer', supervisor: 'Supervisor', runtime: 'runtime' };
 
 const FINDING_LABEL: Readonly<Record<string, string>> = {

@@ -12,10 +12,11 @@ import { ModalShell } from './forms.js';
 import { ATTENTION_SETTINGS_SCREEN, SEATS_SETTINGS_SCREEN, openSettings } from './host.js';
 import { Button, Callout, Card, Empty, Glyph, IconButton, Meter, MutedText, Pill, Row, SPACE, SectionLabel, StatusMark, TextLink, Title, ago, type Theme } from './kit.js';
 import {
-  KIND_LABEL, LEVEL_STYLE, ROLE_ICON, STATE_LABEL, STATUS_LABEL, STATUS_TONE, checkoutLine, contextTone, hasLead, hasWork, lastActivity, launchLabel, projectStatus, projectSummary,
-  providerLabel, seatName, sentence, shortList, sortIncidents, sortProjects, stateTone, successionHeadline, titleNamesRole, waitsOnHuman, watchedProjects, watchingLabel,
-  type IncidentView, type ProjectView, type RoomView, type SeatView,
+  KIND_LABEL, LEVEL_STYLE, ROLE_ICON, STATUS_LABEL, STATUS_TONE, checkoutLine, contextTone, hasLead, hasWork, inFlightLine, lastActivity, launchLabel, peerDoing, projectStatus,
+  projectSummary, providerLabel, seatActivity, seatName, sentence, shortList, sortIncidents, sortProjects, stateTone, successionHeadline, titleNamesRole, waitsOnHuman, watchedProjects,
+  watchingLabel, type IncidentView, type ProjectView, type RoomView, type SeatView,
 } from './model.js';
+import type { AssignmentLine } from '../shared/panel.js';
 import { RuntimeRecord } from './record.js';
 
 export interface RoomActions {
@@ -28,7 +29,16 @@ export interface RoomActions {
   readonly replaceLead: (projectKey: string, leadAgentId?: string) => void;
   readonly assign: (projectKey: string) => void;
   readonly openAgent?: (agentId: string) => void;
+  /** Opens a seat's own view: its turns, and what it runs or is told. */
+  readonly openSeat: (agentId: string) => void;
   readonly reload: () => void;
+}
+
+/** Opens a seat's agent in Paseo from beside its row, while the row itself opens the seat's view. */
+function OpenAgentButton(props: { readonly theme: Theme; readonly agentId: string; readonly openAgent?: (agentId: string) => void }) {
+  const { openAgent } = props;
+  if (openAgent === undefined) return null;
+  return <IconButton theme={props.theme} icon="ExternalLink" label="Open the agent in Paseo" onPress={() => { openAgent(props.agentId); }} />;
 }
 
 const ROLE_WORD: Readonly<Record<string, string>> = { lead: 'Lead', peer: 'Peer', supervisor: 'Supervisor' };
@@ -124,11 +134,13 @@ function ProjectRow(props: { readonly theme: Theme; readonly room: RoomView; rea
   const last = lastActivity(project);
   const lead = project.seats.find(seat => seat.role === 'lead');
   const namesake = room.projects.some(entry => entry.key !== project.key && entry.name === project.name);
+  const inFlight = inFlightLine(project);
   return (
     <Row theme={theme} first={props.first} onPress={props.onPress} accessibilityLabel={`Open ${project.name}`}
       leading={<StatusMark theme={theme} status={projectStatus(project)} />}
       title={project.name}
       subtitle={projectSummary(project)}
+      {...(inFlight === undefined ? {} : { detail: inFlight })}
       {...(namesake ? { meta: project.displayRoot } : {})}
       trailing={(
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: SPACE.sm }}>
@@ -250,8 +262,8 @@ export function RoomScreen(props: { readonly theme: Theme; readonly room: RoomVi
                 const { compaction } = supervisor;
                 return (
                   <Row key={supervisor.agentId} theme={theme} first={index === 0}
-                    {...(actions.openAgent === undefined ? {} : { onPress: () => { actions.openAgent?.(supervisor.agentId); } })}
-                    accessibilityLabel={`Open ${seatName(supervisor)}`}
+                    onPress={() => { actions.openSeat(supervisor.agentId); }}
+                    accessibilityLabel={`Show ${seatName(supervisor)}`}
                     leading={<Glyph theme={theme} name="Eye" boxed tone={supervisor.state === 'running' ? 'success' : 'muted'} />}
                     title={seatName(supervisor)}
                     subtitle={watched.length === 0 ? sentence(watchingLabel(supervisor.portfolio)) : `Watches ${shortList(watched)}`}
@@ -259,8 +271,8 @@ export function RoomScreen(props: { readonly theme: Theme; readonly room: RoomVi
                     trailing={(
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: SPACE.sm }}>
                         <ContextMeter theme={theme} seat={supervisor} />
-                        <Pill theme={theme} tone={stateTone(supervisor.state)}>{STATE_LABEL[supervisor.state] ?? supervisor.state}</Pill>
-                        {actions.openAgent === undefined ? null : <Glyph theme={theme} name="ExternalLink" size={14} />}
+                        <Pill theme={theme} tone={stateTone(supervisor.state)}>{seatActivity(supervisor)}</Pill>
+                        <OpenAgentButton theme={theme} agentId={supervisor.agentId} {...(actions.openAgent === undefined ? {} : { openAgent: actions.openAgent })} />
                       </View>
                     )} />
                 );
@@ -273,7 +285,11 @@ export function RoomScreen(props: { readonly theme: Theme; readonly room: RoomVi
   );
 }
 
-function SeatTree(props: { readonly theme: Theme; readonly seats: readonly SeatView[]; readonly openAgent?: (agentId: string) => void }) {
+/**
+ * A project's seats, Lead first and each Peer under the seat that opened it. A Peer names the
+ * assignment it works on and how far it is; a row opens the seat's view, its icon the agent itself.
+ */
+function SeatTree(props: { readonly theme: Theme; readonly seats: readonly SeatView[]; readonly work: readonly AssignmentLine[]; readonly openSeat: (agentId: string) => void; readonly openAgent?: (agentId: string) => void }) {
   const ids = new Set(props.seats.map(seat => seat.agentId));
   const children = new Map<string | null, SeatView[]>();
   for (const seat of props.seats) {
@@ -292,14 +308,16 @@ function SeatTree(props: { readonly theme: Theme; readonly seats: readonly SeatV
     <>
       {rows.map(({ seat, depth }, index) => {
         const runs = launchLabel(seat);
+        const assignment = props.work.find(line => line.peerAgentId === seat.agentId);
         const subtitle = [
+          assignment === undefined ? undefined : peerDoing(seat, assignment),
           titleNamesRole(seat) ? undefined : ROLE_WORD[seat.role] ?? seat.role, providerLabel(seat.provider), runs === '' ? undefined : runs,
           seat.pendingPermissions > 0 ? `${String(seat.pendingPermissions)} permission${seat.pendingPermissions === 1 ? '' : 's'} waiting` : undefined,
         ].filter(part => part !== undefined).join(' · ');
         return (
           <Row key={seat.agentId} theme={theme} first={index === 0} indent={depth}
-            {...(props.openAgent === undefined ? {} : { onPress: () => { props.openAgent?.(seat.agentId); } })}
-            accessibilityLabel={`Open ${seatName(seat)}`}
+            onPress={() => { props.openSeat(seat.agentId); }}
+            accessibilityLabel={`Show ${seatName(seat)}`}
             leading={<Glyph theme={theme} name={ROLE_ICON[seat.role] ?? 'Bot'} boxed tone={seat.role === 'lead' ? 'accent' : 'muted'} />}
             title={seatName(seat)}
             subtitle={subtitle}
@@ -308,8 +326,8 @@ function SeatTree(props: { readonly theme: Theme; readonly seats: readonly SeatV
             trailing={(
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: SPACE.sm }}>
                 <ContextMeter theme={theme} seat={seat} />
-                <Pill theme={theme} tone={stateTone(seat.state)}>{STATE_LABEL[seat.state] ?? seat.state}</Pill>
-                {props.openAgent === undefined ? null : <Glyph theme={theme} name="ExternalLink" size={14} />}
+                <Pill theme={theme} tone={stateTone(seat.state)}>{seatActivity(seat)}</Pill>
+                <OpenAgentButton theme={theme} agentId={seat.agentId} {...(props.openAgent === undefined ? {} : { openAgent: props.openAgent })} />
               </View>
             )} />
         );
@@ -376,7 +394,7 @@ export function ProjectScreen(props: { readonly theme: Theme; readonly room: Roo
         </View>
       )}
 
-      {/* Beside the rows, not inside them: a row opens its agent when pressed. */}
+      {/* Beside the rows, not inside them: a row opens its seat's view when pressed. */}
       <SectionLabel theme={theme} trailing={lead === undefined || succession !== undefined ? undefined
         : <Button theme={theme} small variant="ghost" label="Replace Lead…" icon="RefreshCcw" onPress={() => { actions.replaceLead(project.key, lead.agentId); }} />}>Seats</SectionLabel>
       {succession === undefined ? null : succession.step === 'failed' ? (
@@ -409,7 +427,7 @@ export function ProjectScreen(props: { readonly theme: Theme; readonly room: Roo
               Every agent of this project is archived. Its runtime record is kept below.
             </Empty>
           )
-          : <SeatTree theme={theme} seats={project.seats} {...(actions.openAgent === undefined ? {} : { openAgent: actions.openAgent })} />}
+          : <SeatTree theme={theme} seats={project.seats} work={project.runtime?.inFlight ?? []} openSeat={actions.openSeat} {...(actions.openAgent === undefined ? {} : { openAgent: actions.openAgent })} />}
       </Card>
 
       {project.runtime === undefined ? (

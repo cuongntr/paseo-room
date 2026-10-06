@@ -4,10 +4,10 @@
  */
 import { MAX_HANDOFF_BYTES, utf8Bytes } from '../shared/limits.js';
 import { outcomeGist } from '../shared/names.js';
-import type { LetterTally } from '../shared/panel.js';
+import type { AssignmentLine, LetterTally } from '../shared/panel.js';
 import { SETTLED_STATES } from '../shared/states.js';
 import { formatTokens } from '../shared/seat-context.js';
-import { ago, clockTime, dayLabel } from './time.js';
+import { ago, clockTime, dayLabel, duration } from './time.js';
 import type { Tone } from './tone.js';
 
 export interface SeatView {
@@ -16,6 +16,8 @@ export interface SeatView {
   readonly cwd: string; readonly displayCwd: string; readonly workspaceId?: string | null; readonly parentAgentId: string | null; readonly pendingPermissions: number;
   readonly checkout?: { readonly root: string; readonly displayRoot: string; readonly linked: boolean; readonly branch?: string };
   readonly lastTurn?: { readonly outcome: string; readonly endedAgo: string; readonly endedAt: string };
+  /** When its running turn began. */
+  readonly turnStartedAt?: string;
   readonly context?: { readonly used: number; readonly max: number; readonly percent: number; readonly rotateAtPercent: number | null; readonly compactAtPercent: number | null };
   readonly compaction?: { readonly lastAt: string; readonly lastTrigger?: string; readonly lastPreTokens?: number; readonly seen: number };
 }
@@ -33,6 +35,8 @@ export interface RuntimeRecord {
   readonly waiting?: number;
   /** The ledger's latest event. */
   readonly lastEventAt?: string;
+  /** Its dispatched, undecided assignments, the most recently moved first, a few at most. */
+  readonly inFlight?: readonly AssignmentLine[];
 }
 
 /** A Lead replacement not yet finished (seat context delta §5.1). */
@@ -167,6 +171,49 @@ export function stateTone(state: string): Tone {
   return 'neutral';
 }
 
+/** How long a seat's running turn has run — `working 6 min` — or its state's word when it is not running. */
+export function seatActivity(seat: Pick<SeatView, 'state' | 'turnStartedAt'>, now = Date.now()): string {
+  const label = STATE_LABEL[seat.state] ?? seat.state;
+  if (seat.turnStartedAt === undefined || (seat.state !== 'running' && seat.state !== 'permission')) return label;
+  const spent = duration(now - Date.parse(seat.turnStartedAt));
+  return spent === '' ? label : `${label} ${spent}`;
+}
+
+/** Where an assignment stands, as a short phrase: `working 14 min` while its Peer's turn runs, `handed back`, `gate running`. */
+export function assignmentActivity(line: AssignmentLine, peer: Pick<SeatView, 'state' | 'turnStartedAt'> | undefined, now = Date.now()): string {
+  if (line.gate === 'running') return 'gate running';
+  // An active assignment is as far as its Peer's turn: running for so long, or idle between turns.
+  if (line.state === 'active' && peer !== undefined) return seatActivity(peer, now);
+  return ASSIGNMENT_WORDS[line.state] ?? line.state;
+}
+
+/** A project's work in flight in one line — `"Fix Redis eviction" working 14 min · +2 more` — or undefined when none. */
+export function inFlightLine(project: Pick<ProjectView, 'runtime' | 'seats'>, now = Date.now()): string | undefined {
+  const lines = project.runtime?.inFlight ?? [];
+  const [first] = lines;
+  if (first === undefined) return undefined;
+  const peer = project.seats.find(seat => seat.agentId === first.peerAgentId);
+  const more = (project.runtime?.active ?? lines.length) - 1;
+  return `“${first.gist}” ${assignmentActivity(first, peer, now)}${more > 0 ? ` · +${String(more)} more` : ''}`;
+}
+
+/**
+ * What a Peer's assignment adds to its row: where the assignment stands when the state pill does not
+ * already say it (*handed back*, *gate running*), led by its gist when the Peer's title lacks it.
+ */
+export function peerDoing(seat: SeatView, assignment: AssignmentLine, now = Date.now()): string | undefined {
+  const doing = assignmentActivity(assignment, seat, now);
+  const named = seat.title?.includes(assignment.gist) === true;
+  if (doing === seatActivity(seat, now)) return named ? undefined : `“${assignment.gist}”`;
+  return named ? sentence(doing) : `“${assignment.gist}” ${doing}`;
+}
+
+/** An assignment's state as a reader says it. */
+export const ASSIGNMENT_WORDS: Readonly<Record<string, string>> = {
+  draft: 'not dispatched', dispatching: 'starting', active: 'working', questioned: 'asked a question', blocked: 'stopped', 'handed-back': 'handed back',
+  rework: 'reworking', 'awaiting-permission': 'waits on a permission', accepted: 'accepted', rejected: 'rejected', abandoned: 'abandoned', uncertain: 'uncertain',
+};
+
 export const STATE_LABEL: Readonly<Record<string, string>> = { running: 'working', idle: 'idle', permission: 'needs permission', closed: 'asleep', archived: 'archived' };
 
 /** "Claude" for `claude-lead/claude-opus-5`. */
@@ -176,7 +223,7 @@ export const providerLabel = (provider: string): string => agentLabel(provider.s
  * A project in one line — `Lead idle · 1 of 2 Peers working · 3 open · 1 waiting on Lead` — naming a
  * missing Supervisor only while nothing else would.
  */
-export function projectSummary(project: ProjectView): string {
+export function projectSummary(project: ProjectView, now = Date.now()): string {
   const parts: string[] = [];
   if (project.seats.length === 0) {
     parts.push('No live seats');
@@ -185,7 +232,7 @@ export function projectSummary(project: ProjectView): string {
     const peers = project.seats.filter(seat => seat.role === 'peer');
     const working = peers.filter(seat => seat.state === 'running' || seat.state === 'permission').length;
     const [lead] = leads;
-    parts.push(lead === undefined ? 'No Lead' : leads.length > 1 ? `${String(leads.length)} Leads` : `Lead ${STATE_LABEL[lead.state] ?? lead.state}`);
+    parts.push(lead === undefined ? 'No Lead' : leads.length > 1 ? `${String(leads.length)} Leads` : `Lead ${seatActivity(lead, now)}`);
     if (peers.length > 0) parts.push(working > 0 ? `${String(working)} of ${String(peers.length)} Peer${peers.length === 1 ? '' : 's'} working` : `${String(peers.length)} Peer${peers.length === 1 ? '' : 's'} idle`);
   }
   const open = openCount(project);

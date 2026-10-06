@@ -32,3 +32,20 @@ export interface LetterTally {
   /** Set when a day file was too large to read back, so the counts are short. */
   readonly partial?: true;
 }
+
+/**
+ * One assignment as the room and a seat's view list it (panel delta 2026-10-02): what it is for,
+ * where it stands, its Peer and its latest runtime gate.
+ */
+export interface AssignmentLine {
+  readonly id: string;
+  readonly gist: string;
+  readonly kind: string;
+  readonly state: string;
+  readonly createdAt?: string;
+  readonly updatedAt?: string;
+  readonly settledAt?: string;
+  readonly isolated?: boolean;
+  readonly peerAgentId?: string;
+  readonly gate?: 'running' | 'passed' | 'failed' | 'unknown';
+}

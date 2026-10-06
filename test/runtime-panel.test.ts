@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
-  accountLetters, accountLine, byDay, finishedAssignments, lastActivity, lettersLine, openAssignments, projectStatus, projectSummary, sortProjects, titleNamesRole, workplace,
+  accountLetters, accountLine, assignmentActivity, byDay, finishedAssignments, inFlightLine, lastActivity, lettersLine, openAssignments, peerDoing, projectStatus, projectSummary, seatActivity,
+  sortProjects, titleNamesRole, workplace,
   type AssignmentEntry, type ProjectView, type SeatView,
 } from '../src/runtime-plugin/client/model.js';
 import { dayLabel, duration, whenLabel } from '../src/runtime-plugin/client/time.js';
@@ -96,6 +97,28 @@ describe('what the panel reads from a ledger', () => {
     // A draft is undecided, as the project's Open tab counts it, but not yet work in flight.
     expect(again?.runtime).toMatchObject({ assignments: 2, active: 1, undecided: 2, waiting: 1 });
   });
+  it('names each project\'s work in flight in the room, and a Lead\'s and a Peer\'s assignments in their seat views', async () => {
+    const h = await harness();
+    open.push(h);
+    const attention = new AttentionEngine({
+      paseo: h.paseo, recognition: h.hooks.recognition, git: h.controller.deps.git, runtimeRoot: h.runtimeRoot,
+      now: () => new Date(), settings: () => DEFAULT_ATTENTION_SETTINGS, log: () => undefined,
+    });
+    const rpc = createRpcHandlers({ controller: h.controller, recovery: new Recovery(h.controller), handle: new PaseoHandle(), attention });
+    const { id, peer } = await dispatchAndHandBack(h, writableBrief(h.base));
+    await h.controller.createAssignment(h.lead, writableBrief(h.base));
+    const [project] = data(await rpc.room()).projects as { runtime?: { inFlight: unknown[] } }[];
+    // A draft is not in flight.
+    expect(project?.runtime?.inFlight).toEqual([
+      { id, gist: expect.any(String) as unknown, kind: expect.any(String) as unknown, state: 'handed-back', peerAgentId: peer, createdAt: expect.any(String) as unknown, updatedAt: expect.any(String) as unknown, isolated: false },
+    ]);
+
+    const lead = data(await rpc.seatView({ agentId: h.lead.agentId }));
+    expect(lead).toMatchObject({ seat: { role: 'lead' }, projectId: (await h.controller.projectFor(h.repo)).meta.projectId, assignments: [{ id, state: 'handed-back' }] });
+    const worker = data(await rpc.seatView({ agentId: peer }));
+    expect(worker).toMatchObject({ seat: { role: 'peer' }, assignments: [{ id, peerAgentId: peer }] });
+    expect((await rpc.seatView({ agentId: 'nobody' }) as { error?: { code: string } }).error?.code).toBe('seat_unknown');
+  });
 });
 
 describe('letters over the last day', () => {
@@ -174,6 +197,31 @@ describe('the panel\'s lists', () => {
     expect(projectSummary(project('a', { runtime: { ...record, active: 0, waiting: 0 } }))).toBe('No live seats · 12 assignments recorded');
     expect(projectSummary(project('a', { runtime: { ...record, active: 1, undecided: 1, waiting: 1 } }))).toBe('No live seats · 1 open · 1 waiting on Lead');
     expect(projectSummary(project('a', { supervisor: sup, runtime: { ...record, active: 2, undecided: 3, waiting: 0 }, seats: [seat('lead-1', 'lead')] }))).toBe('Lead idle · 3 open');
+  });
+
+  it('says how long a running turn has run, and what each project\'s work in flight is doing', () => {
+    const now = Date.parse('2026-10-02T10:00:00.000Z');
+    const running = { state: 'running', turnStartedAt: '2026-10-02T09:46:00.000Z' };
+    expect(seatActivity(seat('lead-1', 'lead', running), now)).toBe('working 14 min');
+    expect(seatActivity(seat('lead-1', 'lead', { state: 'idle', turnStartedAt: '2026-10-02T09:46:00.000Z' }), now)).toBe('idle');
+    expect(projectSummary(project('a', { supervisor: seat('sup-1', 'supervisor'), seats: [seat('lead-1', 'lead', running)] }), now)).toBe('Lead working 14 min');
+
+    const line = { id: 'asg_1', gist: 'Fix Redis eviction', kind: 'engineer', state: 'active', peerAgentId: 'peer-1' };
+    expect(assignmentActivity(line, seat('peer-1', 'peer', running), now)).toBe('working 14 min');
+    expect(assignmentActivity({ ...line, gate: 'running' }, seat('peer-1', 'peer', running), now)).toBe('gate running');
+    expect(assignmentActivity({ ...line, state: 'handed-back' }, seat('peer-1', 'peer'), now)).toBe('handed back');
+    const busy = project('a', { seats: [seat('peer-1', 'peer', running)], runtime: { ...record, active: 3, inFlight: [line, { ...line, id: 'asg_2', peerAgentId: 'peer-2' }] } });
+    expect(inFlightLine(busy, now)).toBe('“Fix Redis eviction” working 14 min · +2 more');
+    expect(inFlightLine(project('a', { runtime: { ...record, active: 0, inFlight: [] } }), now)).toBeUndefined();
+    expect(inFlightLine(project('a'), now)).toBeUndefined();
+
+    // An active assignment is as far as its Peer's turn; a Peer row adds only what its pill and title do not say.
+    expect(assignmentActivity(line, seat('peer-1', 'peer'), now)).toBe('idle');
+    const titled = seat('peer-1', 'peer', { ...running, title: 'Engineer · Fix Redis eviction · asg_1' });
+    expect(peerDoing(titled, line, now)).toBeUndefined();
+    expect(peerDoing(seat('peer-1', 'peer', running), line, now)).toBe('“Fix Redis eviction”');
+    expect(peerDoing({ ...titled, state: 'idle' }, { ...line, state: 'handed-back' }, now)).toBe('Handed back');
+    expect(peerDoing(seat('peer-1', 'peer'), { ...line, gate: 'running' }, now)).toBe('“Fix Redis eviction” gate running');
   });
 
   it('lists projects by status, then the most recently active first', () => {
