@@ -83,6 +83,8 @@ a Human-boundary question to Human, or record the letter as noise.
 Do not direct a Peer because of a letter. Do not re-check a project without a new letter
 or a Human request: waiting is the runtime's job, and polling is the failure the letters
 replace. When Lead's message is a question for Human, relay it without answering it.
+When Human answers a question Lead asked, send that answer to Lead with message_lead at once;
+do not hold it for another answer.
 
 ## Lead Succession
 
