@@ -49,6 +49,14 @@ export interface AgentPlan {
   readonly providerEnv?: Readonly<Partial<Record<Role, Readonly<Record<string, string>>>>>;
 }
 /**
+ * An operator-installed Pi package the Human chose to load in some roles
+ * (docs/design/pi-seat-extensions.md PX-D1).
+ */
+export interface PiExtensionChoice {
+  readonly package: string;
+  readonly roles: readonly Role[];
+}
+/**
  * Per-run choices that change what an adapter generates. Kept as one object so adding a
  * future agent option does not change the seam again.
  */
@@ -59,6 +67,8 @@ export interface BuildOptions {
    * Claude carrier and keeps the operator's global memory.
    */
   readonly memoryContract?: boolean;
+  /** Pi packages loaded as explicit extensions, per role; never installed by the room. */
+  readonly piExtensions?: readonly PiExtensionChoice[];
 }
 export interface Agent {
   readonly id: AgentId;

@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import { z } from 'zod';
 import { readIfPresent } from './fsops.js';
+import type { PiExtensionChoice } from './agents/types.js';
 import type { Layout } from './layout.js';
 import { AGENT_IDS, ROLES, type AgentId, type Role } from './roles.js';
 
@@ -27,6 +28,11 @@ const markerSchema = z.object({
    * marker written before runtime existed keeps parsing and keeps its behaviour.
    */
   runtime: z.strictObject({ enabled: z.literal(true), generation: z.string().min(1), schema: z.literal(1) }).optional(),
+  /**
+   * Pi packages this room loads as explicit seat extensions (docs/design/pi-seat-extensions.md).
+   * Missing means none, so a marker written before the option existed keeps its behaviour.
+   */
+  piExtensions: z.array(z.strictObject({ package: z.string().min(1), roles: z.array(z.enum(ROLES)).min(1) })).min(1).optional(),
 });
 export type Marker = z.infer<typeof markerSchema>;
 export type RuntimeMarker = NonNullable<Marker['runtime']>;
@@ -39,6 +45,7 @@ export function renderMarker(
   contract?: string,
   claudeMemoryContract?: boolean,
   runtime?: RuntimeMarker,
+  piExtensions?: readonly PiExtensionChoice[],
 ): string {
   return JSON.stringify({
     version, agents: [...agents], roles: [...roles],
@@ -46,6 +53,9 @@ export function renderMarker(
     // Written only when it differs from the default, so an unchanged room's marker is unchanged.
     ...(claudeMemoryContract === false ? { claudeMemoryContract: false } : {}),
     ...(runtime === undefined ? {} : { runtime }),
+    ...(piExtensions === undefined || piExtensions.length === 0 ? {} : {
+      piExtensions: piExtensions.map(choice => ({ package: choice.package, roles: [...choice.roles] })),
+    }),
   } satisfies Marker, null, 2) + '\n';
 }
 

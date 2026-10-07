@@ -3,8 +3,8 @@ import { lstat, rm } from 'node:fs/promises';
 import metadata from '../package.json' with { type: 'json' };
 import { claudeAgent } from './agents/claude.js';
 import { codexAgent } from './agents/codex.js';
-import { piAgent } from './agents/pi.js';
-import type { Agent, AgentPlan, BuildOptions, Profile, Provider } from './agents/types.js';
+import { normalizePiExtensions, piAgent } from './agents/pi.js';
+import type { Agent, AgentPlan, BuildOptions, PiExtensionChoice, Profile, Provider } from './agents/types.js';
 import { AUTHENTICATION_GUIDE, renderAuthenticationGuide } from './auth.js';
 import { applyEntries, exists, planEntries, type Entry } from './fsops.js';
 import { layoutChecks, resolveLayout, roleHome, sharedRoom, type Layout, type Options } from './layout.js';
@@ -35,6 +35,8 @@ export interface RunOptions extends Options {
   readonly claudeMemoryContract?: boolean;
   /** Opt in to runtime coordination (preview). A per-run setup choice, recorded in the marker. */
   readonly runtime?: boolean;
+  /** Operator-installed Pi packages to load per role (docs/design/pi-seat-extensions.md). Per-run, recorded. */
+  readonly piExtensions?: readonly PiExtensionChoice[];
   readonly env?: NodeJS.ProcessEnv;
   readonly factory?: ClientFactory;
 }
@@ -181,7 +183,7 @@ async function buildDesired(
     entries.push(...runtimePluginEntries(layout, agents, roles));
     runtime = { enabled: true, generation: renderRuntimeManifest(agents, roles).roomGeneration, schema: 1 };
   }
-  entries.push({ kind: 'file', path: join(layout.roomHome, MARKER), content: renderMarker(metadata.version, agents, roles, contractDigest(), markerMemoryContract(agents, build.memoryContract ?? true), runtime) });
+  entries.push({ kind: 'file', path: join(layout.roomHome, MARKER), content: renderMarker(metadata.version, agents, roles, contractDigest(), markerMemoryContract(agents, build.memoryContract ?? true), runtime, markerPiExtensions(agents, build.piExtensions)) });
   return { entries, providers, profiles, checks, plugins, ...(runtime === undefined ? {} : { runtime }) };
 }
 
@@ -494,6 +496,27 @@ async function runtimeRemovalWarning(layout: Layout): Promise<Check[]> {
     'Export it first with: paseo-room export --out <dir>')];
 }
 
+/** Only a room that seats Pi records Pi extensions; an empty selection records nothing. */
+function markerPiExtensions(agents: readonly AgentId[], choices: readonly PiExtensionChoice[] | undefined): PiExtensionChoice[] | undefined {
+  if (!agents.includes('pi') || choices === undefined || choices.length === 0) return undefined;
+  return normalizePiExtensions(choices);
+}
+
+/** PX-D1: a later setup without --pi-extension drops what the room loaded, and says so. */
+function piExtensionChanges(previous: Marker | undefined, agents: readonly AgentId[], choices: readonly PiExtensionChoice[]): Check[] {
+  const before = previous?.agents.includes('pi') === true ? previous.piExtensions ?? [] : [];
+  const now = markerPiExtensions(agents, choices) ?? [];
+  const removed = before.flatMap(choice => {
+    const kept = now.find(item => item.package === choice.package)?.roles ?? [];
+    const dropped = choice.roles.filter(role => !kept.includes(role));
+    return dropped.length === 0 ? [] : [`${choice.package} (${dropped.join(', ')})`];
+  });
+  const keep = before.map(choice => `--pi-extension ${choice.package}=${choice.roles.join(',')}`).join(' ');
+  return removed.length === 0 ? [] : [warn('pi.extensions-removed',
+    `This setup removes Pi extensions the room loaded before: ${removed.join('; ')}.`,
+    `To keep them, run setup again with: ${keep}`)];
+}
+
 /**
  * The marker value for the Claude memory-contract choice. A room with no Claude seat records
  * nothing: the choice only describes Claude's `CLAUDE.md`, and storing it anyway would leave
@@ -520,8 +543,12 @@ export async function setup(options: RunOptions = {}): Promise<Result> {
   const layout = resolveLayout(options, options.env);
   const agents = options.agents ?? ['codex'];
   const memoryContract = options.claudeMemoryContract ?? true;
+  const piExtensions = options.piExtensions ?? [];
   const invalid = layoutChecks(layout, agents);
   if (invalid.length > 0) return failed('setup', invalid);
+  if (piExtensions.length > 0 && !agents.includes('pi')) {
+    return failed('setup', [fail('pi.extension-without-pi', '--pi-extension selects Pi packages, but this setup does not seat Pi.', 'Add --agent pi, or drop --pi-extension.')]);
+  }
   const rootSafety = await roomPathSafety(layout, [], []);
   if (hasFailure(rootSafety)) return failed('setup', rootSafety);
   const previous = await readMarker(layout);
@@ -533,7 +560,7 @@ export async function setup(options: RunOptions = {}): Promise<Result> {
   const runtime = options.runtime === true;
   const daemon = await checkDaemon(layout, options.env, minimumPaseoVersion(compatibilityAgents, runtime || previous?.runtime?.enabled === true));
   if (!daemon.daemon) return failed('setup', daemon.checks);
-  const desired = await buildDesired(layout, agents, ROLES, { memoryContract, runtime });
+  const desired = await buildDesired(layout, agents, ROLES, { memoryContract, runtime, piExtensions });
   const stale = await staleFrom(layout, previous, agents, ROLES, runtime);
   const runtimeChecks = stale.removePlugins.some(spec => spec.id === RUNTIME_PLUGIN_ID) ? await runtimeDeselectionCheck(layout) : [];
   const retained = stale.retainedDirectories.length === 0 ? [] : [warn(
@@ -541,7 +568,7 @@ export async function setup(options: RunOptions = {}): Promise<Result> {
     `Preserved ${String(stale.retainedDirectories.length)} deselected role homes because they may contain role-owned credentials or runtime state.`,
     `Use paseo-room remove --apply to delete the entire room after reviewing its credential warning, or remove deselected homes manually: ${stale.retainedDirectories.join(', ')}`,
   )];
-  const checks = [...daemon.checks, ...runtimeChecks, ...desired.checks, ...retained];
+  const checks = [...daemon.checks, ...runtimeChecks, ...desired.checks, ...retained, ...piExtensionChanges(previous, agents, piExtensions)];
   if (hasFailure(checks)) return failed('setup', checks);
 
   return withSession(daemon.daemon, async session => {
@@ -577,10 +604,12 @@ export async function setup(options: RunOptions = {}): Promise<Result> {
     await session.refresh(ids);
     const pluginChecks = await reconcilePlugins(session, desired, stale, plan, pending);
     await applyEntries(markerEntries);
+    const appliedPiExtensions = markerPiExtensions(agents, piExtensions);
     const appliedMarker: Marker = {
       version: metadata.version, agents: [...agents], roles: [...ROLES], contract: contractDigest(),
       ...(markerMemoryContract(agents, memoryContract) === false ? { claudeMemoryContract: false } : {}),
       ...(desired.runtime === undefined ? {} : { runtime: desired.runtime }),
+      ...(appliedPiExtensions === undefined ? {} : { piExtensions: appliedPiExtensions.map(choice => ({ package: choice.package, roles: [...choice.roles] })) }),
     };
     const appliedChecks = [...checks, ...pluginPreconditions, ...pluginChecks,
       pass('room.applied', `Room ready at ${layout.roomHome} with ${String(ids.length)} Paseo providers.`),
@@ -612,6 +641,7 @@ export async function verify(options: RunOptions = {}): Promise<Result> {
     // The room's own recorded choices, so verify compares against what setup wrote.
     memoryContract: marker.claudeMemoryContract ?? true,
     runtime,
+    ...(marker.piExtensions === undefined ? {} : { piExtensions: marker.piExtensions }),
   });
   const runtimeChecks = runtime ? [marker.runtime?.generation === desired.runtime?.generation
     ? pass('runtime.generation', `Runtime manifest generation ${String(desired.runtime?.generation)} matches this package.`)

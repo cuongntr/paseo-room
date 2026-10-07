@@ -1,6 +1,8 @@
 import * as clack from '@clack/prompts';
 import { AGENTS, remove, setup, verify, type RunOptions } from './commands.js';
+import { resolveLayout } from './layout.js';
 import type { Result } from './result.js';
+import { readMarker } from './room.js';
 import { AGENT_IDS, type AgentId } from './roles.js';
 
 export interface Prompts {
@@ -59,6 +61,23 @@ export async function runWizard(
     if (typeof carrier === 'symbol') return cancelled();
     claudeMemoryContract = carrier === 'both';
   }
+  // Pi extensions are chosen with --pi-extension; the wizard only offers to keep what the room has.
+  let piExtensions = options.piExtensions;
+  const recorded = agents.includes('pi') && piExtensions === undefined
+    ? (await readMarker(resolveLayout(options, options.env)))?.piExtensions ?? []
+    : [];
+  if (recorded.length > 0) {
+    const listed = recorded.map(choice => `${choice.package} (${choice.roles.join(', ')})`).join('; ');
+    const keep = await prompts.select({
+      message: `Pi seats load these extensions: ${listed}. Keep them?`,
+      options: [
+        { value: 'keep', label: 'Yes — keep loading them (recommended)' },
+        { value: 'drop', label: 'No — start Pi seats with the MCP adapter only' },
+      ],
+    });
+    if (typeof keep === 'symbol') return cancelled();
+    if (keep === 'keep') piExtensions = recorded;
+  }
   // Runtime coordination is an explicit opt-in, never a default: it installs trusted plugin code.
   const coordination = await prompts.select({
     message: 'Runtime coordination (preview): track assignments, Peer reports and writer ownership through a trusted Paseo plugin?',
@@ -68,7 +87,11 @@ export async function runWizard(
     ],
   });
   if (typeof coordination === 'symbol') return cancelled();
-  const setupOptions = { ...options, agents, claudeMemoryContract, ...(coordination === 'runtime' ? { runtime: true } : {}) };
+  const setupOptions = {
+    ...options, agents, claudeMemoryContract,
+    ...(coordination === 'runtime' ? { runtime: true } : {}),
+    ...(piExtensions === undefined ? {} : { piExtensions }),
+  };
   const preview = await setup(setupOptions);
   const status = emit(preview);
   if (preview.outcome !== 'changes-planned') return status;

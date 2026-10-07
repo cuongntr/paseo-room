@@ -560,17 +560,30 @@ thinking choices. It extends Paseo's core `pi` provider, never OMP. The provider
 a role-specific argv tail:
 
 ```text
---no-extensions --extension <canonical adapter entry> --no-approve
+--no-extensions --extension <canonical adapter entry>
+[--extension <canonical entry of each selected package>] --no-approve
 --append-system-prompt <role APPEND_SYSTEM.md>
 ```
 
 Paseo itself appends a generated temporary integration extension. The room neither resolves
-nor creates that file and includes only one explicit `--extension`: `pi-mcp-adapter` from the
-operator Pi home's fixed global npm location. Before any plan can proceed, the adapter checks
+nor creates that file. Its first explicit `--extension` is always `pi-mcp-adapter` from the
+operator Pi home's fixed global npm location; the others are packages the Human selected per
+role with `--pi-extension`, resolved from the same place under the same containment rules,
+recorded in `room.json`, and never installed
+([pi-seat-extensions.md](design/pi-seat-extensions.md)). Every Pi provider also pins
+`PASEO_ROOM_ROLE=<role>`, which lets an extension switch off what does not belong in a seat. Before any plan can proceed, the adapter checks
 the manifest name, resolves its single `pi.extensions` entry, canonicalises package root and
 entry, and requires the entry to be a regular file contained by that root. Adapter version is
 reported only as a diagnostic: peer ranges, exact versions, digests, compatibility matrices
 and allowlists are deliberately not policy.
+
+Pi 1.0 ships a built-in `mcp` extension, and it is not a substitute. Paseo (checked on 0.10.3)
+gives a Pi session its MCP servers only after it finds an extension `/mcp` command whose source
+names `pi-mcp-adapter`, and then passes them in a merged file through `--mcp-config`, a flag only
+the adapter defines. A seat without the adapter would start with no Paseo tools at all, so a
+missing adapter stays a failure, and its fix names the exact `pi install npm:pi-mcp-adapter`
+command. The seat argv's `--no-extensions` also disables Pi's built-in extensions, so the two
+`/mcp` commands never meet inside a seat.
 
 The provider also pins `PI_MCP_CONFIG_MODE=exclusive`. This is separate from Pi's
 `--no-extensions`: the adapter has its own eager config discovery and can otherwise load
@@ -579,9 +592,11 @@ leaves the role-specific `PI_CODING_AGENT_DIR/mcp.json` available and excludes t
 sources.
 
 Path evidence alone does not prove Pi loaded the capability. A shell-free child process runs
-offline with `PI_CODING_AGENT_DIR=/dev/null`, `PI_MCP_CONFIG_MODE=exclusive`, `--mode rpc`,
-`--no-session` and the same strict extension/trust flags from a fresh empty temporary working
-directory. The probe also sets `HOME` to that directory, and removes it afterwards, so neither
+offline with `PI_MCP_CONFIG_MODE=exclusive`, `PASEO_ROOM_ROLE=lead`, `--mode rpc`,
+`--no-session` and the same strict extension/trust flags, loading the adapter and every selected
+extension, from a fresh empty temporary working directory. `PI_CODING_AGENT_DIR` is an empty
+directory inside it rather than `/dev/null`, because a selected extension may write its log
+under the agent directory. The probe also sets `HOME` to that directory, and removes it afterwards, so neither
 generic global nor caller-project MCP discovery can reach operator inputs. Input is one
 correlated `get_commands` JSONL request; valid UI events are ignored, output and runtime are
 capped, and malformed output or process failure fails. The response must contain exactly one

@@ -6,6 +6,8 @@ import { exportRuntime } from './export.js';
 import { ManagedPathError } from './fsops.js';
 import { renderHuman, renderJson } from './render.js';
 import { exitCode, fail, failed, type Result } from './result.js';
+import { parsePiExtensionSpec } from './agents/pi.js';
+import type { PiExtensionChoice } from './agents/types.js';
 import { AGENT_IDS, type AgentId } from './roles.js';
 import { PromptAssetError } from './room/prompts.js';
 import { SkillAssetError } from './room/skills.js';
@@ -30,6 +32,15 @@ function collectAgent(value: string, previous: AgentId[] | undefined): AgentId[]
   return seated.includes(agent) ? seated : [...seated, agent];
 }
 
+/** Each value is one package selection; a malformed one stops parsing with its own message. */
+function collectPiExtension(value: string, previous: PiExtensionChoice[] | undefined): PiExtensionChoice[] {
+  try {
+    return [...(previous ?? []), parsePiExtensionSpec(value)];
+  } catch (error) {
+    throw new InvalidArgumentError(error instanceof Error ? error.message : String(error));
+  }
+}
+
 const PATH_FLAGS = ['roomHome', 'codexHome', 'claudeHome', 'piHome', 'codexBin', 'claudeBin', 'piBin', 'paseoBin'] as const;
 
 function optionsFrom(raw: Record<string, unknown>, base: RunOptions): RunOptions {
@@ -44,6 +55,7 @@ function optionsFrom(raw: Record<string, unknown>, base: RunOptions): RunOptions
     // Commander defaults a --no- flag to true, so only an explicit opt-out is carried.
     ...(raw.claudeMemoryContract === false ? { claudeMemoryContract: false } : {}),
     ...(raw.runtime === true ? { runtime: true } : {}),
+    ...(Array.isArray(raw.piExtension) && raw.piExtension.length > 0 ? { piExtensions: raw.piExtension as PiExtensionChoice[] } : {}),
   };
 }
 
@@ -119,6 +131,7 @@ export async function runCli(argv: readonly string[], output: Output, context: C
     .option('--json', 'machine-readable output')
     .option('--no-claude-memory-contract', 'omit the role contract from Claude role CLAUDE.md files, leaving the room plugin as the only Claude carrier')
     .option('--runtime', 'opt in to runtime coordination (preview): installs the trusted paseo-room-runtime plugin; omit it to deselect')
+    .option('--pi-extension <package[=roles]>', 'load an operator-installed Pi package in Pi seats; roles default to supervisor,lead (peer only when named); repeat for more', collectPiExtension)
     .option('--out <dir>', 'export: destination directory (default: a new directory under the room\'s runtime exports)')
     .option('--include-gate-output', 'export: also copy bounded gate output tails (best-effort masked)')
     .option('--room-home <path>', 'where role homes are written (default: ~/.paseo-room)')
@@ -161,6 +174,10 @@ export async function runCli(argv: readonly string[], output: Output, context: C
     }
     if (raw.runtime === true && (command === 'verify' || command === 'remove' || command === 'export')) {
       output.stderr(`paseo-room ${command}: --runtime is a setup choice recorded in the room marker; ${command} reads it from there.\n`);
+      return 2;
+    }
+    if (raw.piExtension !== undefined && command !== 'setup') {
+      output.stderr(`paseo-room ${command}: --pi-extension is a setup choice recorded in the room marker; ${command} reads it from there.\n`);
       return 2;
     }
     if (command === 'auth') {

@@ -54,7 +54,10 @@ That design is in git history before the `v2` rewrite. Do not reintroduce it.
   add an agent adapter, close its equivalent before shipping it.
 - **Pi adapters are explicit and authenticated.** Resolve only the operator Pi home's global
   `pi-mcp-adapter`, require canonical package containment, and prove `/mcp` attribution with
-  the bounded offline RPC probe. Never install or upgrade Pi or the adapter.
+  the bounded offline RPC probe. Never install or upgrade Pi or the adapter. Further Pi
+  extensions load only as explicit `--pi-extension` choices per role, from the same global
+  location under the same containment rules; a missing one warns, never installs, and Peer gets
+  one only when named ([docs/design/pi-seat-extensions.md](docs/design/pi-seat-extensions.md)).
 - **Peer never gets room tools.** `ROLE_PASEO_TOOLS` in `src/roles.ts` is the single source
   of that rule, and it must stay a single call site. Peer's narrower resource set follows from
   the same principle and lives in `src/agents/resources.ts`; it is capability hygiene, not

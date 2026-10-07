@@ -85,8 +85,11 @@ starts, its exit code is preserved; a signal is returned using the conventional
   query Keychain state, and reports older-runtime Keychain isolation as unverifiable. See
   Anthropic's [credential-management reference](https://code.claude.com/docs/en/authentication#credential-management).
 - An initialised Pi home (`~/.pi/agent`) and an operator-installed global
-  `pi-mcp-adapter` package under its `npm/node_modules`. The package version is diagnostic,
-  not a compatibility constraint. The room never installs or upgrades Pi or the adapter.
+  `pi-mcp-adapter` package under its `npm/node_modules` (`pi install npm:pi-mcp-adapter`). The
+  package version is diagnostic, not a compatibility constraint. Pi 1.0's built-in MCP extension
+  does not replace it: Paseo gives a Pi seat its MCP servers only through the adapter, which it
+  recognises by name and configures with the adapter's own `--mcp-config` flag. The room never
+  installs or upgrades Pi or the adapter; setup stops with that install command instead.
 
 ## What gets created
 
@@ -285,17 +288,35 @@ but what the model actually reads is not proven, and `CLAUDE.md` is what covers 
 Pi providers use a strict command tail:
 
 ```text
---no-extensions --extension <canonical pi-mcp-adapter entry> --no-approve
+--no-extensions --extension <canonical pi-mcp-adapter entry>
+[--extension <canonical entry of each selected package>] --no-approve
 --append-system-prompt <role APPEND_SYSTEM.md>
 ```
+
+Each Pi provider also pins `PASEO_ROOM_ROLE=<role>`, so an extension can tell it runs as a
+seat. To load more of your own installed Pi packages in the seats, select them at setup:
+
+```bash
+paseo-room setup --agent pi --pi-extension pi-blackbytes --pi-extension pi-provider-kiro=supervisor,lead,peer --apply
+```
+
+Roles default to `supervisor,lead`; Peer gets an extension only when named, with a warning.
+Packages load only from your Pi home's `npm/node_modules`, with the same containment checks
+as the adapter; package prompts, skills and themes are not loaded. A package that is not
+installed is a warning with its `pi install npm:<package>` command and the seat starts without
+it; the room never installs one. Selecting a package states that it opens no second
+multi-agent path in a seat (`pi-blackbytes` 3.1.0 turns its sub-agents off when
+`PASEO_ROOM_ROLE` is set). The choice is recorded in `room.json`; a later `setup` without the
+flag removes the extensions and warns which ones. See
+[docs/design/pi-seat-extensions.md](docs/design/pi-seat-extensions.md).
 
 This is Paseo's core `pi` provider, not an OMP provider or compatibility layer.
 Paseo appends and owns its own generated temporary integration extension; `paseo-room` does
 not resolve, create or include it. Before planning any writes, the room validates the exact
 global package identity and canonical entry containment, then runs one bounded offline Pi RPC
-`get_commands` probe with `PI_CODING_AGENT_DIR=/dev/null`,
-`PI_MCP_CONFIG_MODE=exclusive`, and `HOME` set to a fresh temporary working directory that is
-removed afterwards. This prevents adapter startup from selecting operator-global or caller
+`get_commands` probe that loads the adapter and every selected extension, with
+`PI_MCP_CONFIG_MODE=exclusive`, `PASEO_ROOM_ROLE=lead`, `HOME` set to a fresh temporary working
+directory that is removed afterwards, and `PI_CODING_AGENT_DIR` an empty directory inside it. This prevents adapter startup from selecting operator-global or caller
 project MCP configs during the probe. The correlated response must
 attribute `/mcp` to `source: "extension"` at that same canonical path. Missing, malformed,
 path-escaped or wrongly attributed adapters fail closed. The probe and setup do not write the

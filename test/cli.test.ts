@@ -411,11 +411,50 @@ describe('Pi rooms', () => {
       expect(provider.env).toMatchObject({
         PI_CODING_AGENT_DIR: join(fixture.roomHome, `roles/pi/${role}`),
         PI_MCP_CONFIG_MODE: 'exclusive',
+        PASEO_ROOM_ROLE: role,
       });
     }
     expect(peer.paseoTools.enabled).toBe(false);
     expect((daemon.providers['pi-lead'] as { paseoTools: { enabled: boolean } }).paseoTools.enabled).toBe(true);
     for (const profile of daemon.agentProfiles) expect(profile.modeId).toBeUndefined();
+  });
+
+  it('loads selected Pi packages per role, records them, verifies them, and warns when a later setup drops them', async () => {
+    const fixture = await makeFixture();
+    const daemon = emptyDaemon();
+    const root = join(fixture.home, '.pi/agent/npm/node_modules/pi-blackbytes');
+    await mkdir(join(root, 'dist'), { recursive: true });
+    await writeFile(join(root, 'package.json'), JSON.stringify({ name: 'pi-blackbytes', version: '3.1.0', pi: { extensions: ['./dist/index.js'] } }));
+    await writeFile(join(root, 'dist/index.js'), 'export default function () {}\n');
+    const entry = await realpath(join(root, 'dist/index.js'));
+    const base = ['--agent', 'pi', '--pi-home', join(fixture.home, '.pi/agent'), '--pi-bin', join(fixture.home, 'bin/pi')];
+
+    const applied = await run(['setup', ...base, '--pi-extension', 'pi-blackbytes', '--apply'], fixture.env, daemon);
+    expect(applied.code).toBe(0);
+    expect((daemon.providers['pi-lead'] as { command: string[] }).command).toContain(entry);
+    expect((daemon.providers['pi-supervisor'] as { command: string[] }).command).toContain(entry);
+    expect((daemon.providers['pi-peer'] as { command: string[] }).command).not.toContain(entry);
+    const marker = JSON.parse(await readFile(join(fixture.roomHome, 'room.json'), 'utf8')) as { piExtensions: unknown };
+    expect(marker.piExtensions).toEqual([{ package: 'pi-blackbytes', roles: ['supervisor', 'lead'] }]);
+
+    const verified = await run(['verify', '--json', '--pi-home', join(fixture.home, '.pi/agent'), '--pi-bin', join(fixture.home, 'bin/pi')], fixture.env, daemon);
+    expect((JSON.parse(verified.out) as { outcome: string }).outcome).toBe('ok');
+    expect((await run(['verify', '--pi-extension', 'pi-blackbytes'], fixture.env, daemon)).code).toBe(2);
+
+    const dropped = await run(['setup', ...base, '--json'], fixture.env, daemon);
+    const checks = (JSON.parse(dropped.out) as { checks: { id: string; status: string; message: string; fix?: string }[] }).checks;
+    const removed = checks.find(check => check.id === 'pi.extensions-removed');
+    expect(removed?.status).toBe('warn');
+    expect(removed?.fix).toContain('--pi-extension pi-blackbytes=supervisor,lead');
+  });
+
+  it('refuses a Pi package selection without Pi, and a malformed one', async () => {
+    const fixture = await makeFixture();
+    const daemon = emptyDaemon();
+    const withoutPi = await run(['setup', '--agent', 'codex', '--pi-extension', 'pi-blackbytes'], fixture.env, daemon);
+    expect(withoutPi.code).not.toBe(0);
+    expect(withoutPi.out).toContain('does not seat Pi');
+    expect((await run(['setup', '--agent', 'pi', '--pi-extension', 'pi-blackbytes=writer'], fixture.env, daemon)).code).toBe(2);
   });
 
   it('runs Pi setup as a write-free dry run', async () => {

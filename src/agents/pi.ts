@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdtemp, readFile, realpath, rm, stat } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import {
@@ -11,15 +11,15 @@ import type { Entry } from '../fsops.js';
 import { existingPaths } from '../fsops.js';
 import type { Layout } from '../layout.js';
 import { contains, roleHome } from '../layout.js';
-import { fail, pass, type Check } from '../result.js';
-import type { Role } from '../roles.js';
+import { fail, pass, warn, type Check } from '../result.js';
+import { ROLES, type Role } from '../roles.js';
 import { renderInstructions } from '../room/instructions.js';
 import { loadPromptAsset } from '../room/prompts.js';
 import { which } from '../which.js';
 import { jsonServerTable, paseoMcpCheck } from './mcp.js';
 import { roleResourceEntries } from './resources.js';
 import { leadSkillProjection, ROOM_SKILL_NAME, roomSkillSource } from '../room/skills.js';
-import type { Agent, AgentPlan } from './types.js';
+import type { Agent, AgentPlan, BuildOptions, PiExtensionChoice } from './types.js';
 
 const PACKAGE_NAME = 'pi-mcp-adapter';
 const PROBE_ID = 'paseo-room-pi-mcp-probe';
@@ -70,15 +70,151 @@ interface ResolvedAdapter {
   readonly version: string;
 }
 
+/** Selected without roles, an extension goes to the orchestrating seats; Peer only when named. */
+const DEFAULT_EXTENSION_ROLES: readonly Role[] = ['supervisor', 'lead'];
+const NPM_NAME = /^(?:@[a-z0-9][a-z0-9._~-]*\/)?[a-z0-9][a-z0-9._~-]*$/;
+/** The environment variable every Pi seat carries, so an extension can tell it runs in a seat. */
+export const SEAT_ROLE_ENV = 'PASEO_ROOM_ROLE';
+
+/** Parses one `--pi-extension <package>[=<role>,...]` value. Throws a readable message. */
+export function parsePiExtensionSpec(spec: string): PiExtensionChoice {
+  const [name = '', roleList, ...rest] = spec.trim().split('=');
+  if (rest.length > 0 || !NPM_NAME.test(name)) {
+    throw new Error(`Not a Pi package selection: ${spec}. Use <npm package>[=<role>,<role>].`);
+  }
+  if (name === PACKAGE_NAME) throw new Error(`${PACKAGE_NAME} is always loaded and cannot be selected.`);
+  if (roleList === undefined) return { package: name, roles: DEFAULT_EXTENSION_ROLES };
+  const roles = roleList.split(',').map(role => role.trim());
+  const unknown = roles.filter(role => !ROLES.some(known => known === role));
+  if (unknown.length > 0 || roles.length === 0) {
+    throw new Error(`Unknown role in ${spec}: ${unknown.join(', ') || '(none)'}. Roles are ${ROLES.join(', ')}.`);
+  }
+  return { package: name, roles: ROLES.filter(role => roles.includes(role)) };
+}
+
+/** One entry per package, roles merged and in room order, packages sorted: a stable marker. */
+export function normalizePiExtensions(choices: readonly PiExtensionChoice[]): PiExtensionChoice[] {
+  const merged = new Map<string, Set<Role>>();
+  for (const choice of choices) {
+    const roles = merged.get(choice.package) ?? new Set<Role>();
+    for (const role of choice.roles) roles.add(role);
+    merged.set(choice.package, roles);
+  }
+  return [...merged.entries()]
+    // Code-unit order, not locale order, so the marker is byte-identical on every machine.
+    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+    .map(([name, roles]) => ({ package: name, roles: ROLES.filter(role => roles.has(role)) }));
+}
+
+type PackageResolution =
+  | { readonly kind: 'resolved'; readonly entries: readonly string[]; readonly version: string }
+  | { readonly kind: 'missing' }
+  | { readonly kind: 'unsafe'; readonly detail: string };
+
+/**
+ * Resolve an operator-installed Pi package and every extension entry it declares, each a regular
+ * file inside the canonical package root. Never installs, never follows a declaration outside it.
+ */
+async function resolvePiPackage(home: string, name: string): Promise<PackageResolution> {
+  const packageRoot = join(home, 'npm', 'node_modules', name);
+  const manifestPath = join(packageRoot, 'package.json');
+  try {
+    await stat(packageRoot);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { kind: 'missing' };
+    return { kind: 'unsafe', detail: `Could not inspect ${packageRoot}.` };
+  }
+  try {
+    const [canonicalRoot, manifestStat, raw] = await Promise.all([
+      realpath(packageRoot), stat(manifestPath), readFile(manifestPath, 'utf8'),
+    ]);
+    if (!manifestStat.isFile()) return { kind: 'unsafe', detail: `${manifestPath} is not a regular file.` };
+    const manifest = asObject(JSON.parse(raw));
+    if (!manifest || manifest.name !== name) return { kind: 'unsafe', detail: `${manifestPath} does not identify ${name}.` };
+    const declared = asObject(manifest.pi)?.extensions;
+    if (!Array.isArray(declared) || declared.length === 0 || !declared.every(item => typeof item === 'string' && item.trim() !== '')) {
+      return { kind: 'unsafe', detail: `${manifestPath} declares no Pi extension entry.` };
+    }
+    const entries: string[] = [];
+    for (const declaration of declared as string[]) {
+      if (isAbsolute(declaration)) return { kind: 'unsafe', detail: `${manifestPath} declares an unsafe absolute extension path.` };
+      const candidate = resolve(packageRoot, declaration);
+      const [canonicalEntry, entryStat] = await Promise.all([realpath(candidate), stat(candidate)]);
+      if (!contains(canonicalRoot, canonicalEntry) || canonicalEntry === canonicalRoot || !entryStat.isFile()) {
+        return { kind: 'unsafe', detail: `A declared ${name} extension escapes its package or is not a regular file.` };
+      }
+      entries.push(canonicalEntry);
+    }
+    const version = typeof manifest.version === 'string' && manifest.version.trim() ? manifest.version.trim() : 'unknown';
+    return { kind: 'resolved', entries, version };
+  } catch {
+    return { kind: 'unsafe', detail: `Could not safely resolve ${name} from ${manifestPath}.` };
+  }
+}
+
+interface ResolvedExtensions {
+  /** Canonical entries per role, in selection order; a role with none is absent. */
+  readonly byRole: Partial<Record<Role, readonly string[]>>;
+  readonly checks: readonly Check[];
+}
+
+/** PX-D2/PX-D3: installed packages load; a missing one warns; an unsafe one fails the build. */
+export async function resolvePiExtensions(
+  home: string,
+  choices: readonly PiExtensionChoice[],
+  roles: readonly Role[],
+): Promise<ResolvedExtensions> {
+  const byRole: Partial<Record<Role, string[]>> = {};
+  const checks: Check[] = [];
+  for (const choice of normalizePiExtensions(choices)) {
+    const seated = choice.roles.filter(role => roles.includes(role));
+    if (seated.length === 0) continue;
+    const id = `pi.extension.${choice.package}`;
+    const resolution = await resolvePiPackage(home, choice.package);
+    if (resolution.kind === 'missing') {
+      checks.push(warn(`${id}.missing`,
+        `Pi package ${choice.package} is selected for ${seated.join(', ')} but is not installed in ${join(home, 'npm')}; those seats start without it.`,
+        `Install it yourself with: pi install npm:${choice.package}, then run setup again. The room never installs Pi packages.`));
+      continue;
+    }
+    if (resolution.kind === 'unsafe') {
+      checks.push(fail(id, resolution.detail, `Reinstall ${choice.package} with Pi, or drop --pi-extension ${choice.package}, then run setup again.`));
+      continue;
+    }
+    for (const role of seated) byRole[role] = [...(byRole[role] ?? []), ...resolution.entries];
+    checks.push(pass(id, `${choice.package} ${resolution.version} loads for ${seated.join(', ')} from ${resolution.entries.join(', ')}.`));
+    if (seated.includes('peer')) {
+      checks.push(warn(`${id}.peer`,
+        `Peer runs ${choice.package}'s extension code. The room cannot prove it opens no second multi-agent path; selecting it states that it does not, or that it closes that path when ${SEAT_ROLE_ENV} is set.`,
+        `Drop peer from --pi-extension ${choice.package}=<roles> if that is not true.`));
+    }
+  }
+  return { byRole, checks };
+}
+
+/**
+ * Pi 1.0 ships a built-in `mcp` extension, but Paseo gives a Pi seat its MCP servers only through
+ * this adapter: it recognises `/mcp` by the adapter's name and passes `--mcp-config`, a flag only
+ * the adapter defines. Without it, Supervisor and Lead would run with no Paseo tools.
+ */
 function adapterFailure(home: string, detail: string): Check {
   return fail('pi.adapter', detail,
-    `Install ${PACKAGE_NAME} in ${join(home, 'npm')} with Pi yourself, then run setup again.`);
+    `Install ${PACKAGE_NAME} into ${join(home, 'npm')} yourself with: pi install npm:${PACKAGE_NAME}. `
+    + `Pi's built-in MCP extension is not a substitute: Paseo hands a Pi seat its tools only through ${PACKAGE_NAME}. `
+    + 'The room never installs Pi packages. Then run setup again.');
 }
 
 /** Resolve only Pi's intended global package and its single declared extension entry. */
 export async function resolvePiAdapter(home: string): Promise<{ readonly adapter?: ResolvedAdapter; readonly check: Check }> {
   const packageRoot = join(home, 'npm', 'node_modules', PACKAGE_NAME);
   const manifestPath = join(packageRoot, 'package.json');
+  try {
+    await stat(packageRoot);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return { check: adapterFailure(home, `${PACKAGE_NAME} is not installed in ${join(home, 'npm')}.`) };
+    }
+  }
   try {
     const [canonicalRoot, manifestStat, raw] = await Promise.all([
       realpath(packageRoot), stat(manifestPath), readFile(manifestPath, 'utf8'),
@@ -115,6 +251,8 @@ export async function resolvePiAdapter(home: string): Promise<{ readonly adapter
 export interface PiProbeOptions {
   readonly timeoutMs?: number;
   readonly outputLimit?: number;
+  /** Selected extension entries the seats load after the adapter, so the probe starts what they start. */
+  readonly extensions?: readonly string[];
 }
 interface ProcessResult {
   readonly ok: boolean;
@@ -142,7 +280,8 @@ function runProbeProcess(
 ): Promise<ProcessResult> {
   const timeoutMs = options.timeoutMs ?? PROBE_TIMEOUT_MS;
   const outputLimit = options.outputLimit ?? PROBE_OUTPUT_LIMIT;
-  const args = ['--mode', 'rpc', '--no-session', '--no-extensions', '--extension', adapterEntry, '--no-approve'];
+  const args = ['--mode', 'rpc', '--no-session', '--no-extensions', '--extension', adapterEntry,
+    ...(options.extensions ?? []).flatMap(entry => ['--extension', entry]), '--no-approve'];
   return new Promise(resolveResult => {
     const child = spawn(executable, args, { cwd, detached: true, env, stdio: ['pipe', 'pipe', 'pipe'] });
     const stdout: Buffer[] = [];
@@ -193,12 +332,17 @@ async function runProbe(
   const createdCwd = await mkdtemp(join(tmpdir(), 'paseo-room-pi-probe-'));
   const cwd = await realpath(createdCwd);
   try {
+    // An empty agent directory of its own rather than /dev/null: a selected extension may write
+    // its log under the agent directory, and nothing here may reach an operator or role home.
+    const agentDir = join(cwd, 'agent');
+    await mkdir(agentDir);
     return await runProbeProcess(executable, adapterEntry, {
       ...env,
       HOME: cwd,
-      PI_CODING_AGENT_DIR: '/dev/null',
+      PI_CODING_AGENT_DIR: agentDir,
       PI_MCP_CONFIG_MODE: 'exclusive',
       PI_OFFLINE: '1',
+      [SEAT_ROLE_ENV]: 'lead',
     }, options, cwd);
   } finally {
     await rm(createdCwd, { force: true, recursive: true });
@@ -298,7 +442,7 @@ export const piAgent: Agent = {
   homeEnv: 'PI_CODING_AGENT_DIR',
   providerEnv: { PI_MCP_CONFIG_MODE: 'exclusive' },
   pins: {},
-  async build(layout: Layout, roles: readonly Role[]): Promise<AgentPlan> {
+  async build(layout: Layout, roles: readonly Role[], options?: BuildOptions): Promise<AgentPlan> {
     const home = layout.agentHome.pi;
     const binary = await which(layout.bin.pi, layout.searchPath);
     if (!binary) {
@@ -311,13 +455,22 @@ export const piAgent: Agent = {
     }
     const resolved = await resolvePiAdapter(home);
     if (!resolved.adapter) return { entries: [], checks: [resolved.check] };
+    const extensions = await resolvePiExtensions(home, options?.piExtensions ?? [], roles);
+    if (extensions.checks.some(check => check.status === 'fail')) {
+      return { entries: [], checks: [resolved.check, ...extensions.checks] };
+    }
+    const selected = [...new Set(Object.values(extensions.byRole).flat())];
     const capability = await probePiMcp(binary, resolved.adapter.entry, {
       HOME: layout.home,
       PATH: layout.searchPath,
-      PI_CODING_AGENT_DIR: '/dev/null',
       PI_OFFLINE: '1',
-    });
-    if (capability.status === 'fail') return { entries: [], checks: [resolved.check, capability] };
+    }, { extensions: selected });
+    if (capability.status === 'fail') {
+      return { entries: [], checks: [resolved.check, ...extensions.checks, selected.length === 0 ? capability : {
+        ...capability,
+        fix: `${capability.fix ?? ''} A selected Pi extension may also be what stops Pi from starting; retry without --pi-extension to tell.`.trim(),
+      }] };
+    }
 
     const settingsPath = join(home, 'settings.json');
     let settings: string;
@@ -358,6 +511,7 @@ export const piAgent: Agent = {
     const entries: Entry[] = [];
     const credentials: CredentialDiagnostic[] = [];
     const argv: Partial<Record<Role, readonly string[]>> = {};
+    const providerEnv: Partial<Record<Role, Readonly<Record<string, string>>>> = {};
     const roomSkill = { name: ROOM_SKILL_NAME, source: roomSkillSource(layout) };
     for (const role of roles) {
       const target = roleHome(layout, 'pi', role);
@@ -370,14 +524,20 @@ export const piAgent: Agent = {
         leadSkillProjection: leadSkillProjection(layout, 'pi'),
       }));
       credentials.push(await piCredentialDiagnostic(layout, role, binary));
-      argv[role] = ['--no-extensions', '--extension', resolved.adapter.entry, '--no-approve', '--append-system-prompt', appendPath];
+      argv[role] = [
+        '--no-extensions', '--extension', resolved.adapter.entry,
+        ...(extensions.byRole[role] ?? []).flatMap(entry => ['--extension', entry]),
+        '--no-approve', '--append-system-prompt', appendPath,
+      ];
+      providerEnv[role] = { [SEAT_ROLE_ENV]: role };
     }
     return {
       entries,
       credentials,
-      checks: [pass('pi.home', `Pi found at ${binary} using ${home}.`), resolved.check, capability],
+      checks: [pass('pi.home', `Pi found at ${binary} using ${home}.`), resolved.check, ...extensions.checks, capability],
       binary,
       argv,
+      providerEnv,
     };
   },
 };

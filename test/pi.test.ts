@@ -105,7 +105,11 @@ describe('piAgent.build', () => {
   it('fails closed for a missing or malformed adapter package', async () => {
     const missing = await makeFixture();
     await rm(join(missing.home, '.pi/agent/npm/node_modules/pi-mcp-adapter'), { recursive: true });
-    expect((await piAgent.build(resolveLayout({}, missing.env), ['lead'])).checks[0]?.id).toBe('pi.adapter');
+    const absent = (await piAgent.build(resolveLayout({}, missing.env), ['lead'])).checks[0];
+    expect(absent?.id).toBe('pi.adapter');
+    expect(absent?.message).toContain('is not installed');
+    expect(absent?.fix).toContain('pi install npm:pi-mcp-adapter');
+    expect(absent?.fix).toContain('built-in MCP extension is not a substitute');
 
     const malformed = await makeFixture();
     await writeFile(join(malformed.home, '.pi/agent/npm/node_modules/pi-mcp-adapter/package.json'), '{bad json');
@@ -137,7 +141,7 @@ describe('piAgent.build', () => {
     await nodeScript(binary, `
 const args = process.argv.slice(2);
 const expected = ['--mode', 'rpc', '--no-session', '--no-extensions', '--extension', args[5], '--no-approve'];
-if (JSON.stringify(args) !== JSON.stringify(expected) || process.env.HOME !== process.cwd() || process.env.PI_CODING_AGENT_DIR !== '/dev/null' || process.env.PI_MCP_CONFIG_MODE !== 'exclusive' || process.env.PI_OFFLINE !== '1') process.exit(2);
+if (JSON.stringify(args) !== JSON.stringify(expected) || process.env.HOME !== process.cwd() || process.env.PI_CODING_AGENT_DIR !== require('node:path').join(process.cwd(), 'agent') || process.env.PASEO_ROOM_ROLE !== 'lead' || process.env.PI_MCP_CONFIG_MODE !== 'exclusive' || process.env.PI_OFFLINE !== '1') process.exit(2);
 console.log(JSON.stringify({ id: '${probeId}', type: 'response', command: 'get_commands', success: true, data: { commands: [{ name: 'mcp', source: 'extension', sourceInfo: { path: args[5] } }] } }));
 `);
     const plan = await piAgent.build(resolveLayout({}, fixture.env), ['lead']);
@@ -319,7 +323,7 @@ const selectedSources = process.env.PI_MCP_CONFIG_MODE === 'exclusive'
   : automaticSources;
 writeFileSync(process.env.PROBE_RECORD, JSON.stringify({
   cwd: process.cwd(), home: process.env.HOME, mode: process.env.PI_MCP_CONFIG_MODE,
-  agentDir: process.env.PI_CODING_AGENT_DIR, offline: process.env.PI_OFFLINE,
+  agentDir: process.env.PI_CODING_AGENT_DIR, offline: process.env.PI_OFFLINE, role: process.env.PASEO_ROOM_ROLE,
   automaticSources, selectedSources,
 }));
 console.log(${JSON.stringify(response([{ name: 'mcp', source: 'extension', sourceInfo: { path: entry } }]))});
@@ -344,12 +348,13 @@ console.log(${JSON.stringify(response([{ name: 'mcp', source: 'extension', sourc
     expect((await stat(commands)).isDirectory()).toBe(true);
     await expect(stat(join(caller, '.pi/prompts'))).rejects.toThrow();
     const record = JSON.parse(await readFile(probeRecord, 'utf8')) as {
-      cwd: string; home: string; mode: string; agentDir: string; offline: string;
+      cwd: string; home: string; mode: string; agentDir: string; offline: string; role: string;
       automaticSources: string[]; selectedSources: string[];
     };
+    // The probe's own empty agent directory, inside its temporary HOME, never an operator home.
     expect(record).toMatchObject({
-      home: record.cwd, mode: 'exclusive', agentDir: '/dev/null', offline: '1',
-      automaticSources: [], selectedSources: ['/dev/null/mcp.json'],
+      home: record.cwd, mode: 'exclusive', agentDir: join(record.cwd, 'agent'), offline: '1', role: 'lead',
+      automaticSources: [], selectedSources: [join(record.cwd, 'agent', 'mcp.json')],
     });
     expect(record.cwd).not.toBe(caller);
     expect(record.selectedSources).not.toEqual(expect.arrayContaining(discoveryInputs));
