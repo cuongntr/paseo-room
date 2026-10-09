@@ -1,4 +1,4 @@
-import { lstat, mkdir, readdir, readFile, readlink, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readdir, readFile, readlink, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { piAgent, probePiMcp, renderPiAppend, renderPiSettings } from '../src/agents/pi.js';
@@ -102,47 +102,25 @@ describe('piAgent.build', () => {
     expect(plan.credentials).toHaveLength(3);
   });
 
-  it('fails closed for a missing or malformed adapter package', async () => {
-    const missing = await makeFixture();
-    await rm(join(missing.home, '.pi/agent/npm/node_modules/pi-mcp-adapter'), { recursive: true });
-    const absent = (await piAgent.build(resolveLayout({}, missing.env), ['lead'])).checks[0];
-    expect(absent?.id).toBe('pi.adapter');
-    expect(absent?.message).toContain('is not installed');
-    expect(absent?.fix).toContain('pi install npm:pi-mcp-adapter');
-    expect(absent?.fix).toContain('built-in MCP extension is not a substitute');
-
-    const malformed = await makeFixture();
-    await writeFile(join(malformed.home, '.pi/agent/npm/node_modules/pi-mcp-adapter/package.json'), '{bad json');
-    expect((await piAgent.build(resolveLayout({}, malformed.env), ['lead'])).checks[0]?.status).toBe('fail');
-
-    const wrongIdentity = await makeFixture();
-    await writeFile(join(wrongIdentity.home, '.pi/agent/npm/node_modules/pi-mcp-adapter/package.json'), JSON.stringify({
-      name: 'not-pi-mcp-adapter', pi: { extensions: ['./index.ts'] },
-    }));
-    expect((await piAgent.build(resolveLayout({}, wrongIdentity.env), ['lead'])).checks[0]?.message)
-      .toContain('does not identify');
-  });
-
-  it('rejects an adapter entry whose canonical path escapes the package', async () => {
+  it('needs no pi-mcp-adapter, and ignores one the operator installed', async () => {
     const fixture = await makeFixture();
     const root = join(fixture.home, '.pi/agent/npm/node_modules/pi-mcp-adapter');
-    const outside = join(fixture.home, 'outside.ts');
-    await writeFile(outside, 'export default function adapter() {}\n');
-    await rm(join(root, 'index.ts'));
-    await symlink(outside, join(root, 'index.ts'));
+    await mkdir(root, { recursive: true });
+    await writeFile(join(root, 'package.json'), JSON.stringify({ name: 'pi-mcp-adapter', pi: { extensions: ['./index.ts'] } }));
+    await writeFile(join(root, 'index.ts'), 'export default function adapter() {}\n');
     const plan = await piAgent.build(resolveLayout({}, fixture.env), ['lead']);
-    expect(plan.checks[0]?.message).toContain('escapes');
-    expect(plan.binary).toBeUndefined();
+    expect(plan.checks.every(check => check.status === 'pass')).toBe(true);
+    expect(plan.argv?.lead?.some(arg => arg.includes('pi-mcp-adapter'))).toBe(false);
   });
 
-  it('probes with an isolated home, exclusive adapter config, offline mode, and strict extension flags', async () => {
+  it('probes with an isolated home, offline mode, and strict extension flags', async () => {
     const fixture = await makeFixture();
     const binary = join(fixture.home, 'bin/pi');
     await nodeScript(binary, `
 const args = process.argv.slice(2);
-const expected = ['--mode', 'rpc', '--no-session', '--no-extensions', '--extension', args[5], '--no-approve'];
-if (JSON.stringify(args) !== JSON.stringify(expected) || process.env.HOME !== process.cwd() || process.env.PI_CODING_AGENT_DIR !== require('node:path').join(process.cwd(), 'agent') || process.env.PASEO_ROOM_ROLE !== 'lead' || process.env.PI_MCP_CONFIG_MODE !== 'exclusive' || process.env.PI_OFFLINE !== '1') process.exit(2);
-console.log(JSON.stringify({ id: '${probeId}', type: 'response', command: 'get_commands', success: true, data: { commands: [{ name: 'mcp', source: 'extension', sourceInfo: { path: args[5] } }] } }));
+const expected = ['--mode', 'rpc', '--no-session', '--no-extensions', '--extension', 'builtin:mcp', '--extension', 'builtin:codemode', '--no-approve'];
+if (JSON.stringify(args) !== JSON.stringify(expected) || process.env.HOME !== process.cwd() || process.env.PI_CODING_AGENT_DIR !== require('node:path').join(process.cwd(), 'agent') || process.env.PASEO_ROOM_ROLE !== 'lead' || process.env.PI_MCP_CONFIG_MODE !== undefined || process.env.PI_OFFLINE !== '1') process.exit(2);
+console.log(JSON.stringify({ id: '${probeId}', type: 'response', command: 'get_commands', success: true, data: { commands: [{ name: 'mcp', source: 'extension', sourceInfo: { path: 'builtin:mcp' } }] } }));
 `);
     const plan = await piAgent.build(resolveLayout({}, fixture.env), ['lead']);
     expect(plan.checks.every(check => check.status === 'pass')).toBe(true);
@@ -282,22 +260,16 @@ describe('piAgent.build MCP conflict detection', () => {
 });
 
 describe('Pi capability probe', () => {
-  it('isolates HOME and excludes global and project MCP discovery inputs', async () => {
+  it('isolates HOME and the agent directory, and leaves the caller project untrusted', async () => {
     const fixture = await makeFixture();
     const binary = join(fixture.home, 'bin/pi');
-    const entry = await realpath(join(fixture.home, '.pi/agent/npm/node_modules/pi-mcp-adapter/index.ts'));
     const callerPath = join(fixture.home, 'caller');
     await mkdir(callerPath);
     const caller = await realpath(callerPath);
     const commands = join(caller, '.pi/commands');
     const command = join(commands, 'keep.bin');
     const probeRecord = join(fixture.home, 'probe-record');
-    const discoveryInputs = [
-      join(fixture.home, '.config/mcp/mcp.json'),
-      join(fixture.home, '.agents/mcp.json'),
-      join(caller, '.mcp.json'),
-      join(caller, '.pi/mcp.json'),
-    ];
+    const discoveryInputs = [join(fixture.home, '.pi/agent/mcp.json'), join(caller, '.pi/mcp.json')];
     const original = Buffer.from([0, 1, 2, 255]);
     await mkdir(commands, { recursive: true });
     await writeFile(command, original);
@@ -312,28 +284,25 @@ const caller = process.env.PROBE_CALLER_CWD;
 if (process.cwd() === caller && existsSync(join(caller, '.pi/commands'))) {
   renameSync(join(caller, '.pi/commands'), join(caller, '.pi/prompts'));
 }
-const automaticSources = [
-  join(process.env.HOME, '.config/mcp/mcp.json'),
-  join(process.env.HOME, '.agents/mcp.json'),
-  join(process.cwd(), '.mcp.json'),
-  join(process.cwd(), '.pi/mcp.json'),
-].filter(existsSync);
-const selectedSources = process.env.PI_MCP_CONFIG_MODE === 'exclusive'
-  ? [join(process.env.PI_CODING_AGENT_DIR, 'mcp.json')]
-  : automaticSources;
+// Pi's built-in MCP reads the agent directory's mcp.json, and the project's only when trusted.
+const trusted = !process.argv.includes('--no-approve');
+const selectedSources = [
+  join(process.env.PI_CODING_AGENT_DIR, 'mcp.json'),
+  ...(trusted ? [join(process.cwd(), '.pi/mcp.json')] : []),
+];
 writeFileSync(process.env.PROBE_RECORD, JSON.stringify({
-  cwd: process.cwd(), home: process.env.HOME, mode: process.env.PI_MCP_CONFIG_MODE,
+  cwd: process.cwd(), home: process.env.HOME,
   agentDir: process.env.PI_CODING_AGENT_DIR, offline: process.env.PI_OFFLINE, role: process.env.PASEO_ROOM_ROLE,
-  automaticSources, selectedSources,
+  selectedSources,
 }));
-console.log(${JSON.stringify(response([{ name: 'mcp', source: 'extension', sourceInfo: { path: entry } }]))});
+console.log(${JSON.stringify(response([{ name: 'mcp', source: 'extension', sourceInfo: { path: 'builtin:mcp' } }]))});
 `);
 
     const previous = process.cwd();
     let check;
     try {
       process.chdir(caller);
-      check = await probePiMcp(binary, entry, {
+      check = await probePiMcp(binary, {
         HOME: fixture.home,
         PATH: join(fixture.home, 'bin'),
         PROBE_CALLER_CWD: caller,
@@ -348,13 +317,12 @@ console.log(${JSON.stringify(response([{ name: 'mcp', source: 'extension', sourc
     expect((await stat(commands)).isDirectory()).toBe(true);
     await expect(stat(join(caller, '.pi/prompts'))).rejects.toThrow();
     const record = JSON.parse(await readFile(probeRecord, 'utf8')) as {
-      cwd: string; home: string; mode: string; agentDir: string; offline: string; role: string;
-      automaticSources: string[]; selectedSources: string[];
+      cwd: string; home: string; agentDir: string; offline: string; role: string; selectedSources: string[];
     };
     // The probe's own empty agent directory, inside its temporary HOME, never an operator home.
     expect(record).toMatchObject({
-      home: record.cwd, mode: 'exclusive', agentDir: join(record.cwd, 'agent'), offline: '1', role: 'lead',
-      automaticSources: [], selectedSources: [join(record.cwd, 'agent', 'mcp.json')],
+      home: record.cwd, agentDir: join(record.cwd, 'agent'), offline: '1', role: 'lead',
+      selectedSources: [join(record.cwd, 'agent', 'mcp.json')],
     });
     expect(record.cwd).not.toBe(caller);
     expect(record.selectedSources).not.toEqual(expect.arrayContaining(discoveryInputs));
@@ -364,33 +332,32 @@ console.log(${JSON.stringify(response([{ name: 'mcp', source: 'extension', sourc
   it('rejects absent /mcp and the wrong command source', async () => {
     const fixture = await makeFixture();
     const binary = join(fixture.home, 'bin/pi');
-    const entry = join(fixture.home, '.pi/agent/npm/node_modules/pi-mcp-adapter/index.ts');
+    const entry = 'builtin:mcp';
     const env = { HOME: fixture.home, PATH: join(fixture.home, 'bin') };
     await script(binary, response([]));
-    expect((await probePiMcp(binary, entry, env)).status).toBe('fail');
+    expect((await probePiMcp(binary, env)).status).toBe('fail');
     await script(binary, response([{ name: 'mcp', source: 'prompt', sourceInfo: { path: entry } }]));
-    expect((await probePiMcp(binary, entry, env)).message).toContain('wrong source');
+    expect((await probePiMcp(binary, env)).message).toContain('wrong source');
   });
 
   it('rejects malformed output, process failure, excess output, and timeout', async () => {
     const fixture = await makeFixture();
     const binary = join(fixture.home, 'bin/pi');
-    const entry = join(fixture.home, '.pi/agent/npm/node_modules/pi-mcp-adapter/index.ts');
+    const entry = 'builtin:mcp';
     const env = { HOME: fixture.home, PATH: join(fixture.home, 'bin') };
     await script(binary, 'not-json');
-    expect((await probePiMcp(binary, entry, env)).message).toContain('malformed JSONL');
+    expect((await probePiMcp(binary, env)).message).toContain('malformed JSONL');
     await script(binary, response([{ name: 'mcp', source: 'extension', sourceInfo: { path: entry } }]), 1);
-    expect((await probePiMcp(binary, entry, env)).message).toContain('probe failed');
+    expect((await probePiMcp(binary, env)).message).toContain('probe failed');
     await script(binary, 'x'.repeat(128));
-    expect((await probePiMcp(binary, entry, env, { outputLimit: 32 })).message).toContain('output limit');
+    expect((await probePiMcp(binary, env, { outputLimit: 32 })).message).toContain('output limit');
     await nodeScript(binary, 'setInterval(() => {}, 1000);');
-    expect((await probePiMcp(binary, entry, env, { timeoutMs: 20 })).message).toContain('timed out');
+    expect((await probePiMcp(binary, env, { timeoutMs: 20 })).message).toContain('timed out');
   });
 
   it('settles timeout and overflow when a descendant retains the output pipes', async () => {
     const fixture = await makeFixture();
     const binary = join(fixture.home, 'bin/pi');
-    const entry = join(fixture.home, '.pi/agent/npm/node_modules/pi-mcp-adapter/index.ts');
     const env = { HOME: fixture.home, PATH: join(fixture.home, 'bin') };
     const timeoutReady = join(fixture.home, 'timeout-ready');
     const timeoutSentinel = join(fixture.home, 'timeout-descendant-survived');
@@ -405,7 +372,7 @@ writeFileSync(process.env.DESCENDANT_READY, 'ready');
 `;
 
     await nodeScript(binary, `${retainPipes}\nprocess.exit(0);`);
-    const timeoutProbe = probePiMcp(binary, entry, {
+    const timeoutProbe = probePiMcp(binary, {
       ...env, DESCENDANT_READY: timeoutReady, DESCENDANT_SENTINEL: timeoutSentinel,
     }, { timeoutMs: 2000 });
     await waitForFile(timeoutReady, 1500);
@@ -414,7 +381,7 @@ writeFileSync(process.env.DESCENDANT_READY, 'ready');
     expect(await readFile(timeoutReady, 'utf8')).toBe('ready');
 
     await nodeScript(binary, `${retainPipes}\nprocess.stdout.write('x'.repeat(128));`);
-    const overflowProbe = probePiMcp(binary, entry, {
+    const overflowProbe = probePiMcp(binary, {
       ...env, DESCENDANT_READY: overflowReady, DESCENDANT_SENTINEL: overflowSentinel,
     }, { outputLimit: 32 });
     await waitForFile(overflowReady, 1500);
@@ -427,14 +394,12 @@ writeFileSync(process.env.DESCENDANT_READY, 'ready');
     await expect(stat(overflowSentinel)).rejects.toThrow();
   }, 10_000);
 
-  it('rejects /mcp attributed to a different canonical extension path', async () => {
+  it('rejects /mcp from any extension but the built-in one, including pi-mcp-adapter', async () => {
     const fixture = await makeFixture();
     const binary = join(fixture.home, 'bin/pi');
-    const entry = join(fixture.home, '.pi/agent/npm/node_modules/pi-mcp-adapter/index.ts');
-    const other = join(fixture.home, 'other.ts');
-    await writeFile(other, 'export default function other() {}\n');
-    await script(binary, response([{ name: 'mcp', source: 'extension', sourceInfo: { path: other } }]));
-    expect((await probePiMcp(binary, entry, { HOME: fixture.home, PATH: join(fixture.home, 'bin') })).message)
+    const adapter = join(fixture.home, '.pi/agent/npm/node_modules/pi-mcp-adapter/index.ts');
+    await script(binary, response([{ name: 'mcp', source: 'extension', sourceInfo: { path: adapter } }]));
+    expect((await probePiMcp(binary, { HOME: fixture.home, PATH: join(fixture.home, 'bin') })).message)
       .toContain('different extension path');
   });
 });

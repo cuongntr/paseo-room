@@ -72,7 +72,7 @@ export async function runWizard(
       message: `Pi seats load these extensions: ${listed}. Keep them?`,
       options: [
         { value: 'keep', label: 'Yes — keep loading them (recommended)' },
-        { value: 'drop', label: 'No — start Pi seats with the MCP adapter only' },
+        { value: 'drop', label: 'No — start Pi seats with only Pi\'s built-in MCP' },
       ],
     });
     if (typeof keep === 'symbol') return cancelled();

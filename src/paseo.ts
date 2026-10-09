@@ -8,11 +8,15 @@ import type { AgentId } from './roles.js';
 import { probe, which } from './which.js';
 
 export const MINIMUM_VERSION = '0.8.0-beta.1';
-export const PI_MINIMUM_VERSION = '0.8.0';
+/** Claude and the runtime plugin need Paseo `0.8.0`, the first stable plugin host. */
+export const PLUGIN_MINIMUM_VERSION = '0.8.0';
+/** Pi seats need `0.11.1`, the first Paseo that registers a seat's servers with Pi's built-in MCP. */
+export const PI_MINIMUM_VERSION = '0.11.1';
 
-/** Claude and Pi need `0.8.0`; so does the runtime plugin, whose range the caller also checks. */
+/** The runtime plugin's range is also checked by the caller. */
 export function minimumPaseoVersion(agents: readonly AgentId[], runtime = false): string {
-  return runtime || agents.includes('pi') || agents.includes('claude') ? PI_MINIMUM_VERSION : MINIMUM_VERSION;
+  if (agents.includes('pi')) return PI_MINIMUM_VERSION;
+  return runtime || agents.includes('claude') ? PLUGIN_MINIMUM_VERSION : MINIMUM_VERSION;
 }
 
 /**

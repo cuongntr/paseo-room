@@ -10,7 +10,7 @@ export interface Fixture {
 }
 
 export const RUNNING_STATUS = {
-  listen: '127.0.0.1:6767', localDaemon: 'running', cliVersion: '0.8.1', daemonVersion: '0.8.1',
+  listen: '127.0.0.1:6767', localDaemon: 'running', cliVersion: '0.11.1', daemonVersion: '0.11.1',
 };
 
 /** Paseo `0.9` dropped `cliVersion` and gained a supervisor `pid` beside the worker's. */
@@ -33,25 +33,18 @@ export async function makeFixture(
   await mkdir(join(home, '.claude'), { recursive: true });
   await writeFile(join(home, '.claude', 'settings.json'), JSON.stringify({ env: { FOO: '1' }, hooks: { SessionStart: [] } }));
   await writeFile(join(home, '.claude.json'), JSON.stringify({ hasCompletedOnboarding: true, theme: 'dark', projects: { a: 1 } }));
-  const adapterRoot = join(home, '.pi', 'agent', 'npm', 'node_modules', 'pi-mcp-adapter');
-  const adapterEntry = join(adapterRoot, 'index.ts');
   await mkdir(join(home, '.pi', 'agent', 'skills'), { recursive: true });
-  await mkdir(adapterRoot, { recursive: true });
   await writeFile(join(home, '.pi', 'agent', 'settings.json'), JSON.stringify({
     defaultProvider: 'openai', packages: ['npm:pi-mcp-adapter', 'npm:unrelated'], extensions: ['./extensions/other.ts'],
   }));
   await writeFile(join(home, '.pi', 'agent', 'auth.json'), '{"token":"pi-secret"}');
-  await writeFile(join(adapterRoot, 'package.json'), JSON.stringify({
-    name: 'pi-mcp-adapter', version: '2.32.1', pi: { extensions: ['./index.ts'] },
-  }));
-  await writeFile(adapterEntry, 'export default function adapter() {}\n');
 
   // The real executable answers `--version` with a bare version, and that is the only place a
   // 0.9 CLI still states its own.
   await writeFile(join(bin, 'paseo'), [
     '#!/bin/sh',
     'if [ "$1" = "--version" ]; then',
-    `  echo '${options.paseoCliVersion ?? '0.8.1'}'`,
+    `  echo '${options.paseoCliVersion ?? '0.11.1'}'`,
     '  exit 0',
     'fi',
     `echo '${JSON.stringify(options.paseoStatus ?? RUNNING_STATUS)}'`,
@@ -64,7 +57,7 @@ export async function makeFixture(
     JSON.stringify({ type: 'extension_ui_request', id: 'ui', method: 'setStatus' }),
     JSON.stringify({
       id: 'paseo-room-pi-mcp-probe', type: 'response', command: 'get_commands', success: true,
-      data: { commands: [{ name: 'mcp', source: 'extension', sourceInfo: { path: adapterEntry } }] },
+      data: { commands: [{ name: 'mcp', source: 'extension', sourceInfo: { path: 'builtin:mcp' } }] },
     }),
   ].join('\n'));
   return { home, roomHome: join(home, '.paseo-room'), env: { HOME: home, PATH: bin } };

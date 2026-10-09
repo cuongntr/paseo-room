@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { assessStatus, minimumPaseoVersion, normalizeUrl, providerMatches, MINIMUM_VERSION, PI_MINIMUM_VERSION } from '../src/paseo.js';
+import { assessStatus, minimumPaseoVersion, normalizeUrl, providerMatches, MINIMUM_VERSION, PI_MINIMUM_VERSION, PLUGIN_MINIMUM_VERSION } from '../src/paseo.js';
 import type { Provider } from '../src/agents/types.js';
 import { RUNNING_STATUS as running, RUNNING_STATUS_09 as running09 } from './helpers.js';
 
@@ -14,7 +14,7 @@ describe('normalizeUrl', () => {
 describe('assessStatus', () => {
   it('passes a running, compatible daemon', () => {
     const result = assessStatus(running);
-    expect(result.daemon).toEqual({ url: 'ws://127.0.0.1:6767', version: '0.8.1' });
+    expect(result.daemon).toEqual({ url: 'ws://127.0.0.1:6767', version: '0.11.1' });
     expect(result.checks[0]?.status).toBe('pass');
   });
 
@@ -43,28 +43,32 @@ describe('assessStatus', () => {
     // Paseo 0.9 dropped cliVersion from `daemon status --json`, so the caller supplies it and the
     // CLI/daemon comparison — the whole point of which is catching a daemon that was never
     // restarted after an upgrade — still happens.
-    expect(assessStatus(running09, PI_MINIMUM_VERSION, '0.9.1').daemon)
+    expect(assessStatus(running09, PLUGIN_MINIMUM_VERSION, '0.9.1').daemon)
       .toEqual({ url: 'ws://127.0.0.1:6767', version: '0.9.1' });
-    expect(assessStatus(running09, PI_MINIMUM_VERSION, '0.9.2').checks[0]?.message)
+    expect(assessStatus(running09, PLUGIN_MINIMUM_VERSION, '0.9.2').checks[0]?.message)
       .toContain('running daemon is 0.9.1');
-    expect(assessStatus(running09, PI_MINIMUM_VERSION).checks[0]?.id).toBe('paseo.version');
+    expect(assessStatus(running09, PLUGIN_MINIMUM_VERSION).checks[0]?.id).toBe('paseo.version');
 
     // State names are Paseo's to extend: 0.9 added not_ready, and an unreachable daemon reports
     // no version at all rather than null.
-    expect(assessStatus({ ...running09, localDaemon: 'not_ready' }, PI_MINIMUM_VERSION, '0.9.1').checks[0]?.message)
+    expect(assessStatus({ ...running09, localDaemon: 'not_ready' }, PLUGIN_MINIMUM_VERSION, '0.9.1').checks[0]?.message)
       .toContain('not_ready');
     const unreachable: Record<string, unknown> = { ...running09 };
     delete unreachable.daemonVersion;
-    expect(assessStatus(unreachable, PI_MINIMUM_VERSION, '0.9.1').checks[0]?.id).toBe('paseo.version');
+    expect(assessStatus(unreachable, PLUGIN_MINIMUM_VERSION, '0.9.1').checks[0]?.id).toBe('paseo.version');
   });
 });
 
 describe('minimumPaseoVersion', () => {
-  it('uses the stable floor when Pi or the Claude plugin is selected', () => {
+  it('uses the stable floor for a plugin, and the built-in MCP floor when Pi is selected', () => {
     expect(minimumPaseoVersion(['codex'])).toBe(MINIMUM_VERSION);
-    expect(minimumPaseoVersion(['claude'])).toBe(PI_MINIMUM_VERSION);
+    expect(minimumPaseoVersion(['claude'])).toBe(PLUGIN_MINIMUM_VERSION);
+    expect(minimumPaseoVersion(['codex'], true)).toBe(PLUGIN_MINIMUM_VERSION);
     expect(minimumPaseoVersion(['pi'])).toBe(PI_MINIMUM_VERSION);
-    expect(assessStatus({ ...running, cliVersion: '0.8.0-beta.2', daemonVersion: '0.8.0-beta.2' }, PI_MINIMUM_VERSION).daemon)
+    expect(minimumPaseoVersion(['claude', 'pi'], true)).toBe(PI_MINIMUM_VERSION);
+    expect(assessStatus({ ...running, cliVersion: '0.8.0-beta.2', daemonVersion: '0.8.0-beta.2' }, PLUGIN_MINIMUM_VERSION).daemon)
+      .toBeUndefined();
+    expect(assessStatus({ ...running, cliVersion: '0.10.3', daemonVersion: '0.10.3' }, PI_MINIMUM_VERSION).daemon)
       .toBeUndefined();
   });
 });

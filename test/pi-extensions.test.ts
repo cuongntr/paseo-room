@@ -27,7 +27,7 @@ describe('Pi extension selection', () => {
     expect(() => parsePiExtensionSpec('../escape')).toThrow('Not a Pi package selection');
     expect(() => parsePiExtensionSpec('pi-blackbytes=writer')).toThrow('Unknown role');
     expect(() => parsePiExtensionSpec('pi-blackbytes=')).toThrow('Unknown role');
-    expect(() => parsePiExtensionSpec('pi-mcp-adapter')).toThrow('always loaded');
+    expect(() => parsePiExtensionSpec('pi-mcp-adapter')).toThrow('cannot be selected');
   });
 
   it('merges repeated selections into one stable, sorted record', () => {
@@ -56,9 +56,9 @@ describe('Pi seats with selected extensions', () => {
     expect(plan.checks.filter(check => check.status === 'fail')).toEqual([]);
     const entry = await realpath(join(root, 'dist/index.js'));
     const lead = plan.argv?.lead ?? [];
-    // The adapter first, then the selected entry, both before the trust and prompt flags.
-    expect(lead.slice(0, 5)).toEqual(['--no-extensions', '--extension', expect.stringContaining('pi-mcp-adapter'), '--extension', entry]);
-    expect(lead.slice(5, 6)).toEqual(['--no-approve']);
+    // Pi's built-in MCP and codemode first, then the selected entry, all before the trust and prompt flags.
+    expect(lead.slice(0, 7)).toEqual(['--no-extensions', '--extension', 'builtin:mcp', '--extension', 'builtin:codemode', '--extension', entry]);
+    expect(lead.slice(7, 8)).toEqual(['--no-approve']);
     expect(plan.argv?.supervisor).toContain(entry);
     expect(plan.argv?.peer?.some(arg => arg.includes('pi-blackbytes'))).toBe(false);
     expect(plan.providerEnv).toEqual({
@@ -83,7 +83,7 @@ describe('Pi seats with selected extensions', () => {
     expect(missing).toMatchObject({ status: 'warn' });
     expect(missing?.fix).toContain('pi install npm:pi-provider-kiro');
     expect(plan.binary).toBeDefined();
-    expect(plan.argv?.lead?.filter(arg => arg === '--extension')).toHaveLength(1);
+    expect(plan.argv?.lead?.slice(0, 6)).toEqual(['--no-extensions', '--extension', 'builtin:mcp', '--extension', 'builtin:codemode', '--no-approve']);
   });
 
   it('fails for a package that declares an entry outside itself or names another package', async () => {

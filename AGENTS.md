@@ -24,8 +24,8 @@ That design is in git history before the `v2` rewrite. Do not reintroduce it.
 - **No transaction machinery.** A failed `setup` is fixed by running `setup` again. Explicit
   `remove --apply` deletes the room home, including role-owned credential files, after warning.
 - **Compatibility is one check.** `paseo daemon status --json` must report a running daemon,
-  matching CLI and daemon versions, and `>= 0.8.0-beta.1`; a selection containing Claude or Pi
-  raises that floor to `>= 0.8.0`. Read that output loosely — it is a CLI's own shape, not a
+  matching CLI and daemon versions, and `>= 0.8.0-beta.1`; a selection containing Claude
+  raises that floor to `>= 0.8.0`, and one containing Pi to `>= 0.11.1`. Read that output loosely — it is a CLI's own shape, not a
   versioned protocol type, and `0.9` already dropped `cliVersion` and added a `localDaemon` state.
   Where status states no CLI version, `checkDaemon` asks the same executable it just ran; never
   drop the CLI/daemon comparison, which is what catches a daemon nobody restarted after an
@@ -52,12 +52,14 @@ That design is in git history before the `v2` rewrite. Do not reintroduce it.
   loss of either copy — a closure that can be silently dropped is not a guarantee.
 - **Paseo is the only control plane.** Every native multi-agent path stays closed. If you
   add an agent adapter, close its equivalent before shipping it.
-- **Pi adapters are explicit and authenticated.** Resolve only the operator Pi home's global
-  `pi-mcp-adapter`, require canonical package containment, and prove `/mcp` attribution with
-  the bounded offline RPC probe. Never install or upgrade Pi or the adapter. Further Pi
-  extensions load only as explicit `--pi-extension` choices per role, from the same global
-  location under the same containment rules; a missing one warns, never installs, and Peer gets
-  one only when named ([docs/design/pi-seat-extensions.md](docs/design/pi-seat-extensions.md)).
+- **Pi seats use Pi's built-in MCP, explicitly.** Seat argv loads `builtin:mcp` and
+  `builtin:codemode` after `--no-extensions`, and the bounded offline RPC probe must attribute
+  exactly one `/mcp` to `builtin:mcp`; Paseo `>=0.11.1` registers a seat's servers there. Never
+  load or allow selecting `pi-mcp-adapter`: Paseo would switch to it. Never install or upgrade Pi
+  or a Pi package. Further Pi extensions load only as explicit `--pi-extension` choices per role,
+  from the operator Pi home's global npm location with every entry contained in its package; a
+  missing one warns, never installs, and Peer gets one only when named
+  ([docs/design/pi-seat-extensions.md](docs/design/pi-seat-extensions.md)).
 - **Peer never gets room tools.** `ROLE_PASEO_TOOLS` in `src/roles.ts` is the single source
   of that rule, and it must stay a single call site. Peer's narrower resource set follows from
   the same principle and lives in `src/agents/resources.ts`; it is capability hygiene, not

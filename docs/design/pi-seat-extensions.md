@@ -59,8 +59,8 @@ deselected. A package that exists but is malformed, misnamed or declares an entr
 root fails setup, as the adapter does. The room never installs or upgrades a Pi package.
 
 **PX-D4 — Every Pi seat knows its role.** Every Pi provider pins `PASEO_ROOM_ROLE=<role>` in its
-environment, whether or not anything is selected. It is a provider pin like
-`PI_MCP_CONFIG_MODE`, compared whole by `providerMatches`. An extension may use it to switch off
+environment, whether or not anything is selected. It is a provider pin, compared whole by
+`providerMatches`. An extension may use it to switch off
 behaviour that does not belong in a seat; `pi-blackbytes` 3.1.0 does (any non-empty value
 disables its sub-agents, leaves the system prompt untouched and keeps its files in the role
 home).
@@ -77,7 +77,22 @@ of selected entries after the adapter, sets `PASEO_ROOM_ROLE=lead`, and points
 that temporary directory, which is removed afterwards. The probe still passes only on exactly one
 `/mcp` from the adapter entry; a selected extension that breaks Pi's start therefore fails setup.
 
-## 3. Not changed
+## 3. Amendment 2026-10-09 — Pi's built-in MCP replaces the adapter
 
-Role auth, the adapter requirement and its probe criterion, Peer's `ROLE_PASEO_TOOLS`, the
+Owner decision 2026-10-09, after Pi 1.1.0 and Paseo 0.11.1. Paseo 0.11.1 registers a Pi seat's
+servers with `pi.registerMcpServer` when `/mcp` comes from `builtin:mcp`, so the adapter is no
+longer needed ([design.md](../design.md) §5 has the mechanism and the offline check). It
+changes three decisions:
+
+- PX-D1: `pi-mcp-adapter` still cannot be selected, now because Paseo would switch to it.
+- PX-D2: selected entries follow `--extension builtin:mcp --extension builtin:codemode` instead
+  of the adapter; codemode loads because registered tools default to `codemode` exposure.
+- PX-D6: the probe loads the same built-ins and passes only on exactly one `/mcp` from
+  `builtin:mcp`. It no longer sets `PI_MCP_CONFIG_MODE`, which the providers no longer pin.
+
+Any selection containing Pi now requires Paseo `>=0.11.1`.
+
+## 4. Not changed
+
+Role auth (§3 amends the adapter requirement and the probe criterion), Peer's `ROLE_PASEO_TOOLS`, the
 Claude and Codex adapters, and the rule that the room never writes an operator home.

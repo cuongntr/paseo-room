@@ -399,18 +399,16 @@ describe('Pi rooms', () => {
     expect(result.code).toBe(0);
     expect(Object.keys(daemon.providers).sort()).toEqual(['pi-lead', 'pi-peer', 'pi-supervisor']);
     const peer = daemon.providers['pi-peer'] as { command: string[]; env: Record<string, string>; paseoTools: { enabled: boolean } };
-    const adapter = await realpath(join(fixture.home, '.pi/agent/npm/node_modules/pi-mcp-adapter/index.ts'));
     const append = join(fixture.roomHome, 'roles/pi/peer/APPEND_SYSTEM.md');
     expect(peer.command).toEqual([
-      join(fixture.home, 'bin/pi'), '--no-extensions', '--extension', adapter,
+      join(fixture.home, 'bin/pi'), '--no-extensions', '--extension', 'builtin:mcp', '--extension', 'builtin:codemode',
       '--no-approve', '--append-system-prompt', append,
     ]);
     expect(peer.command).not.toContain('--no-context-files');
     for (const role of ['supervisor', 'lead', 'peer']) {
       const provider = daemon.providers[`pi-${role}`] as { env: Record<string, string> };
-      expect(provider.env).toMatchObject({
+      expect(provider.env).toEqual({
         PI_CODING_AGENT_DIR: join(fixture.roomHome, `roles/pi/${role}`),
-        PI_MCP_CONFIG_MODE: 'exclusive',
         PASEO_ROOM_ROLE: role,
       });
     }
@@ -472,11 +470,19 @@ describe('Pi rooms', () => {
 
   it('requires stable Paseo for Pi without raising the Codex and Claude floor', async () => {
     const status = { ...RUNNING_STATUS, cliVersion: '0.8.0-beta.2', daemonVersion: '0.8.0-beta.2' };
-    const fixture = await makeFixture({ paseoStatus: status });
+    const fixture = await makeFixture({ paseoStatus: status, paseoCliVersion: '0.8.0-beta.2' });
     expect((await run(['setup', '--agent', 'codex'], fixture.env, emptyDaemon())).code).toBe(0);
     const pi = await run(['setup', '--agent', 'pi'], fixture.env, emptyDaemon());
     expect(pi.code).toBe(1);
-    expect(pi.out).toContain('required 0.8.0');
+    expect(pi.out).toContain('required 0.11.1');
+  });
+
+  it('requires the Paseo that registers servers with Pi\'s built-in MCP before seating Pi', async () => {
+    const fixture = await makeFixture({ paseoStatus: { ...RUNNING_STATUS, cliVersion: '0.10.3', daemonVersion: '0.10.3' }, paseoCliVersion: '0.10.3' });
+    expect((await run(['setup', '--agent', 'claude'], fixture.env, emptyDaemon())).code).toBe(0);
+    const pi = await run(['setup', '--agent', 'pi'], fixture.env, emptyDaemon());
+    expect(pi.code).toBe(1);
+    expect(pi.out).toContain('required 0.11.1');
   });
 
   it('removes stale Pi providers and profiles while preserving its role homes', async () => {

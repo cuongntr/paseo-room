@@ -21,7 +21,16 @@ import { roleResourceEntries } from './resources.js';
 import { leadSkillProjection, ROOM_SKILL_NAME, roomSkillSource } from '../room/skills.js';
 import type { Agent, AgentPlan, BuildOptions, PiExtensionChoice } from './types.js';
 
-const PACKAGE_NAME = 'pi-mcp-adapter';
+/**
+ * Pi's built-in MCP extension, through which Paseo (>=0.11.1) registers a seat's servers. Its tools
+ * default to `codemode` exposure, so the codemode extension loads with it; without codemode a seat
+ * would hold Paseo's tools but could not call them.
+ */
+const MCP_EXTENSION = 'builtin:mcp';
+const CODEMODE_EXTENSION = 'builtin:codemode';
+const BUILTIN_EXTENSIONS = ['--extension', MCP_EXTENSION, '--extension', CODEMODE_EXTENSION] as const;
+/** Loading the adapter as well would make Paseo prefer it over the built-in extension. */
+const ADAPTER_PACKAGE = 'pi-mcp-adapter';
 const PROBE_ID = 'paseo-room-pi-mcp-probe';
 const PROBE_TIMEOUT_MS = 10_000;
 const PROBE_OUTPUT_LIMIT = 1024 * 1024;
@@ -65,11 +74,6 @@ export function renderPiAppend(source: string | undefined, role: Role): string {
   ].filter((part): part is string => Boolean(part)).join('\n\n');
 }
 
-interface ResolvedAdapter {
-  readonly entry: string;
-  readonly version: string;
-}
-
 /** Selected without roles, an extension goes to the orchestrating seats; Peer only when named. */
 const DEFAULT_EXTENSION_ROLES: readonly Role[] = ['supervisor', 'lead'];
 const NPM_NAME = /^(?:@[a-z0-9][a-z0-9._~-]*\/)?[a-z0-9][a-z0-9._~-]*$/;
@@ -82,7 +86,9 @@ export function parsePiExtensionSpec(spec: string): PiExtensionChoice {
   if (rest.length > 0 || !NPM_NAME.test(name)) {
     throw new Error(`Not a Pi package selection: ${spec}. Use <npm package>[=<role>,<role>].`);
   }
-  if (name === PACKAGE_NAME) throw new Error(`${PACKAGE_NAME} is always loaded and cannot be selected.`);
+  if (name === ADAPTER_PACKAGE) {
+    throw new Error(`${ADAPTER_PACKAGE} cannot be selected: seats use Pi's built-in MCP extension, and Paseo would switch to the adapter if it were loaded.`);
+  }
   if (roleList === undefined) return { package: name, roles: DEFAULT_EXTENSION_ROLES };
   const roles = roleList.split(',').map(role => role.trim());
   const unknown = roles.filter(role => !ROLES.some(known => known === role));
@@ -192,66 +198,10 @@ export async function resolvePiExtensions(
   return { byRole, checks };
 }
 
-/**
- * Pi 1.0 ships a built-in `mcp` extension, but Paseo gives a Pi seat its MCP servers only through
- * this adapter: it recognises `/mcp` by the adapter's name and passes `--mcp-config`, a flag only
- * the adapter defines. Without it, Supervisor and Lead would run with no Paseo tools.
- */
-function adapterFailure(home: string, detail: string): Check {
-  return fail('pi.adapter', detail,
-    `Install ${PACKAGE_NAME} into ${join(home, 'npm')} yourself with: pi install npm:${PACKAGE_NAME}. `
-    + `Pi's built-in MCP extension is not a substitute: Paseo hands a Pi seat its tools only through ${PACKAGE_NAME}. `
-    + 'The room never installs Pi packages. Then run setup again.');
-}
-
-/** Resolve only Pi's intended global package and its single declared extension entry. */
-export async function resolvePiAdapter(home: string): Promise<{ readonly adapter?: ResolvedAdapter; readonly check: Check }> {
-  const packageRoot = join(home, 'npm', 'node_modules', PACKAGE_NAME);
-  const manifestPath = join(packageRoot, 'package.json');
-  try {
-    await stat(packageRoot);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      return { check: adapterFailure(home, `${PACKAGE_NAME} is not installed in ${join(home, 'npm')}.`) };
-    }
-  }
-  try {
-    const [canonicalRoot, manifestStat, raw] = await Promise.all([
-      realpath(packageRoot), stat(manifestPath), readFile(manifestPath, 'utf8'),
-    ]);
-    if (!manifestStat.isFile()) return { check: adapterFailure(home, `${manifestPath} is not a regular file.`) };
-    const manifest = asObject(JSON.parse(raw));
-    if (!manifest || manifest.name !== PACKAGE_NAME) {
-      return { check: adapterFailure(home, `${manifestPath} does not identify ${PACKAGE_NAME}.`) };
-    }
-    const pi = asObject(manifest.pi);
-    const declared = pi?.extensions;
-    if (!Array.isArray(declared) || declared.length !== 1 || typeof declared[0] !== 'string' || !declared[0].trim()) {
-      return { check: adapterFailure(home, `${manifestPath} must declare one Pi extension entry.`) };
-    }
-    const declaration = declared[0];
-    if (isAbsolute(declaration)) {
-      return { check: adapterFailure(home, `${manifestPath} declares an unsafe absolute extension path.`) };
-    }
-    const candidate = resolve(packageRoot, declaration);
-    const [canonicalEntry, entryStat] = await Promise.all([realpath(candidate), stat(candidate)]);
-    if (!contains(canonicalRoot, canonicalEntry) || canonicalEntry === canonicalRoot || !entryStat.isFile()) {
-      return { check: adapterFailure(home, `The declared ${PACKAGE_NAME} extension escapes its package or is not a regular file.`) };
-    }
-    const version = typeof manifest.version === 'string' && manifest.version.trim() ? manifest.version.trim() : 'unknown';
-    return {
-      adapter: { entry: canonicalEntry, version },
-      check: pass('pi.adapter', `${PACKAGE_NAME} ${version} resolved to ${canonicalEntry}.`),
-    };
-  } catch {
-    return { check: adapterFailure(home, `Could not safely resolve ${PACKAGE_NAME} from ${manifestPath}.`) };
-  }
-}
-
 export interface PiProbeOptions {
   readonly timeoutMs?: number;
   readonly outputLimit?: number;
-  /** Selected extension entries the seats load after the adapter, so the probe starts what they start. */
+  /** Selected extension entries the seats load after the built-in ones, so the probe starts what they start. */
   readonly extensions?: readonly string[];
 }
 interface ProcessResult {
@@ -273,14 +223,13 @@ function terminateProbe(child: ReturnType<typeof spawn>): void {
 /** One bounded JSONL request in its own process group and isolated working directory. */
 function runProbeProcess(
   executable: string,
-  adapterEntry: string,
   env: NodeJS.ProcessEnv,
   options: PiProbeOptions,
   cwd: string,
 ): Promise<ProcessResult> {
   const timeoutMs = options.timeoutMs ?? PROBE_TIMEOUT_MS;
   const outputLimit = options.outputLimit ?? PROBE_OUTPUT_LIMIT;
-  const args = ['--mode', 'rpc', '--no-session', '--no-extensions', '--extension', adapterEntry,
+  const args = ['--mode', 'rpc', '--no-session', '--no-extensions', ...BUILTIN_EXTENSIONS,
     ...(options.extensions ?? []).flatMap(entry => ['--extension', entry]), '--no-approve'];
   return new Promise(resolveResult => {
     const child = spawn(executable, args, { cwd, detached: true, env, stdio: ['pipe', 'pipe', 'pipe'] });
@@ -325,7 +274,6 @@ function runProbeProcess(
 /** Pi runs migrations against cwd before RPC, so never probe in the caller's project. */
 async function runProbe(
   executable: string,
-  adapterEntry: string,
   env: NodeJS.ProcessEnv,
   options: PiProbeOptions,
 ): Promise<ProcessResult> {
@@ -336,11 +284,10 @@ async function runProbe(
     // its log under the agent directory, and nothing here may reach an operator or role home.
     const agentDir = join(cwd, 'agent');
     await mkdir(agentDir);
-    return await runProbeProcess(executable, adapterEntry, {
+    return await runProbeProcess(executable, {
       ...env,
       HOME: cwd,
       PI_CODING_AGENT_DIR: agentDir,
-      PI_MCP_CONFIG_MODE: 'exclusive',
       PI_OFFLINE: '1',
       [SEAT_ROLE_ENV]: 'lead',
     }, options, cwd);
@@ -351,19 +298,21 @@ async function runProbe(
 
 function probeFailure(message: string): Check {
   return fail('pi.capability', message,
-    'Use a Pi and pi-mcp-adapter installation that exposes /mcp through the declared adapter entry.');
+    'Use Pi 1.1.0 or newer, whose built-in MCP extension exposes /mcp as builtin:mcp.');
 }
 
-/** Authenticate the exact adapter path through Pi's correlated get_commands response. */
+/**
+ * Prove through Pi's correlated get_commands response that `/mcp` comes from the built-in
+ * extension, the attribution Paseo checks before it registers a seat's servers there.
+ */
 export async function probePiMcp(
   executable: string,
-  adapterEntry: string,
   env: NodeJS.ProcessEnv,
   options: PiProbeOptions = {},
 ): Promise<Check> {
   let result: ProcessResult;
   try {
-    result = await runProbe(executable, adapterEntry, env, options);
+    result = await runProbe(executable, env, options);
   } catch {
     return probeFailure('Pi capability probe could not create or clean its isolated working directory.');
   }
@@ -394,13 +343,8 @@ export async function probePiMcp(
   if (command?.source !== 'extension') return probeFailure('Pi exposed /mcp from the wrong source.');
   const sourceInfo = asObject(command.sourceInfo);
   if (typeof sourceInfo?.path !== 'string') return probeFailure('Pi did not report the /mcp extension path.');
-  try {
-    const sourcePath = await realpath(sourceInfo.path);
-    if (sourcePath !== adapterEntry) return probeFailure('Pi loaded /mcp from a different extension path.');
-  } catch {
-    return probeFailure('Pi reported an unresolvable /mcp extension path.');
-  }
-  return pass('pi.capability', `Pi exposed /mcp from ${adapterEntry}.`);
+  if (sourceInfo.path !== MCP_EXTENSION) return probeFailure('Pi loaded /mcp from a different extension path.');
+  return pass('pi.capability', `Pi exposed /mcp from ${MCP_EXTENSION}.`);
 }
 
 async function readPiOptional(path: string): Promise<string | undefined> {
@@ -440,7 +384,6 @@ export const piAgent: Agent = {
   id: 'pi',
   label: 'Pi',
   homeEnv: 'PI_CODING_AGENT_DIR',
-  providerEnv: { PI_MCP_CONFIG_MODE: 'exclusive' },
   pins: {},
   async build(layout: Layout, roles: readonly Role[], options?: BuildOptions): Promise<AgentPlan> {
     const home = layout.agentHome.pi;
@@ -453,20 +396,18 @@ export const piAgent: Agent = {
     } catch {
       return { entries: [], checks: [fail('pi.home', `No Pi config directory at ${home}.`, 'Run Pi once to initialise it, or pass --pi-home.')] };
     }
-    const resolved = await resolvePiAdapter(home);
-    if (!resolved.adapter) return { entries: [], checks: [resolved.check] };
     const extensions = await resolvePiExtensions(home, options?.piExtensions ?? [], roles);
     if (extensions.checks.some(check => check.status === 'fail')) {
-      return { entries: [], checks: [resolved.check, ...extensions.checks] };
+      return { entries: [], checks: [...extensions.checks] };
     }
     const selected = [...new Set(Object.values(extensions.byRole).flat())];
-    const capability = await probePiMcp(binary, resolved.adapter.entry, {
+    const capability = await probePiMcp(binary, {
       HOME: layout.home,
       PATH: layout.searchPath,
       PI_OFFLINE: '1',
     }, { extensions: selected });
     if (capability.status === 'fail') {
-      return { entries: [], checks: [resolved.check, ...extensions.checks, selected.length === 0 ? capability : {
+      return { entries: [], checks: [...extensions.checks, selected.length === 0 ? capability : {
         ...capability,
         fix: `${capability.fix ?? ''} A selected Pi extension may also be what stops Pi from starting; retry without --pi-extension to tell.`.trim(),
       }] };
@@ -476,7 +417,7 @@ export const piAgent: Agent = {
     let settings: string;
     try { settings = renderPiSettings(await readPiOptional(settingsPath)); } catch {
       return {
-        entries: [], checks: [resolved.check, capability,
+        entries: [], checks: [capability,
           fail('pi.settings', `Could not read ${settingsPath} as a JSON object.`,
             'Make your Pi settings readable and fix any JSON syntax, then run setup again.')],
       };
@@ -487,27 +428,27 @@ export const piAgent: Agent = {
       operatorAppend = await readPiOptional(operatorAppendPath);
     } catch {
       return {
-        entries: [], checks: [resolved.check, capability,
+        entries: [], checks: [capability,
           fail('pi.append', `Could not read ${operatorAppendPath}.`,
             'Make your Pi APPEND_SYSTEM.md readable, then run setup again.')],
       };
     }
     const shared = await existingPaths(home, SHARED);
-    // The adapter reads this file as its only config source, so a Paseo-looking server here
-    // would be a second control plane. Fail before apply; never edit the operator's file.
+    // Pi's MCP extension reads this file, and a server here outranks one Paseo registers under the
+    // same name, so a Paseo-looking server here would be a second control plane. Fail before apply; never edit the operator's file.
     const mcpPath = join(home, MCP_FILE);
     let servers: Record<string, unknown>;
     try {
       servers = jsonServerTable(await readPiOptional(mcpPath), MCP_KEYS);
     } catch {
       return {
-        entries: [], checks: [resolved.check, capability,
+        entries: [], checks: [capability,
           fail('pi.mcp', `Could not read ${mcpPath} as a JSON object, so its MCP declarations could not be inspected.`,
             'Make your Pi mcp.json readable and fix its JSON structure, then run setup again.')],
       };
     }
     const conflict = paseoMcpCheck('pi.mcp', mcpPath, servers);
-    if (conflict) return { entries: [], checks: [resolved.check, capability, conflict] };
+    if (conflict) return { entries: [], checks: [capability, conflict] };
     const entries: Entry[] = [];
     const credentials: CredentialDiagnostic[] = [];
     const argv: Partial<Record<Role, readonly string[]>> = {};
@@ -525,7 +466,7 @@ export const piAgent: Agent = {
       }));
       credentials.push(await piCredentialDiagnostic(layout, role, binary));
       argv[role] = [
-        '--no-extensions', '--extension', resolved.adapter.entry,
+        '--no-extensions', ...BUILTIN_EXTENSIONS,
         ...(extensions.byRole[role] ?? []).flatMap(entry => ['--extension', entry]),
         '--no-approve', '--append-system-prompt', appendPath,
       ];
@@ -534,7 +475,7 @@ export const piAgent: Agent = {
     return {
       entries,
       credentials,
-      checks: [pass('pi.home', `Pi found at ${binary} using ${home}.`), resolved.check, ...extensions.checks, capability],
+      checks: [pass('pi.home', `Pi found at ${binary} using ${home}.`), ...extensions.checks, capability],
       binary,
       argv,
       providerEnv,

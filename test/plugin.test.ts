@@ -4,7 +4,7 @@ import { runInNewContext } from 'node:vm';
 import { describe, expect, it } from 'vitest';
 import { DiagnosticCategory, ModuleKind, ScriptTarget, transpileModule } from 'typescript';
 import { remove, setup, verify } from '../src/commands.js';
-import { minimumPaseoVersion, PI_MINIMUM_VERSION } from '../src/paseo.js';
+import { minimumPaseoVersion, PLUGIN_MINIMUM_VERSION } from '../src/paseo.js';
 import {
   CLAUDE_CARRIER_PLUGIN_ID, renderClaudeCarrierContract, typescriptTemplateLiteral,
 } from '../src/plugin.js';
@@ -80,11 +80,11 @@ describe('Claude contract carrier lifecycle', () => {
   it('declares the compatibility floor as each plugin\'s Paseo range, so no separate range check is needed', async () => {
     for (const manifest of ['src/plugin-assets/paseo-plugin.json', 'src/runtime-plugin/paseo-plugin.json']) {
       const parsed = JSON.parse(await readFile(join(import.meta.dirname, '..', manifest), 'utf8')) as { requirements?: { paseo?: string } };
-      expect(parsed.requirements?.paseo, manifest).toBe(`>=${PI_MINIMUM_VERSION}`);
+      expect(parsed.requirements?.paseo, manifest).toBe(`>=${PLUGIN_MINIMUM_VERSION}`);
     }
     // Every selection that installs a plugin raises the compatibility check to that floor.
-    expect(minimumPaseoVersion(['claude'])).toBe(PI_MINIMUM_VERSION);
-    expect(minimumPaseoVersion(['codex'], true)).toBe(PI_MINIMUM_VERSION);
+    expect(minimumPaseoVersion(['claude'])).toBe(PLUGIN_MINIMUM_VERSION);
+    expect(minimumPaseoVersion(['codex'], true)).toBe(PLUGIN_MINIMUM_VERSION);
   });
 
   it('installs, verifies, reports drift, and removes the room-owned plugin', async () => {

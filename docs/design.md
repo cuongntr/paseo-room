@@ -28,7 +28,7 @@ a task, a workspace or a correction. Every native path is therefore closed, per 
 |---|---|
 | Codex | `[agents].enabled = false`, `features.multi_agent = false`, `features.multi_agent_v2 = false` — in the top-level table **and** in an active profile, which outranks it — **and** a generated model catalog with `multi_agent_version` nulled |
 | Claude | one canonical deny list is written to provider `disallowedTools` and each role's `permissions.deny`, blocking legacy `Task`, current `Agent`, `Workflow`, cross-session, shared task-list, cron and team tools; environment pins close background Agent View and dynamic workflows; `crossSessionInbound: "refuse"` rejects messages from other Claude sessions; the operator's `agents/` and `workflows/` directories are *not* linked into a seat |
-| Pi | `--no-extensions` disables extension discovery, `--extension` loads only the canonical operator-installed MCP adapter in addition to Paseo's own temporary integration extension, and `--no-approve` suppresses project-local executable resources; the appended runtime capsule forbids spawning or managing agents through Pi, shell or extensions |
+| Pi | `--no-extensions` disables extension discovery, `--extension` loads only Pi's built-in `mcp` and `codemode` extensions and the packages the Human selected, in addition to Paseo's own temporary integration extension, and `--no-approve` suppresses project-local executable resources; the appended runtime capsule forbids spawning or managing agents through Pi, shell or extensions |
 
 The catalog scrub is not redundant with the feature flags: bundled model metadata can still
 advertise native collaboration v1 or v2 even when both flags are off. That was found the
@@ -470,11 +470,10 @@ minimal Pi login session that starts in the role home instead of inheriting the 
 --append-system-prompt ''` session followed by `/login`. Pi treats the explicit empty append
 source as present and resolves it to no content, suppressing fallback discovery of the role
 home's generated `APPEND_SYSTEM.md`, including its runtime capsule and role instructions.
-That direct launch neither resolves nor probes the adapter and cannot load the adapter or
-Paseo's generated integration extension; it is visibly described as non-room-equivalent. Pi providers pin
-`PI_MCP_CONFIG_MODE=exclusive`, so the adapter
-uses that role-home `mcp.json` as its single config source instead of independently discovering
-generic global or project MCP configuration. Sessions, stores and caches remain private to
+That direct launch does not probe Pi and cannot load Pi's MCP extension or Paseo's generated
+integration extension; it is visibly described as non-room-equivalent. In a seat, Pi's built-in
+MCP extension reads that role-home `mcp.json` and, only for a trusted project, `.pi/mcp.json`;
+`--no-approve` trusts no project, so the role-home file is its single config source. Sessions, stores and caches remain private to
 each role.
 
 The Pi role's `APPEND_SYSTEM.md` is generated in a deliberate order: operator global append,
@@ -560,48 +559,53 @@ thinking choices. It extends Paseo's core `pi` provider, never OMP. The provider
 a role-specific argv tail:
 
 ```text
---no-extensions --extension <canonical adapter entry>
+--no-extensions --extension builtin:mcp --extension builtin:codemode
 [--extension <canonical entry of each selected package>] --no-approve
 --append-system-prompt <role APPEND_SYSTEM.md>
 ```
 
 Paseo itself appends a generated temporary integration extension. The room neither resolves
-nor creates that file. Its first explicit `--extension` is always `pi-mcp-adapter` from the
-operator Pi home's fixed global npm location; the others are packages the Human selected per
-role with `--pi-extension`, resolved from the same place under the same containment rules,
+nor creates that file. The first two explicit extensions are Pi's own built-ins; the others are
+packages the Human selected per role with `--pi-extension`, resolved from the operator Pi home's
+global npm location, each declared entry a regular file inside its canonical package root,
 recorded in `room.json`, and never installed
 ([pi-seat-extensions.md](design/pi-seat-extensions.md)). Every Pi provider also pins
-`PASEO_ROOM_ROLE=<role>`, which lets an extension switch off what does not belong in a seat. Before any plan can proceed, the adapter checks
-the manifest name, resolves its single `pi.extensions` entry, canonicalises package root and
-entry, and requires the entry to be a regular file contained by that root. Adapter version is
-reported only as a diagnostic: peer ranges, exact versions, digests, compatibility matrices
-and allowlists are deliberately not policy.
+`PASEO_ROOM_ROLE=<role>`, which lets an extension switch off what does not belong in a seat.
 
-Pi 1.0 ships a built-in `mcp` extension, and it is not a substitute. Paseo (checked on 0.10.3)
-gives a Pi session its MCP servers only after it finds an extension `/mcp` command whose source
-names `pi-mcp-adapter`, and then passes them in a merged file through `--mcp-config`, a flag only
-the adapter defines. A seat without the adapter would start with no Paseo tools at all, so a
-missing adapter stays a failure, and its fix names the exact `pi install npm:pi-mcp-adapter`
-command. The seat argv's `--no-extensions` also disables Pi's built-in extensions, so the two
-`/mcp` commands never meet inside a seat.
+Paseo 0.11.1 gives a Pi session its MCP servers in one of two ways, decided by a `get_commands`
+check before the session starts: through `pi-mcp-adapter` if an extension `/mcp` names it, and
+otherwise through Pi's built-in extension if `/mcp` comes from `builtin:mcp`, by calling
+`pi.registerMcpServer` from its integration extension. The room uses the second and only the
+second: `--no-extensions` keeps the adapter out even when the operator has it installed, and
+`pi-mcp-adapter` cannot be selected, because Paseo would then switch to it and its own config
+discovery. That makes Paseo `0.11.1` the floor for any selection containing Pi; earlier Paseo
+recognises only the adapter and would start a seat with no Paseo tools at all. Paseo 0.10.3
+needed the adapter and a `PI_MCP_CONFIG_MODE=exclusive` pin to stop the adapter's eager config
+discovery; neither exists any more.
 
-The provider also pins `PI_MCP_CONFIG_MODE=exclusive`. This is separate from Pi's
-`--no-extensions`: the adapter has its own eager config discovery and can otherwise load
-generic home or project MCP servers while the explicit extension is starting. Exclusive mode
-leaves the role-specific `PI_CODING_AGENT_DIR/mcp.json` available and excludes those other
-sources.
+Registered servers have no `exposure`, so their tools take Pi's default, `codemode`: they are
+callable only from codemode scripts, and the codemode tool is activated when such a server
+connects. `--no-extensions` disables the codemode extension like every other built-in, so it is
+loaded explicitly. Checked offline on Pi 1.1.0 with a registered stdio server: with `builtin:mcp`
+alone the server's tool was registered but neither active nor reachable; with `builtin:codemode`
+as well, `codemode` became active. Codemode adds no authority a seat lacks — nested calls run
+through the same tool pipeline — but its scripts can also call `models.classify()` and
+`models.generateImages()` with the seat's own provider credentials. Neither starts an agent, so
+neither is a second multi-agent path. Pi's `tool-search` built-in is not loaded; no exposure the
+room produces needs it.
 
 Path evidence alone does not prove Pi loaded the capability. A shell-free child process runs
-offline with `PI_MCP_CONFIG_MODE=exclusive`, `PASEO_ROOM_ROLE=lead`, `--mode rpc`,
-`--no-session` and the same strict extension/trust flags, loading the adapter and every selected
-extension, from a fresh empty temporary working directory. `PI_CODING_AGENT_DIR` is an empty
-directory inside it rather than `/dev/null`, because a selected extension may write its log
-under the agent directory. The probe also sets `HOME` to that directory, and removes it afterwards, so neither
-generic global nor caller-project MCP discovery can reach operator inputs. Input is one
-correlated `get_commands` JSONL request; valid UI events are ignored, output and runtime are
-capped, and malformed output or process failure fails. The response must contain exactly one
-`mcp` command from `source: "extension"` whose reported path canonicalises to the same adapter
-entry. The probe cannot write the caller project, operator home or a planned role home.
+offline with `PASEO_ROOM_ROLE=lead`, `--mode rpc`, `--no-session` and the same strict
+extension/trust flags, loading the built-in extensions and every selected extension, from a
+fresh empty temporary working directory. `PI_CODING_AGENT_DIR` is an empty directory inside it
+rather than `/dev/null`, because a selected extension may write its log under the agent
+directory. The probe also sets `HOME` to that directory, and removes it afterwards, so no
+operator or caller-project MCP configuration can reach it. Input is one correlated
+`get_commands` JSONL request; valid UI events are ignored, output and runtime are capped, and
+malformed output or process failure fails. The response must contain exactly one `mcp` command
+from `source: "extension"` whose reported path is `builtin:mcp`, the attribution Paseo checks.
+A Pi too old to have the built-in extension fails here. The probe cannot write the caller
+project, operator home or a planned role home.
 
 `providerMatches` in `src/paseo.ts` compares these pins, so `verify` fails if one is
 removed from the live config. A pin that can be silently dropped is not a guarantee.
@@ -826,7 +830,7 @@ silently claiming the stronger guarantee.
   credential files are included. The type-safe atomic single write of §4a is not a step back
   toward that machinery: it makes one replacement safe, and rerunning setup is still the whole
   recovery model.
-- **No installing or upgrading Paseo, Codex, Claude, Pi or `pi-mcp-adapter`.** The room checks
+- **No installing or upgrading Paseo, Codex, Claude, Pi or a Pi package.** The room checks
   compatibility and explains a mismatch; it never repairs someone else's installation.
 - **No setup-time login or authentication validation.** Setup and verify report structural
   role-auth state and manage a secret-free guide, but do not run login, read credential
